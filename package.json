@@ -34,7 +34,7 @@
     "url": "https://github.com/DarraghGeo/poker-rangeman.git"
   },
   "dependencies": {
-    "poker-extval": "github:DarraghGeo/poker-extval"
+    "poker-extval": "^1.0.0"
   },
   "devDependencies": {
     "jest": "^29.7.0"
