@@ -69,6 +69,7 @@ export class RangeManager {
   // ============================================================================
 
   normalizeCardOrder(card1, card2) {
+    // compareRanks returns 1 if rank1 > rank2, so >= 0 means rank1 >= rank2 (higher or equal rank first)
     if (this.compareRanks(card1[0], card2[0]) >= 0) return [card1, card2];
     return [card2, card1];
   }
@@ -151,13 +152,12 @@ export class RangeManager {
 
   isPairNotation(segment) {
     if (!segment || typeof segment !== 'string') return false;
-    if (/^\d{1,2}$/.test(segment)) return true;
-    if (/^([AKQJT])\1$/.test(segment)) return true;
+    if (/^([AKQJT2-9])\1\+$/.test(segment)) return true;
+    if (/^([AKQJT2-9])\1$/.test(segment)) return true;
     if (!segment.includes('-')) return false;
     const parts = segment.split('-');
     if (parts.length !== 2) return false;
-    const isPairPart = (p) => /^\d{1,2}$/.test(p) || /^([AKQJT])\1$/.test(p);
-    return isPairPart(parts[0]) && isPairPart(parts[1]);
+    return /^([AKQJT2-9])\1$/.test(parts[0]) && /^([AKQJT2-9])\1$/.test(parts[1]);
   }
 
   isSuitedNotation(segment) {
@@ -203,16 +203,17 @@ export class RangeManager {
   }
 
   extractPairRanks(range) {
-    if (!range) return [];
-    if (range.includes('-')) {
-      const parts = range.split('-');
-      if (parts.length !== 2) return [];
-      const rank1 = parts[0].length === 2 ? parts[0][0] : parts[0];
-      const rank2 = parts[1].length === 2 ? parts[1][0] : parts[1];
-      return [rank1, rank2];
+    if (!range || typeof range !== 'string') return [null, null];
+    if (range.endsWith('+')) {
+      const rank = range[0];
+      return [rank, 'A'];
     }
-    const rank = range.length === 2 ? range[0] : range;
-    return [rank, rank];
+    const parts = range.split('-');
+    if (parts.length === 1) {
+      const rank = parts[0][0];
+      return [rank, rank];
+    }
+    return [parts[0][0], parts[1][0]];
   }
 
   _extractSuitedPlus(range) {
@@ -586,9 +587,10 @@ export class RangeManager {
 
   _categorizeHand(hand) {
     const [c1, c2] = this.extractCardsFromHand(hand);
-    if (c1[0] === c2[0]) return { type: 'pair', notation: c1[0] + c2[0] };
-    if (c1[1] === c2[1]) return { type: 'suited', notation: c1[0] + c2[0] + 's' };
-    return { type: 'offsuit', notation: c1[0] + c2[0] + 'o' };
+    const [high, low] = this.normalizeCardOrder(c1, c2);
+    if (high[0] === low[0]) return { type: 'pair', notation: high[0] + low[0] };
+    if (high[1] === low[1]) return { type: 'suited', notation: high[0] + low[0] + 's' };
+    return { type: 'offsuit', notation: high[0] + low[0] + 'o' };
   }
 
   _buildNotationParts(categories) {

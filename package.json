@@ -1,9 +1,17 @@
 {
   "name": "poker-rangeman",
   "version": "1.0.0",
-  "description": "A JavaScript tool for managing poker ranges with filtering capabilities",
+  "description": "A comprehensive JavaScript library for parsing, managing, and filtering poker hand ranges with support for dead cards, board cards, and hand strength evaluation",
   "main": "src/rangeManager.js",
   "type": "module",
+  "exports": {
+    ".": "./src/rangeManager.js"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
@@ -13,10 +21,18 @@
     "poker",
     "range",
     "hand",
-    "evaluation"
+    "evaluation",
+    "texas-holdem",
+    "poker-hands",
+    "range-calculator",
+    "poker-analysis"
   ],
-  "author": "",
+  "author": "Darragh Geoghegan",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DarraghGeo/poker-rangeman.git"
+  },
   "dependencies": {
     "poker-extval": "github:DarraghGeo/poker-extval"
   },
@@ -26,6 +42,9 @@
   "jest": {
     "transform": {},
     "testEnvironment": "node"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   }
 }
 
