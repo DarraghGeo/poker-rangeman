@@ -526,9 +526,10 @@ export class RangeManager {
   async handMatchesCriteria(hand, criteria, boardCards) {
     const evaluation = await this.evaluateHandWithBoard(hand, boardCards);
     const normalizedCriteria = this.normalizeCriteria(criteria);
-    const evalKey = Object.keys(evaluation)[0];
-    const evalObj = evaluation[evalKey];
-    return normalizedCriteria.some(c => evalObj[c] === true);
+    // Check all possible 5-card combinations, not just the first one
+    return Object.values(evaluation).some(evalObj => 
+      normalizedCriteria.some(c => evalObj[c] === true)
+    );
   }
 
   async match(criteria, boardCards = []) {

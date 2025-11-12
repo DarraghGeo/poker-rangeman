@@ -28,3 +28,7 @@ coverage/
 # Technical documentation (git-ignored as requested)
 technical-build-doc.md
 
+# Temporary test scripts
+test-*.js
+*.test-local.js
+
