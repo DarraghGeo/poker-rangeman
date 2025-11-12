@@ -26,7 +26,7 @@ A comprehensive JavaScript library for parsing, managing, and filtering poker ha
 npm install poker-rangeman
 ```
 
-The library uses ES modules and requires Node.js 14+.
+The library uses ES modules and requires Node.js 14+. It's available on [npm](https://www.npmjs.com/package/poker-rangeman).
 
 ## Quick Start
 
