@@ -406,7 +406,7 @@ export class RangeManager {
   }
 
   _parseSuitedPlus(info) {
-    const ranks = this.getAllRanksBetween(info.rank2, 'K');
+    const ranks = this.getAllRanksBetween(info.rank2, 'K').filter(r => r !== info.rank1);
     return ranks.flatMap(rank => this.generateSuitedRange(info.rank1, rank));
   }
 
@@ -429,7 +429,7 @@ export class RangeManager {
   }
 
   _parseOffsuitPlus(info) {
-    const ranks = this.getAllRanksBetween(info.rank2, 'K');
+    const ranks = this.getAllRanksBetween(info.rank2, 'K').filter(r => r !== info.rank1);
     return ranks.flatMap(rank => this.generateOffsuitRange(info.rank1, rank));
   }
 
