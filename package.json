@@ -1,0 +1,31 @@
+{
+  "name": "poker-rangeman",
+  "version": "1.0.0",
+  "description": "A JavaScript tool for managing poker ranges with filtering capabilities",
+  "main": "src/rangeManager.js",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
+  },
+  "keywords": [
+    "poker",
+    "range",
+    "hand",
+    "evaluation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "poker-extval": "github:DarraghGeo/poker-extval"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "transform": {},
+    "testEnvironment": "node"
+  }
+}
+
