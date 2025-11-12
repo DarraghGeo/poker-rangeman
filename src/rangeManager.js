@@ -13,7 +13,7 @@ const CRITERIA_MAPPING = {
   'Top Two Pair': 'isTopTwoPair', 'Middle Two Pair': 'isMiddleTwoPair', 'Bottom Two Pair': 'isBottomTwoPair',
   'Top Kicker': 'isTopKicker', 'Middle Kicker': 'isMiddleKicker', 'Bottom Kicker': 'isBottomKicker',
   'Ace Kicker': 'isAceKicker', 'King Kicker': 'isKingKicker',
-  'Flush Draw': 'isFlushDraw', 'Straight Draw': 'isStraightDraw', 'Gutshot Straight Draw': 'isGutshotStraightDraw',
+  'Flush Draw': 'isFlushDraw', 'Straight Draw': 'isStraightDraw', 'Inside Straight Draw': 'isInsideStraightDraw',
   'Open Ended Straight Draw': 'isOpenEndedStraightDraw', 'Backdoor Flush Draw': 'isBackdoorFlushDraw',
   'Backdoor Straight Draw': 'isBackdoorStraightDraw',
   'Ace High': 'isAceHigh', 'King High': 'isKingHigh', 'Queen High': 'isQueenHigh', 'Jack High': 'isJackHigh',
@@ -546,6 +546,37 @@ export class RangeManager {
     Object.assign(newInstance, this);
     newInstance.filteredHands = filtered;
     return newInstance;
+  }
+
+  async evaluateHand(hand, boardCards) {
+    const evaluation = await this.evaluateHandWithBoard(hand, boardCards);
+    return {
+      is: (criteria) => this._filterEvaluation(evaluation, criteria, false),
+      isAll: (criteria) => this._filterEvaluation(evaluation, criteria, true)
+    };
+  }
+
+  _filterEvaluation(evaluation, criteria, matchAll) {
+    // Normalize criteria - handle both string and array
+    const criteriaArray = Array.isArray(criteria) ? criteria : [criteria];
+    const normalizedCriteria = criteriaArray.map(c => CRITERIA_MAPPING[c] || c);
+    
+    // Filter evaluation entries
+    const filtered = {};
+    for (const [combo, evalObj] of Object.entries(evaluation)) {
+      let matches = false;
+      if (matchAll) {
+        // AND logic: all criteria must match
+        matches = normalizedCriteria.every(c => evalObj[c] === true);
+      } else {
+        // OR logic: any criteria matches
+        matches = normalizedCriteria.some(c => evalObj[c] === true);
+      }
+      if (matches) {
+        filtered[combo] = evalObj;
+      }
+    }
+    return filtered;
   }
 
   // ============================================================================

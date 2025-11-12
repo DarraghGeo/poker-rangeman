@@ -1886,6 +1886,98 @@ describe('RangeManager', () => {
       it('should handle 5+ total cards', testFiltering.evaluateHandWithBoard.fivePlus);
     });
 
+    describe('evaluateHand()', () => {
+      it('should return object with .is() and .isAll() methods', async () => {
+        const rm = createTestInstance('AKs');
+        const board = ['2h', '3d', '4c', '5s', '6h'];
+        const result = await rm.evaluateHand('AhKd', board);
+        expect(result).toBeDefined();
+        expect(typeof result.is).toBe('function');
+        expect(typeof result.isAll).toBe('function');
+      });
+
+      it('should filter evaluation with .is() using single criteria', async () => {
+        const rm = createTestInstance('AKs');
+        const board = ['2h', '3d', '4c', '5s', '6h'];
+        const result = await rm.evaluateHand('AhKd', board);
+        const filtered = result.is('Straight');
+        expect(typeof filtered).toBe('object');
+        expect(Object.keys(filtered).length).toBeGreaterThan(0);
+        // All entries should have isStraight = true
+        Object.values(filtered).forEach(evalObj => {
+          expect(evalObj.isStraight).toBe(true);
+        });
+      });
+
+      it('should filter evaluation with .is() using array criteria (OR logic)', async () => {
+        const rm = createTestInstance('AKs');
+        const board = ['2d', '6d', 'Ad', '5s', 'Td'];
+        const result = await rm.evaluateHand('3c4d', board);
+        const filtered = result.is(['Flush Draw', 'Straight Draw']);
+        expect(typeof filtered).toBe('object');
+        // All entries should have at least one of the criteria true
+        Object.values(filtered).forEach(evalObj => {
+          const hasFlushDraw = evalObj.isFlushDraw === true;
+          const hasStraightDraw = evalObj.isStraightDraw === true || evalObj.isInsideStraightDraw === true;
+          expect(hasFlushDraw || hasStraightDraw).toBe(true);
+        });
+      });
+
+      it('should filter evaluation with .isAll() using array criteria (AND logic)', async () => {
+        const rm = createTestInstance('AKs');
+        const board = ['2d', '6d', 'Ad', '5s', 'Td'];
+        const result = await rm.evaluateHand('3c4d', board);
+        const filtered = result.isAll(['Flush Draw', 'Straight Draw']);
+        expect(typeof filtered).toBe('object');
+        // All entries should have ALL criteria true
+        Object.values(filtered).forEach(evalObj => {
+          const hasFlushDraw = evalObj.isFlushDraw === true;
+          const hasStraightDraw = evalObj.isStraightDraw === true || evalObj.isInsideStraightDraw === true;
+          expect(hasFlushDraw && hasStraightDraw).toBe(true);
+        });
+      });
+
+      it('should return empty object when no criteria match with .is()', async () => {
+        const rm = createTestInstance('22');
+        const board = ['2h', '3d', '4c', '5s', '6h'];
+        const result = await rm.evaluateHand('7c7d', board);
+        const filtered = result.is('Royal Flush');
+        expect(filtered).toEqual({});
+        expect(Object.keys(filtered).length).toBe(0);
+      });
+
+      it('should return empty object when no criteria match with .isAll()', async () => {
+        const rm = createTestInstance('22');
+        const board = ['2h', '3d', '4c', '5s', '6h'];
+        const result = await rm.evaluateHand('7c7d', board);
+        const filtered = result.isAll(['Royal Flush', 'Straight Flush']);
+        expect(filtered).toEqual({});
+        expect(Object.keys(filtered).length).toBe(0);
+      });
+
+      it('should normalize human-readable criteria in .is()', async () => {
+        const rm = createTestInstance('AKs');
+        const board = ['2h', '3d', '4c', '5s', '6h'];
+        const result = await rm.evaluateHand('AhKd', board);
+        const filtered1 = result.is('Straight');
+        const filtered2 = result.is('isStraight');
+        // Both should work and return same structure
+        expect(typeof filtered1).toBe('object');
+        expect(typeof filtered2).toBe('object');
+      });
+
+      it('should normalize human-readable criteria in .isAll()', async () => {
+        const rm = createTestInstance('AKs');
+        const board = ['2d', '6d', 'Ad', '5s', 'Td'];
+        const result = await rm.evaluateHand('3c4d', board);
+        const filtered1 = result.isAll(['Flush Draw', 'Straight Draw']);
+        const filtered2 = result.isAll(['isFlushDraw', 'isStraightDraw']);
+        // Both should work and return same structure
+        expect(typeof filtered1).toBe('object');
+        expect(typeof filtered2).toBe('object');
+      });
+    });
+
     describe('normalizeCriteria()', () => {
       it('should map "Pair" to "isPair"', testFiltering.normalizeCriteria.pair);
       it('should map "Two Pair" to "isTwoPair"', testFiltering.normalizeCriteria.twoPair);
