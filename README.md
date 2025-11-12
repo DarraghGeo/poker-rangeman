@@ -49,6 +49,12 @@ console.log(filtered.size());     // 92
 const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
 const pairs = await rm.match(['Pair'], board);
 console.log(pairs.toString());
+
+// Filter by suit
+const spadeHands = rm.hasSuit('s');      // Hands with at least one spade
+const heartSuited = rm.suitedOf('h');     // Hands suited in hearts
+console.log(spadeHands.size());
+console.log(heartSuited.toString());
 ```
 
 ## API Reference
@@ -194,6 +200,81 @@ const strong = await rm.match(['Pair', 'Straight', 'Flush'], board);
 - `Error`: If criteria is not an array
 - `Error`: If boardCards is empty or invalid
 - `Error`: If invalid criteria are provided
+
+**Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
+
+#### `hasSuit(suit)`
+
+Filters the range to only include hands where at least one card matches the specified suit. Returns a new RangeManager instance (immutable).
+
+**Parameters:**
+- `suit` (string): Suit to filter by (`'s'`, `'h'`, `'d'`, `'c'`)
+
+**Returns:** `RangeManager` - New instance with filtered hands
+
+**Example:**
+```javascript
+const rm = new RangeManager('AKs,AKo,22+');
+const spadeHands = rm.hasSuit('s');
+spadeHands.size();        // Hands with at least one spade
+spadeHands.contains('AsKs'); // true
+spadeHands.contains('AhKd'); // true (has spade in pairs)
+rm.size();                // Original unchanged
+```
+
+**Throws:**
+- `Error`: If suit is invalid
+
+#### `suitedOf(suit)`
+
+Filters the range to only include hands that are suited (both cards same suit) AND both cards match the specified suit. Returns a new RangeManager instance (immutable).
+
+**Parameters:**
+- `suit` (string): Suit to filter by (`'s'`, `'h'`, `'d'`, `'c'`)
+
+**Returns:** `RangeManager` - New instance with filtered hands
+
+**Example:**
+```javascript
+const rm = new RangeManager('AKs,AKo,22+');
+const heartSuited = rm.suitedOf('h');
+heartSuited.size();       // Only hands suited in hearts
+heartSuited.contains('AhKh'); // true
+heartSuited.contains('AsKs'); // false (that's spades)
+heartSuited.contains('AhKd'); // false (offsuit)
+rm.size();                // Original unchanged
+```
+
+**Throws:**
+- `Error`: If suit is invalid
+
+#### `evaluateHand(hand, boardCards)`
+
+Evaluates a single hand against board cards and returns a fluent API for checking hand strength. Returns a Promise that resolves to an object with `.is()` and `.isAll()` methods.
+
+**Parameters:**
+- `hand` (string): Hand to evaluate (e.g., `'AcKc'`)
+- `boardCards` (string[]): Array of board cards (must have at least 3 cards)
+
+**Returns:** `Promise<object>` - Promise resolving to object with `.is()` and `.isAll()` methods
+
+**Example:**
+```javascript
+const rm = new RangeManager('AKs');
+const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
+
+// Check if hand matches ANY criteria (OR logic)
+const evaluation = await rm.evaluateHand('AcKc', board);
+const pairsOrStraights = evaluation.is(['Pair', 'Straight']);
+console.log(Object.keys(pairsOrStraights).length > 0); // true if matches
+
+// Check if hand matches ALL criteria (AND logic)
+const flushAndStraight = evaluation.isAll(['Flush', 'Straight']);
+console.log(Object.keys(flushAndStraight).length > 0); // true if both match
+
+// Single criterion
+const isPair = evaluation.is('Pair');
+```
 
 **Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
 
@@ -822,7 +903,54 @@ console.log(rm.size() === originalSize); // true
 console.log(filtered.size() < originalSize); // true
 ```
 
-### Example 6: Validation
+### Example 6: Suit Filtering
+
+```javascript
+import { RangeManager } from 'poker-rangeman';
+
+const rm = new RangeManager('A2s+,A2o+,22+');
+
+// Filter hands with at least one spade
+const spadeHands = rm.hasSuit('s');
+console.log('Hands with spades:', spadeHands.size());
+console.log('Examples:', spadeHands.toArray().slice(0, 5));
+
+// Filter hands suited in hearts
+const heartSuited = rm.suitedOf('h');
+console.log('Hearts suited:', heartSuited.size());
+console.log('Contains AhKh:', heartSuited.contains('AhKh')); // true
+console.log('Contains AsKs:', heartSuited.contains('AsKs')); // false
+```
+
+### Example 7: Hand Evaluation API
+
+```javascript
+import { RangeManager } from 'poker-rangeman';
+
+const rm = new RangeManager('AKs');
+const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th']; // Broadway straight board
+
+// Evaluate a hand and check criteria
+const eval = await rm.evaluateHand('AcKc', board);
+
+// Check if hand matches ANY of these (OR logic)
+const pairsOrStraights = eval.is(['Pair', 'Straight']);
+if (Object.keys(pairsOrStraights).length > 0) {
+  console.log('Hand has pair or straight!');
+}
+
+// Check if hand matches ALL criteria (AND logic)
+const flushAndStraight = eval.isAll(['Flush', 'Straight']);
+if (Object.keys(flushAndStraight).length > 0) {
+  console.log('Hand is a straight flush!');
+}
+
+// Single criterion
+const isPair = eval.is('Pair');
+console.log('Is pair:', Object.keys(isPair).length > 0);
+```
+
+### Example 8: Validation
 
 ```javascript
 import { RangeManager } from 'poker-rangeman';

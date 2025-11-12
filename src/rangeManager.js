@@ -498,9 +498,39 @@ export class RangeManager {
     return deadCards.includes(card1) || deadCards.includes(card2);
   }
 
+  handHasSuit(hand, suit) {
+    if (!this.isValidSuit(suit)) return false;
+    const [card1, card2] = this.extractCardsFromHand(hand);
+    return card1[1] === suit || card2[1] === suit;
+  }
+
+  handSuitedOf(hand, suit) {
+    if (!this.isValidSuit(suit)) return false;
+    const [card1, card2] = this.extractCardsFromHand(hand);
+    return card1[1] === suit && card2[1] === suit;
+  }
+
   exclude(deadCards) {
     if (!Array.isArray(deadCards)) throw new Error('Dead cards must be an array');
     const filtered = this.filteredHands.filter(hand => !this.handContainsDeadCard(hand, deadCards));
+    const newInstance = Object.create(Object.getPrototypeOf(this));
+    Object.assign(newInstance, this);
+    newInstance.filteredHands = filtered;
+    return newInstance;
+  }
+
+  hasSuit(suit) {
+    if (!this.isValidSuit(suit)) throw new Error(`Invalid suit: ${suit}`);
+    const filtered = this.filteredHands.filter(hand => this.handHasSuit(hand, suit));
+    const newInstance = Object.create(Object.getPrototypeOf(this));
+    Object.assign(newInstance, this);
+    newInstance.filteredHands = filtered;
+    return newInstance;
+  }
+
+  suitedOf(suit) {
+    if (!this.isValidSuit(suit)) throw new Error(`Invalid suit: ${suit}`);
+    const filtered = this.filteredHands.filter(hand => this.handSuitedOf(hand, suit));
     const newInstance = Object.create(Object.getPrototypeOf(this));
     Object.assign(newInstance, this);
     newInstance.filteredHands = filtered;

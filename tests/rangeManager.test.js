@@ -1228,6 +1228,117 @@ const testFiltering = {
       expect(result).toBe(false);
     }
   },
+  handHasSuit: {
+    detect: () => {
+      const rm = createTestInstance('AKs');
+      expect(rm.handHasSuit('AhKd', 'h')).toBe(true);
+      expect(rm.handHasSuit('AhKd', 'd')).toBe(true);
+    },
+    bothCards: () => {
+      const rm = createTestInstance('AKs');
+      expect(rm.handHasSuit('AhKh', 'h')).toBe(true);
+    },
+    noMatch: () => {
+      const rm = createTestInstance('AKs');
+      expect(rm.handHasSuit('AhKd', 's')).toBe(false);
+      expect(rm.handHasSuit('AhKd', 'c')).toBe(false);
+    },
+    invalidSuit: () => {
+      const rm = createTestInstance('AKs');
+      expect(rm.handHasSuit('AhKd', 'x')).toBe(false);
+      expect(rm.handHasSuit('AhKd', '')).toBe(false);
+    }
+  },
+  handSuitedOf: {
+    detect: () => {
+      const rm = createTestInstance('AKs');
+      expect(rm.handSuitedOf('AhKh', 'h')).toBe(true);
+      expect(rm.handSuitedOf('AsKs', 's')).toBe(true);
+    },
+    noMatch: () => {
+      const rm = createTestInstance('AKs');
+      expect(rm.handSuitedOf('AhKd', 'h')).toBe(false);
+      expect(rm.handSuitedOf('AhKd', 'd')).toBe(false);
+    },
+    offsuit: () => {
+      const rm = createTestInstance('AKo');
+      expect(rm.handSuitedOf('AhKd', 'h')).toBe(false);
+      expect(rm.handSuitedOf('AhKd', 'd')).toBe(false);
+    },
+    invalidSuit: () => {
+      const rm = createTestInstance('AKs');
+      expect(rm.handSuitedOf('AhKh', 'x')).toBe(false);
+      expect(rm.handSuitedOf('AhKh', '')).toBe(false);
+    }
+  },
+  hasSuit: {
+    filter: () => {
+      const rm = new RangeManager('AKs,AKo');
+      const filtered = rm.hasSuit('h');
+      expect(filtered.size()).toBeGreaterThan(0);
+      expect(filtered.contains('AhKh')).toBe(true);
+      expect(filtered.contains('AhKd')).toBe(true);
+    },
+    newInstance: () => {
+      const rm = new RangeManager('AKs');
+      const filtered = rm.hasSuit('h');
+      expect(filtered).toBeInstanceOf(RangeManager);
+      expect(filtered).not.toBe(rm);
+    },
+    immutable: () => {
+      const rm = new RangeManager('AKs');
+      const originalSize = rm.size();
+      rm.hasSuit('h');
+      expect(rm.size()).toBe(originalSize);
+    },
+    multipleSuits: () => {
+      const rm = new RangeManager('AKs,AKo');
+      const hearts = rm.hasSuit('h');
+      const spades = rm.hasSuit('s');
+      expect(hearts.size()).toBeGreaterThan(0);
+      expect(spades.size()).toBeGreaterThan(0);
+    },
+    invalidSuit: () => {
+      const rm = new RangeManager('AKs');
+      expect(() => rm.hasSuit('x')).toThrow();
+      expect(() => rm.hasSuit('')).toThrow();
+    }
+  },
+  suitedOf: {
+    filter: () => {
+      const rm = new RangeManager('AKs,AKo');
+      const filtered = rm.suitedOf('h');
+      expect(filtered.size()).toBeGreaterThan(0);
+      expect(filtered.contains('AhKh')).toBe(true);
+      expect(filtered.contains('AhKd')).toBe(false);
+    },
+    newInstance: () => {
+      const rm = new RangeManager('AKs');
+      const filtered = rm.suitedOf('h');
+      expect(filtered).toBeInstanceOf(RangeManager);
+      expect(filtered).not.toBe(rm);
+    },
+    immutable: () => {
+      const rm = new RangeManager('AKs');
+      const originalSize = rm.size();
+      rm.suitedOf('h');
+      expect(rm.size()).toBe(originalSize);
+    },
+    specificSuit: () => {
+      const rm = new RangeManager('AKs,AKo');
+      const hearts = rm.suitedOf('h');
+      const spades = rm.suitedOf('s');
+      expect(hearts.contains('AhKh')).toBe(true);
+      expect(hearts.contains('AsKs')).toBe(false);
+      expect(spades.contains('AsKs')).toBe(true);
+      expect(spades.contains('AhKh')).toBe(false);
+    },
+    invalidSuit: () => {
+      const rm = new RangeManager('AKs');
+      expect(() => rm.suitedOf('x')).toThrow();
+      expect(() => rm.suitedOf('')).toThrow();
+    }
+  },
   evaluateHandWithBoard: {
     combine: async () => {
       const rm = createTestInstance('AKs');
