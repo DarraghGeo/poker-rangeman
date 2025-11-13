@@ -48,7 +48,7 @@ export class RangeManager {
 
   isValidSuit(suit) {
     if (!suit || typeof suit !== 'string') return false;
-    return VALID_SUITS.includes(suit);
+    return VALID_SUITS.includes(suit.toLowerCase());
   }
 
   isValidCard(card) {
@@ -78,7 +78,9 @@ export class RangeManager {
     if (!this.isValidHand(hand)) throw new Error(`Invalid hand: ${hand}`);
     const card1 = hand.substring(0, 2);
     const card2 = hand.substring(2, 4);
-    const [high, low] = this.normalizeCardOrder(card1, card2);
+    const normalizedCard1 = card1[0] + card1[1].toLowerCase();
+    const normalizedCard2 = card2[0] + card2[1].toLowerCase();
+    const [high, low] = this.normalizeCardOrder(normalizedCard1, normalizedCard2);
     if (high[0] === low[0]) {
       const suits = [high[1], low[1]].sort();
       return high[0] + suits[0] + high[0] + suits[1];
@@ -86,14 +88,18 @@ export class RangeManager {
     return high + low;
   }
 
+  _normalizeHandSegment(segment) {
+    return segment[0] + segment[1].toLowerCase() + segment[2] + segment[3].toLowerCase();
+  }
+
   _normalizeSegment(segment) {
     const trimmed = segment.trim();
+    if (trimmed.length === 4 && this.isValidHand(trimmed)) return this._normalizeHandSegment(trimmed);
     if (trimmed.includes('-')) {
       const parts = trimmed.split('-');
       return parts.map(p => {
         const lastChar = p.slice(-1).toLowerCase();
-        if (lastChar === 's' || lastChar === 'o') return p.slice(0, -1).toUpperCase() + lastChar;
-        return p.toUpperCase();
+        return (lastChar === 's' || lastChar === 'o') ? p.slice(0, -1).toUpperCase() + lastChar : p.toUpperCase();
       }).join('-');
     }
     const lastChar = trimmed.slice(-1).toLowerCase();
@@ -261,11 +267,11 @@ export class RangeManager {
   }
 
   _extractCard1Wildcard(card1, result) {
-    if (card1[1] === 'x') {
+    if (card1[1].toLowerCase() === 'x') {
       result.card1SuitWildcard = true;
       result.card1ExcludeSuit = 's';
     } else {
-      result.card1Suit = card1[1];
+      result.card1Suit = card1[1].toLowerCase();
     }
   }
 
@@ -273,11 +279,11 @@ export class RangeManager {
     if (card2[0] === 'X') {
       result.card2RankWildcard = true;
       result.card2ExcludeRank = card1[0];
-      if (card2[1] === 'x') result.card2SuitWildcard = true;
-      else result.card2Suit = card2[1];
+      if (card2[1].toLowerCase() === 'x') result.card2SuitWildcard = true;
+      else result.card2Suit = card2[1].toLowerCase();
     } else {
       result.card2Rank = card2[0];
-      result.card2Suit = card2[1];
+      result.card2Suit = card2[1].toLowerCase();
     }
   }
 
@@ -338,13 +344,17 @@ export class RangeManager {
   }
 
   generateSuitedCombination(rank1, suit1, rank2, suit2) {
-    if (suit1 !== suit2) throw new Error('Suits must match for suited combination');
-    return this.normalizeHand(rank1 + suit1 + rank2 + suit2);
+    const s1 = suit1.toLowerCase();
+    const s2 = suit2.toLowerCase();
+    if (s1 !== s2) throw new Error('Suits must match for suited combination');
+    return this.normalizeHand(rank1 + s1 + rank2 + s2);
   }
 
   generateOffsuitCombination(rank1, suit1, rank2, suit2) {
-    if (suit1 === suit2) throw new Error('Suits must differ for offsuit combination');
-    return this.normalizeHand(rank1 + suit1 + rank2 + suit2);
+    const s1 = suit1.toLowerCase();
+    const s2 = suit2.toLowerCase();
+    if (s1 === s2) throw new Error('Suits must differ for offsuit combination');
+    return this.normalizeHand(rank1 + s1 + rank2 + s2);
   }
 
   _getCard1Suits(info) {
@@ -499,15 +509,17 @@ export class RangeManager {
   }
 
   handHasSuit(hand, suit) {
-    if (!this.isValidSuit(suit)) return false;
+    const normalizedSuit = suit.toLowerCase();
+    if (!this.isValidSuit(normalizedSuit)) return false;
     const [card1, card2] = this.extractCardsFromHand(hand);
-    return card1[1] === suit || card2[1] === suit;
+    return card1[1] === normalizedSuit || card2[1] === normalizedSuit;
   }
 
   handSuitedOf(hand, suit) {
-    if (!this.isValidSuit(suit)) return false;
+    const normalizedSuit = suit.toLowerCase();
+    if (!this.isValidSuit(normalizedSuit)) return false;
     const [card1, card2] = this.extractCardsFromHand(hand);
-    return card1[1] === suit && card2[1] === suit;
+    return card1[1] === normalizedSuit && card2[1] === normalizedSuit;
   }
 
   exclude(deadCards) {
@@ -520,8 +532,9 @@ export class RangeManager {
   }
 
   hasSuit(suit) {
-    if (!this.isValidSuit(suit)) throw new Error(`Invalid suit: ${suit}`);
-    const filtered = this.filteredHands.filter(hand => this.handHasSuit(hand, suit));
+    const normalizedSuit = suit.toLowerCase();
+    if (!this.isValidSuit(normalizedSuit)) throw new Error(`Invalid suit: ${suit}`);
+    const filtered = this.filteredHands.filter(hand => this.handHasSuit(hand, normalizedSuit));
     const newInstance = Object.create(Object.getPrototypeOf(this));
     Object.assign(newInstance, this);
     newInstance.filteredHands = filtered;
@@ -529,8 +542,9 @@ export class RangeManager {
   }
 
   suitedOf(suit) {
-    if (!this.isValidSuit(suit)) throw new Error(`Invalid suit: ${suit}`);
-    const filtered = this.filteredHands.filter(hand => this.handSuitedOf(hand, suit));
+    const normalizedSuit = suit.toLowerCase();
+    if (!this.isValidSuit(normalizedSuit)) throw new Error(`Invalid suit: ${suit}`);
+    const filtered = this.filteredHands.filter(hand => this.handSuitedOf(hand, normalizedSuit));
     const newInstance = Object.create(Object.getPrototypeOf(this));
     Object.assign(newInstance, this);
     newInstance.filteredHands = filtered;
