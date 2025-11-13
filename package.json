@@ -1,6 +1,6 @@
 {
   "name": "poker-rangeman",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "A comprehensive JavaScript library for parsing, managing, and filtering poker hand ranges with support for dead cards, board cards, and hand strength evaluation",
   "main": "src/rangeManager.js",
   "type": "module",
