@@ -214,7 +214,7 @@ export class RangeManager {
       const rank = range[0];
       return [rank, 'A'];
     }
-    const parts = range.split('-');
+      const parts = range.split('-');
     if (parts.length === 1) {
       const rank = parts[0][0];
       return [rank, rank];
@@ -445,9 +445,9 @@ export class RangeManager {
 
   _parseOffsuitRangeBetween(info, range) {
     if (info.rank1 !== info.endRank1) throw new Error(`Invalid offsuit range: ${range}`);
-    const ranks = this.getAllRanksBetween(info.rank2, info.endRank2);
+      const ranks = this.getAllRanksBetween(info.rank2, info.endRank2);
     return ranks.flatMap(rank => this.generateOffsuitRange(info.rank1, rank));
-  }
+    }
 
   _parseOffsuitSingle(info) {
     return this.generateOffsuitRange(info.rank1, info.rank2);
@@ -752,6 +752,13 @@ export class RangeManager {
     return this.groupHandsIntoNotation(this.filteredHands);
   }
 
+  toNotation() {
+    const notation = this.toString();
+    if (!notation) return '';
+    const parts = notation.split(',');
+    return [...this._abbreviatePairs(parts.filter(p => /^([AKQJT2-9])\1$/.test(p))), ...this._abbreviateSuited(parts.filter(p => /^[AKQJT2-9]{2}s$/.test(p))), ...this._abbreviateOffsuit(parts.filter(p => /^[AKQJT2-9]{2}o$/.test(p)))].join(',');
+  }
+
   // ============================================================================
   // INTERNAL HELPER METHODS
   // ============================================================================
@@ -789,6 +796,93 @@ export class RangeManager {
       categories[cat.type === 'pair' ? 'pairs' : cat.type === 'suited' ? 'suited' : 'offsuit'].push(cat.notation);
     });
     return this._buildNotationParts(categories);
+  }
+
+  _detectConsecutiveRanks(ranks) {
+    if (ranks.length < 2) return { isConsecutive: false };
+    const sortedRanks = [...new Set(ranks)].sort((a, b) => this.getRankValue(b) - this.getRankValue(a));
+    const expected = this.getAllRanksBetween(sortedRanks[0], sortedRanks[sortedRanks.length - 1]);
+    if (expected.length !== sortedRanks.length || !expected.every((r, i) => r === sortedRanks[i])) return { isConsecutive: false };
+    return { isConsecutive: true, startRank: sortedRanks[0], endRank: sortedRanks[sortedRanks.length - 1], goesToAce: sortedRanks[0] === 'A' };
+  }
+
+  _findConsecutiveSequences(ranks) {
+    if (ranks.length === 0) return [];
+    const sorted = [...new Set(ranks)].sort((a, b) => this.getRankValue(a) - this.getRankValue(b));
+    const sequences = [];
+    let start = sorted[0], end = sorted[0];
+    for (let i = 1; i < sorted.length; i++) {
+      if (this.getRankValue(sorted[i]) === this.getRankValue(end) + 1) end = sorted[i];
+      else { sequences.push({ start, end }); start = end = sorted[i]; }
+    }
+    return [...sequences, { start, end }];
+  }
+
+  _processPairSequence(seq) {
+    if (seq.start === seq.end) return seq.start + seq.start;
+    const detected = this._detectConsecutiveRanks([seq.start, seq.end]);
+    if (detected.goesToAce) return seq.end + seq.end + '+';
+    return seq.end + seq.end + '-' + seq.start + seq.start;
+  }
+
+  _abbreviatePairs(pairs) {
+    if (pairs.length === 0) return [];
+    const ranks = [...new Set(pairs)].map(p => p[0]);
+    const sequences = this._findConsecutiveSequences(ranks);
+    return sequences.map(seq => this._processPairSequence(seq)).sort((a, b) => this.getRankValue(b[0]) - this.getRankValue(a[0]));
+  }
+
+  _groupByFirstRank(notations) {
+    const groups = {};
+    notations.forEach(not => {
+      if (!groups[not[0]]) groups[not[0]] = [];
+      groups[not[0]].push(not);
+    });
+    return groups;
+  }
+
+  _shouldUsePlusNotation(firstRank, highestSecondRank, rankDiff, detected) {
+    const isHighRank = firstRank === 'Q' || firstRank === 'K' || firstRank === 'A';
+    return (isHighRank && rankDiff === 1) || highestSecondRank === 'Q' || highestSecondRank === 'K' || detected.startRank === 'K';
+  }
+
+  _processSequence(seq, firstRank, suffix) {
+    if (seq.start === seq.end) return [firstRank + seq.start + suffix];
+    const detected = this._detectConsecutiveRanks([seq.start, seq.end]);
+    const rankDiff = this.getRankValue(firstRank) - this.getRankValue(seq.end);
+    if (this._shouldUsePlusNotation(firstRank, seq.end, rankDiff, detected)) return [firstRank + seq.start + suffix + '+'];
+    return [firstRank + seq.start + suffix + '-' + firstRank + seq.end + suffix];
+  }
+
+  _shouldCombineToPlus(sequences, firstRank) {
+    if (sequences.length === 1) return false;
+    const lastSeq = sequences[sequences.length - 1];
+    return lastSeq.start === lastSeq.end && lastSeq.start === 'Q' && firstRank === 'K';
+  }
+
+  _processGroup(group, suffix) {
+    const secondRanks = [...new Set(group)].map(h => h[1]);
+    const sequences = this._findConsecutiveSequences(secondRanks);
+    const firstRank = group[0][0];
+    if (sequences.length === 1) return this._processSequence(sequences[0], firstRank, suffix);
+    if (this._shouldCombineToPlus(sequences, firstRank)) return [firstRank + sequences[0].start + suffix + '+'];
+    return sequences.flatMap(seq => this._processSequence(seq, firstRank, suffix));
+  }
+
+  _abbreviateGroup(groups, suffix) {
+    const result = [];
+    Object.values(groups).forEach(group => result.push(...this._processGroup(group, suffix)));
+    return result;
+  }
+
+  _abbreviateSuited(suited) {
+    if (suited.length === 0) return [];
+    return this._abbreviateGroup(this._groupByFirstRank(suited), 's');
+  }
+
+  _abbreviateOffsuit(offsuit) {
+    if (offsuit.length === 0) return [];
+    return this._abbreviateGroup(this._groupByFirstRank(offsuit), 'o');
   }
 }
 
