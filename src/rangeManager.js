@@ -561,16 +561,23 @@ export class RangeManager {
       const module = await import('poker-extval');
       evaluateHandCache = module.evaluateHand;
     }
-    const allCards = [...this.extractCardsFromHand(hand), ...boardCards];
+    const handCards = this.extractCardsFromHand(hand);
+    const allCards = [...handCards, ...boardCards];
     const uniqueCards = [...new Set(allCards)];
-    if (uniqueCards.length < 5) throw new Error('Need at least 5 cards total');
+    if (uniqueCards.length < 5) {
+      throw new Error(`Need at least 5 unique cards total (hand + board). Got ${uniqueCards.length} unique cards from hand [${handCards.join(', ')}] and board [${boardCards.join(', ')}]`);
+    }
     return evaluateHandCache(uniqueCards);
   }
 
   async handMatchesCriteria(hand, criteria, boardCards) {
+    const handCards = this.extractCardsFromHand(hand);
+    const handCardSet = new Set(handCards);
+    const boardCardSet = new Set(boardCards);
+    const hasOverlap = handCards.some(card => boardCardSet.has(card));
+    if (hasOverlap) return false;
     const evaluation = await this.evaluateHandWithBoard(hand, boardCards);
     const normalizedCriteria = this.normalizeCriteria(criteria);
-    // Check all possible 5-card combinations, not just the first one
     return Object.values(evaluation).some(evalObj => 
       normalizedCriteria.some(c => evalObj[c] === true)
     );
