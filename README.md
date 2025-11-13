@@ -10,14 +10,10 @@ A comprehensive JavaScript library for parsing, managing, and filtering poker ha
   - [Constructor](#constructor)
   - [Query Methods](#query-methods)
   - [Filtering Methods](#filtering-methods)
-  - [Validation Methods](#validation-methods)
-  - [Normalization Methods](#normalization-methods)
-  - [Pattern Detection Methods](#pattern-detection-methods)
-  - [Extraction Methods](#extraction-methods)
-  - [Generation Methods](#generation-methods)
-  - [Parsing Methods](#parsing-methods)
+  - [Evaluation Methods](#evaluation-methods)
 - [Range Notation Guide](#range-notation-guide)
 - [Hand Strength Criteria](#hand-strength-criteria)
+- [Method Chaining Examples](#method-chaining-examples)
 - [Examples](#examples)
 
 ## Installation
@@ -47,7 +43,7 @@ console.log(filtered.size());     // 92
 
 // Filter by hand strength (requires board cards)
 const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
-const pairs = await rm.match(['Pair'], board);
+const pairs = await rm.makesHand(['Pair'], board);
 console.log(pairs.toString());
 
 // Filter by suit
@@ -108,6 +104,12 @@ Alias for `toArray()`.
 
 **Returns:** `string[]` - Array of normalized hand strings
 
+**Example:**
+```javascript
+const rm = new RangeManager('AKs');
+rm.getHands(); // ['AcKc', 'AdKd', 'AhKh', 'AsKs']
+```
+
 #### `size()`
 
 Returns the number of hands in the filtered range.
@@ -149,63 +151,103 @@ const rm = new RangeManager('22+,AKs,AKo');
 rm.toString(); // "22,33,44,55,66,77,88,99,TT,JJ,QQ,KK,AA,AKs,AKo"
 ```
 
+#### `toNotation()`
+
+Returns the range as an abbreviated notation string, using `+` and `-` notation where possible.
+
+**Returns:** `string` - Abbreviated range notation
+
+**Example:**
+```javascript
+const rm = new RangeManager('22,33,44,55,66,77,88,99,TT,JJ,QQ,KK,AA,AKs');
+rm.toString();    // "22,33,44,55,66,77,88,99,TT,JJ,QQ,KK,AA,AKs"
+rm.toNotation();  // "22+,AKs"
+
+const rm2 = new RangeManager('A2s,A3s,A4s,A5s,A6s,AJs');
+rm2.toString();   // "A2s,A3s,A4s,A5s,A6s,AJs"
+rm2.toNotation(); // "A2s-A6s,AJs"
+```
+
 ---
 
 ### Filtering Methods
 
-#### `exclude(deadCards)`
+All filtering methods return a new `RangeManager` instance, allowing for method chaining. The original instance remains unchanged.
 
-Filters out hands containing any of the specified dead cards. Returns a new RangeManager instance (immutable).
+#### `exclude(input)`
+
+Excludes hands from the range. Accepts either dead cards (array of 2-character card strings) or range notation/array of hands.
 
 **Parameters:**
-- `deadCards` (string[]): Array of dead cards (e.g., `['Ah', 'Kd', 'Qc']`)
+- `input` (string | string[]): 
+  - If array of 2-character strings: treated as dead cards (e.g., `['Ah', 'Kd']`)
+  - If string or array of 4-character strings: treated as range notation or hands to exclude
 
-**Returns:** `RangeManager` - New instance with filtered hands
+**Returns:** `RangeManager` - New instance with excluded hands removed
 
-**Example:**
+**Examples:**
 ```javascript
 const rm = new RangeManager('AKs');
-const filtered = rm.exclude(['Ah']);
-filtered.size();        // 3 (removed AhKh)
-rm.size();              // 4 (original unchanged)
+
+// Exclude by dead cards
+const filtered1 = rm.exclude(['Ah']);
+filtered1.size();        // 3 (removed AhKh)
+rm.size();               // 4 (original unchanged)
+
+// Exclude by range notation
+const filtered2 = rm.exclude('AhKh');
+filtered2.size();        // 3
+
+// Exclude by array of hands
+const filtered3 = rm.exclude(['AhKh', 'AdKd']);
+filtered3.size();        // 2
 ```
 
-**Throws:**
-- `Error`: If deadCards is not an array
+#### `include(input)`
 
-#### `match(criteria, boardCards)`
-
-Filters the range to only include hands that match the specified strength criteria on the given board. Returns a Promise that resolves to a new RangeManager instance.
+Adds hands to the range. Accepts range notation string or array of hands.
 
 **Parameters:**
-- `criteria` (string[]): Array of hand strength criteria (e.g., `['Pair', 'Straight']`)
-- `boardCards` (string[]): Array of board cards (must have at least 3 cards)
+- `input` (string | string[]): Range notation string or array of hand strings
 
-**Returns:** `Promise<RangeManager>` - Promise resolving to new instance with matching hands
+**Returns:** `RangeManager` - New instance with included hands added
 
-**Example:**
+**Examples:**
 ```javascript
-const rm = new RangeManager('22+,AKs,AKo');
-const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th']; // Broadway straight board
+const rm = new RangeManager('AKs');
 
-// Find pairs
-const pairs = await rm.match(['Pair'], board);
-pairs.toString();
+// Include by range notation
+const expanded = rm.include('AKo');
+expanded.size();         // 16 (4 suited + 12 offsuit)
+expanded.toString();     // "AKs,AKo"
 
-// Find multiple criteria
-const strong = await rm.match(['Pair', 'Straight', 'Flush'], board);
+// Include by array of hands
+const expanded2 = rm.include(['QcJc', 'QdJd']);
+expanded2.size();        // 6
 ```
 
-**Throws:**
-- `Error`: If criteria is not an array
-- `Error`: If boardCards is empty or invalid
-- `Error`: If invalid criteria are provided
+#### `intersect(input)`
 
-**Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
+Returns only hands that exist in both the current range and the input range.
+
+**Parameters:**
+- `input` (string | string[]): Range notation string or array of hand strings
+
+**Returns:** `RangeManager` - New instance with intersecting hands only
+
+**Examples:**
+```javascript
+const rm1 = new RangeManager('22+,AKs,AKo');
+const rm2 = new RangeManager('AKs,AKo,QQ+');
+
+const intersection = rm1.intersect('QQ+');
+intersection.size();     // Only QQ, KK, AA, AKs, AKo
+intersection.toString();  // "QQ,KK,AA,AKs,AKo"
+```
 
 #### `hasSuit(suit)`
 
-Filters the range to only include hands where at least one card matches the specified suit. Returns a new RangeManager instance (immutable).
+Filters the range to only include hands where at least one card matches the specified suit.
 
 **Parameters:**
 - `suit` (string): Suit to filter by (`'s'`, `'h'`, `'d'`, `'c'`)
@@ -227,7 +269,7 @@ rm.size();                // Original unchanged
 
 #### `suitedOf(suit)`
 
-Filters the range to only include hands that are suited (both cards same suit) AND both cards match the specified suit. Returns a new RangeManager instance (immutable).
+Filters the range to only include hands that are suited (both cards same suit) AND both cards match the specified suit.
 
 **Parameters:**
 - `suit` (string): Suit to filter by (`'s'`, `'h'`, `'d'`, `'c'`)
@@ -247,6 +289,102 @@ rm.size();                // Original unchanged
 
 **Throws:**
 - `Error`: If suit is invalid
+
+#### `makesHand(criteria, boardCards)`
+
+Filters the range to only include hands that make the specified strength criteria on the given board. Requires at least 3 board cards.
+
+**Parameters:**
+- `criteria` (string[]): Array of hand strength criteria (e.g., `['Pair', 'Straight']`)
+- `boardCards` (string[]): Array of board cards (must have at least 3 cards)
+
+**Returns:** `Promise<RangeManager>` - Promise resolving to new instance with matching hands
+
+**Example:**
+```javascript
+const rm = new RangeManager('22+,AKs,AKo');
+const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th']; // Broadway straight board
+
+// Find pairs
+const pairs = await rm.makesHand(['Pair'], board);
+pairs.toString();
+
+// Find multiple criteria (OR logic - matches ANY)
+const strong = await rm.makesHand(['Pair', 'Straight', 'Flush'], board);
+```
+
+**Throws:**
+- `Error`: If criteria is not an array
+- `Error`: If boardCards is empty or invalid
+- `Error`: If invalid criteria are provided
+
+**Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
+
+#### `hitsHand(criteria, boardCards)`
+
+Filters the range to only include hands where at least one hand card is used in making the specified criteria. Requires at least 3 board cards.
+
+**Parameters:**
+- `criteria` (string[]): Array of hand strength criteria
+- `boardCards` (string[]): Array of board cards (must have at least 3 cards)
+
+**Returns:** `Promise<RangeManager>` - Promise resolving to new instance with matching hands
+
+**Example:**
+```javascript
+const rm = new RangeManager('22+,AKs,AKo');
+const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
+
+// Find hands where at least one card is used in making a pair
+const hands = await rm.hitsHand(['Pair'], board);
+```
+
+**Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
+
+#### `hitsHandBoth(criteria, boardCards)`
+
+Filters the range to only include hands where both hand cards are used in making the specified criteria. Requires at least 3 board cards.
+
+**Parameters:**
+- `criteria` (string[]): Array of hand strength criteria
+- `boardCards` (string[]): Array of board cards (must have at least 3 cards)
+
+**Returns:** `Promise<RangeManager>` - Promise resolving to new instance with matching hands
+
+**Example:**
+```javascript
+const rm = new RangeManager('22+,AKs,AKo');
+const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
+
+// Find hands where both cards are used in making a pair
+const hands = await rm.hitsHandBoth(['Pair'], board);
+```
+
+**Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
+
+#### `setDeadCards(deadCards)`
+
+Sets dead cards for evaluation purposes. Dead cards limit which hands can be dealt but don't directly filter the range.
+
+**Parameters:**
+- `deadCards` (string[]): Array of dead cards (2-character strings, e.g., `['Ah', 'Kd']`)
+
+**Returns:** `RangeManager` - New instance with dead cards set
+
+**Example:**
+```javascript
+const rm = new RangeManager('22+,AKs,AKo');
+const withDeadCards = rm.setDeadCards(['Ah', 'Kd']);
+// Dead cards are used for evaluation but don't change the active range
+```
+
+**Throws:**
+- `Error`: If deadCards is not an array
+- `Error`: If any card is invalid
+
+---
+
+### Evaluation Methods
 
 #### `evaluateHand(hand, boardCards)`
 
@@ -278,444 +416,26 @@ const isPair = evaluation.is('Pair');
 
 **Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
 
----
+#### `getObject(hand, boardCards)`
 
-### Validation Methods
-
-#### `isValidRank(rank)`
-
-Checks if a rank is valid.
+Returns the raw evaluation object from `poker-extval` for a single hand.
 
 **Parameters:**
-- `rank` (string): Card rank (`'A'`, `'K'`, `'Q'`, `'J'`, `'T'`, `'9'`-`'2'`)
+- `hand` (string): Hand to evaluate (e.g., `'AcKc'`)
+- `boardCards` (string[]): Array of board cards (must have at least 3 cards)
 
-**Returns:** `boolean`
+**Returns:** `Promise<object>` - Promise resolving to raw evaluation object
 
 **Example:**
 ```javascript
-rm.isValidRank('A'); // true
-rm.isValidRank('Z'); // false
+const rm = new RangeManager('AKs');
+const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
+
+const evaluation = await rm.getObject('AcKc', board);
+// Returns raw poker-extval evaluation object
 ```
 
-#### `isValidSuit(suit)`
-
-Checks if a suit is valid.
-
-**Parameters:**
-- `suit` (string): Card suit (`'s'`, `'h'`, `'d'`, `'c'`)
-
-**Returns:** `boolean`
-
-**Example:**
-```javascript
-rm.isValidSuit('s'); // true
-rm.isValidSuit('x'); // false
-```
-
-#### `isValidCard(card)`
-
-Checks if a card string is valid.
-
-**Parameters:**
-- `card` (string): Card notation (e.g., `'Ac'`, `'Kh'`)
-
-**Returns:** `boolean`
-
-**Example:**
-```javascript
-rm.isValidCard('Ac'); // true
-rm.isValidCard('Ax'); // false
-rm.isValidCard('Zc'); // false
-```
-
-#### `isValidHand(hand)`
-
-Checks if a hand string is valid (4 characters, two different cards).
-
-**Parameters:**
-- `hand` (string): Hand notation (e.g., `'AcKc'`)
-
-**Returns:** `boolean`
-
-**Example:**
-```javascript
-rm.isValidHand('AcKc'); // true
-rm.isValidHand('AcAc'); // false (duplicate cards)
-rm.isValidHand('Ac');   // false (too short)
-```
-
----
-
-### Normalization Methods
-
-#### `normalizeHand(hand)`
-
-Normalizes a hand string by ordering cards by rank (higher rank first) and suits.
-
-**Parameters:**
-- `hand` (string): Hand notation
-
-**Returns:** `string` - Normalized hand
-
-**Example:**
-```javascript
-rm.normalizeHand('KcAc'); // 'AcKc'
-rm.normalizeHand('2h3d'); // '3d2h' (3 > 2)
-rm.normalizeHand('AcAd'); // 'AcAd' (pairs sorted by suit)
-```
-
-**Throws:**
-- `Error`: If hand is invalid
-
-#### `normalizeNotation(notation)`
-
-Normalizes range notation string (uppercases ranks, preserves 's'/'o' suffixes).
-
-**Parameters:**
-- `notation` (string): Range notation
-
-**Returns:** `string` - Normalized notation
-
-**Example:**
-```javascript
-rm.normalizeNotation('aks,ako');     // 'AKs,AKo'
-rm.normalizeNotation('22+');         // '22+'
-rm.normalizeNotation('a3s-a6s');     // 'A3s-A6s'
-```
-
-#### `normalizeCardOrder(card1, card2)`
-
-Orders two cards by rank (higher rank first).
-
-**Parameters:**
-- `card1` (string): First card
-- `card2` (string): Second card
-
-**Returns:** `[string, string]` - Array with [higher, lower] cards
-
-**Example:**
-```javascript
-rm.normalizeCardOrder('Kc', 'Ac'); // ['Ac', 'Kc']
-rm.normalizeCardOrder('Ac', 'Kc'); // ['Ac', 'Kc']
-```
-
----
-
-### Pattern Detection Methods
-
-#### `isPairNotation(segment)`
-
-Checks if a notation segment represents a pair or pair range.
-
-**Parameters:**
-- `segment` (string): Notation segment
-
-**Returns:** `boolean`
-
-**Example:**
-```javascript
-rm.isPairNotation('AA');   // true
-rm.isPairNotation('22+');  // true
-rm.isPairNotation('22-55'); // true
-rm.isPairNotation('AKs');  // false
-```
-
-#### `isSuitedNotation(segment)`
-
-Checks if a notation segment represents a suited hand or range.
-
-**Parameters:**
-- `segment` (string): Notation segment
-
-**Returns:** `boolean`
-
-**Example:**
-```javascript
-rm.isSuitedNotation('AKs');    // true
-rm.isSuitedNotation('A2s+');   // true
-rm.isSuitedNotation('A3s-A6s'); // true
-rm.isSuitedNotation('AKo');    // false
-```
-
-#### `isOffsuitNotation(segment)`
-
-Checks if a notation segment represents an offsuit hand or range.
-
-**Parameters:**
-- `segment` (string): Notation segment
-
-**Returns:** `boolean`
-
-**Example:**
-```javascript
-rm.isOffsuitNotation('AKo');    // true
-rm.isOffsuitNotation('A2o+');   // true
-rm.isOffsuitNotation('A3o-A6o'); // true
-rm.isOffsuitNotation('AKs');    // false
-```
-
-#### `isWildcardNotation(segment)`
-
-Checks if a notation segment represents a wildcard hand.
-
-**Parameters:**
-- `segment` (string): Notation segment (must be 4 characters with 'X' or 'x')
-
-**Returns:** `boolean`
-
-**Example:**
-```javascript
-rm.isWildcardNotation('AxKs'); // true
-rm.isWildcardNotation('KxAh'); // true
-rm.isWildcardNotation('AKs');  // false
-```
-
-#### `detectNotationType(segment)`
-
-Detects the type of notation segment.
-
-**Parameters:**
-- `segment` (string): Notation segment
-
-**Returns:** `string | null` - One of: `'pair'`, `'suited'`, `'offsuit'`, `'wildcard'`, `'specific'`, or `null`
-
-**Example:**
-```javascript
-rm.detectNotationType('AA');   // 'pair'
-rm.detectNotationType('AKs');  // 'suited'
-rm.detectNotationType('AKo');  // 'offsuit'
-rm.detectNotationType('AxKs'); // 'wildcard'
-rm.detectNotationType('AcKc'); // 'specific'
-```
-
----
-
-### Extraction Methods
-
-#### `extractCardsFromHand(hand)`
-
-Extracts the two cards from a hand string.
-
-**Parameters:**
-- `hand` (string): Hand notation (4 characters)
-
-**Returns:** `string[]` - Array of two cards `[card1, card2]`
-
-**Example:**
-```javascript
-rm.extractCardsFromHand('AcKc'); // ['Ac', 'Kc']
-```
-
-#### `extractPairRanks(range)`
-
-Extracts start and end ranks from a pair range notation.
-
-**Parameters:**
-- `range` (string): Pair range (e.g., `'22+'`, `'AA'`, `'22-55'`)
-
-**Returns:** `[string, string]` - Array with `[startRank, endRank]`
-
-**Example:**
-```javascript
-rm.extractPairRanks('22+');  // ['2', 'A']
-rm.extractPairRanks('AA');   // ['A', 'A']
-rm.extractPairRanks('22-55'); // ['2', '5']
-```
-
-#### `extractSuitedRanks(range)`
-
-Extracts rank information from a suited range notation.
-
-**Parameters:**
-- `range` (string): Suited range (e.g., `'AKs'`, `'A2s+'`, `'A3s-A6s'`)
-
-**Returns:** `object | null` - Object with rank information or null if invalid
-
-**Example:**
-```javascript
-rm.extractSuitedRanks('AKs');    // {rank1: 'A', rank2: 'K'}
-rm.extractSuitedRanks('A2s+');   // {rank1: 'A', rank2: '2', isPlus: true}
-rm.extractSuitedRanks('A3s-A6s'); // {rank1: 'A', rank2: '3', endRank1: 'A', endRank2: '6'}
-```
-
-#### `extractOffsuitRanks(range)`
-
-Extracts rank information from an offsuit range notation.
-
-**Parameters:**
-- `range` (string): Offsuit range (e.g., `'AKo'`, `'A2o+'`, `'A3o-A6o'`)
-
-**Returns:** `object | null` - Object with rank information or null if invalid
-
-**Example:**
-```javascript
-rm.extractOffsuitRanks('AKo');    // {rank1: 'A', rank2: 'K'}
-rm.extractOffsuitRanks('A2o+');   // {rank1: 'A', rank2: '2', isPlus: true}
-```
-
-#### `extractWildcardHand(hand)`
-
-Extracts information from a wildcard hand notation.
-
-**Parameters:**
-- `hand` (string): Wildcard hand (e.g., `'AxKs'`, `'KxAh'`)
-
-**Returns:** `object | null` - Object with wildcard information or null if invalid
-
-**Example:**
-```javascript
-rm.extractWildcardHand('AxKs'); // {card1Rank: 'A', card1SuitWildcard: true, ...}
-```
-
----
-
-### Generation Methods
-
-#### `generatePairCombinations(rank)`
-
-Generates all pair combinations for a given rank.
-
-**Parameters:**
-- `rank` (string): Card rank
-
-**Returns:** `string[]` - Array of normalized pair hands
-
-**Example:**
-```javascript
-rm.generatePairCombinations('A'); 
-// ['AcAd', 'AcAh', 'AcAs', 'AdAh', 'AdAs', 'AhAs']
-```
-
-#### `generatePairRange(start, end)`
-
-Generates all pairs between two ranks (inclusive).
-
-**Parameters:**
-- `start` (string): Start rank
-- `end` (string): End rank
-
-**Returns:** `string[]` - Array of normalized pair hands
-
-**Example:**
-```javascript
-rm.generatePairRange('2', 'A'); // All pairs from 22 to AA
-```
-
-#### `generateSuitedRange(rank1, rank2)`
-
-Generates all suited combinations for two ranks.
-
-**Parameters:**
-- `rank1` (string): First rank (higher)
-- `rank2` (string): Second rank (lower)
-
-**Returns:** `string[]` - Array of normalized suited hands
-
-**Example:**
-```javascript
-rm.generateSuitedRange('A', 'K'); // ['AcKc', 'AdKd', 'AhKh', 'AsKs']
-```
-
-#### `generateOffsuitRange(rank1, rank2)`
-
-Generates all offsuit combinations for two ranks.
-
-**Parameters:**
-- `rank1` (string): First rank (higher)
-- `rank2` (string): Second rank (lower)
-
-**Returns:** `string[]` - Array of normalized offsuit hands
-
-**Example:**
-```javascript
-rm.generateOffsuitRange('A', 'K'); // ['AcKd', 'AcKh', 'AcKs', 'AdKc', ...] (12 combos)
-```
-
-#### `generateWildcardCombinations(hand)`
-
-Generates all combinations matching a wildcard pattern.
-
-**Parameters:**
-- `hand` (string): Wildcard hand (e.g., `'AxKs'`)
-
-**Returns:** `string[]` - Array of normalized hands matching the pattern
-
-**Example:**
-```javascript
-rm.generateWildcardCombinations('AxKs'); // All A-X suited hands with K kicker
-```
-
----
-
-### Parsing Methods
-
-#### `parsePairRange(range)`
-
-Parses a pair range notation and returns all matching hands.
-
-**Parameters:**
-- `range` (string): Pair range (e.g., `'22+'`, `'AA'`, `'22-55'`)
-
-**Returns:** `string[]` - Array of normalized hands
-
-**Throws:**
-- `Error`: If range is invalid
-
-**Example:**
-```javascript
-rm.parsePairRange('22+'); // All pairs from 22 to AA
-rm.parsePairRange('AA');  // Just AA (6 combos)
-```
-
-#### `parseSuitedRange(range)`
-
-Parses a suited range notation and returns all matching hands.
-
-**Parameters:**
-- `range` (string): Suited range (e.g., `'AKs'`, `'A2s+'`, `'A3s-A6s'`)
-
-**Returns:** `string[]` - Array of normalized hands
-
-**Throws:**
-- `Error`: If range is invalid
-
-**Example:**
-```javascript
-rm.parseSuitedRange('AKs');    // ['AcKc', 'AdKd', 'AhKh', 'AsKs']
-rm.parseSuitedRange('A2s+');   // All A2s through AKs
-```
-
-#### `parseOffsuitRange(range)`
-
-Parses an offsuit range notation and returns all matching hands.
-
-**Parameters:**
-- `range` (string): Offsuit range (e.g., `'AKo'`, `'A2o+'`, `'A3o-A6o'`)
-
-**Returns:** `string[]` - Array of normalized hands
-
-**Throws:**
-- `Error`: If range is invalid
-
-**Example:**
-```javascript
-rm.parseOffsuitRange('AKo');    // All AK offsuit combinations (12)
-rm.parseOffsuitRange('A2o+');   // All A2o through AKo
-```
-
-#### `parseWildcardHand(hand)`
-
-Parses a wildcard hand and returns all matching combinations.
-
-**Parameters:**
-- `hand` (string): Wildcard hand (e.g., `'AxKs'`)
-
-**Returns:** `string[]` - Array of normalized hands
-
-**Example:**
-```javascript
-rm.parseWildcardHand('AxKs'); // All combinations matching the pattern
-```
+**Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
 
 ---
 
@@ -757,7 +477,7 @@ Use commas to separate different notation types:
 
 ## Hand Strength Criteria
 
-The following criteria can be used with the `match()` method:
+The following criteria can be used with the `makesHand()`, `hitsHand()`, and `hitsHandBoth()` methods:
 
 ### Made Hands
 - `'Pair'` - One pair
@@ -801,7 +521,7 @@ The following criteria can be used with the `match()` method:
 ### Draws
 - `'Flush Draw'` - Flush draw
 - `'Straight Draw'` - Straight draw
-- `'Gutshot Straight Draw'` - Gutshot straight draw
+- `'Inside Straight Draw'` - Inside straight draw (gutshot)
 - `'Open Ended Straight Draw'` - Open-ended straight draw
 - `'Backdoor Flush Draw'` - Backdoor flush draw
 - `'Backdoor Straight Draw'` - Backdoor straight draw
@@ -813,6 +533,50 @@ The following criteria can be used with the `match()` method:
 - `'Jack High'` - Jack high
 - `'No Pair'` - No pair
 - `'High Card'` - High card
+
+---
+
+## Method Chaining Examples
+
+The `RangeManager` API is designed for fluent method chaining. Almost all filtering methods return a new `RangeManager` instance, allowing you to chain operations:
+
+```javascript
+import { RangeManager } from 'poker-rangeman';
+
+// Chain multiple filters
+const rm = new RangeManager('22+,AKs,AKo,AQs,AQo');
+const result = rm
+  .hasSuit('s')           // Filter to hands with at least one spade
+  .exclude(['As'])        // Remove hands with As
+  .intersect('AKs,AKo');  // Only keep AKs and AKo
+
+console.log(result.toString()); // "AKs,AKo" (without As)
+
+// Chain with async methods
+const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
+const filtered = await rm
+  .makesHand(['Pair'], board)  // Filter to pairs
+  .hasSuit('s');               // Then filter to spades
+
+// Complex chaining
+const complex = await new RangeManager('22+,AKs,AKo,AQs,AQo')
+  .exclude(['Ah', 'Kd'])           // Remove dead cards
+  .hasSuit('s')                    // Filter to spades
+  .makesHand(['Pair', 'Straight'], board)  // Filter to pairs or straights
+  .intersect('AKs');               // Only keep AKs
+
+console.log(complex.size());
+```
+
+**Note:** When chaining async methods, make sure to `await` the entire chain:
+
+```javascript
+// Correct
+const result = await rm.makesHand(['Pair'], board).hasSuit('s');
+
+// Incorrect - will not work
+const result = rm.makesHand(['Pair'], board).hasSuit('s'); // Missing await
+```
 
 ---
 
@@ -832,7 +596,7 @@ const loose = new RangeManager('22+,A2s+,A2o+,K2s+,K2o+');
 console.log(loose.size()); // Much larger
 ```
 
-### Example 2: Dead Cards
+### Example 2: Dead Cards and Exclusion
 
 ```javascript
 import { RangeManager } from 'poker-rangeman';
@@ -858,52 +622,19 @@ const rm = new RangeManager('22+,AKs,AKo');
 const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th']; // Broadway straight
 
 // Find all pairs
-const pairs = await rm.match(['Pair'], board);
+const pairs = await rm.makesHand(['Pair'], board);
 console.log('Pairs:', pairs.toString());
 
 // Find straights
-const straights = await rm.match(['Straight'], board);
+const straights = await rm.makesHand(['Straight'], board);
 console.log('Straights:', straights.toString());
 
-// Find multiple criteria
-const strong = await rm.match(['Pair', 'Straight', 'Flush'], board);
+// Find multiple criteria (OR logic)
+const strong = await rm.makesHand(['Pair', 'Straight', 'Flush'], board);
 console.log('Strong hands:', strong.toString());
 ```
 
-### Example 4: Complex Range Parsing
-
-```javascript
-import { RangeManager } from 'poker-rangeman';
-
-// Parse various notation types
-const rm1 = new RangeManager('22+,AKs,AKo');
-const rm2 = new RangeManager('A2s+,KQo');
-const rm3 = new RangeManager('AA,KK,QQ,JJ,TT');
-const rm4 = new RangeManager('AxKs'); // Wildcard
-
-console.log('22+ range:', rm1.size());
-console.log('A2s+ range:', rm2.size());
-console.log('Top pairs:', rm3.size());
-console.log('Wildcard:', rm4.size());
-```
-
-### Example 5: Immutability
-
-```javascript
-import { RangeManager } from 'poker-rangeman';
-
-const rm = new RangeManager('22+,AKs,AKo');
-const originalSize = rm.size();
-
-// Filtering returns a new instance
-const filtered = rm.exclude(['Ah']);
-
-// Original is unchanged
-console.log(rm.size() === originalSize); // true
-console.log(filtered.size() < originalSize); // true
-```
-
-### Example 6: Suit Filtering
+### Example 4: Suit Filtering
 
 ```javascript
 import { RangeManager } from 'poker-rangeman';
@@ -920,6 +651,42 @@ const heartSuited = rm.suitedOf('h');
 console.log('Hearts suited:', heartSuited.size());
 console.log('Contains AhKh:', heartSuited.contains('AhKh')); // true
 console.log('Contains AsKs:', heartSuited.contains('AsKs')); // false
+```
+
+### Example 5: Method Chaining
+
+```javascript
+import { RangeManager } from 'poker-rangeman';
+
+const rm = new RangeManager('22+,AKs,AKo,AQs,AQo');
+const board = ['Ah', 'Kd', 'Qc'];
+
+// Chain multiple filters
+const result = await rm
+  .exclude(['As'])                    // Remove As
+  .hasSuit('s')                       // Filter to spades
+  .makesHand(['Pair'], board)         // Filter to pairs
+  .intersect('AKs');                  // Only keep AKs
+
+console.log(result.size());
+console.log(result.toString());
+```
+
+### Example 6: Include and Intersect
+
+```javascript
+import { RangeManager } from 'poker-rangeman';
+
+// Start with a tight range
+const rm = new RangeManager('22+,AKs');
+
+// Add more hands
+const expanded = rm.include('AKo');
+console.log(expanded.toString()); // "22+,AKs,AKo"
+
+// Find intersection with another range
+const intersection = expanded.intersect('QQ+,AKs,AKo');
+console.log(intersection.toString()); // "QQ,KK,AA,AKs,AKo"
 ```
 
 ### Example 7: Hand Evaluation API
@@ -950,19 +717,41 @@ const isPair = eval.is('Pair');
 console.log('Is pair:', Object.keys(isPair).length > 0);
 ```
 
-### Example 8: Validation
+### Example 8: Hits Hand Methods
 
 ```javascript
 import { RangeManager } from 'poker-rangeman';
 
-const rm = new RangeManager('AKs');
+const rm = new RangeManager('22+,AKs,AKo');
+const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
 
-// Validate inputs
-console.log(rm.isValidRank('A'));  // true
-console.log(rm.isValidRank('Z'));  // false
-console.log(rm.isValidCard('Ac')); // true
-console.log(rm.isValidHand('AcKc')); // true
-console.log(rm.isValidHand('AcAc')); // false (duplicate)
+// Find hands where at least one card is used
+const oneCard = await rm.hitsHand(['Pair'], board);
+console.log('Hands using at least one card:', oneCard.size());
+
+// Find hands where both cards are used
+const bothCards = await rm.hitsHandBoth(['Pair'], board);
+console.log('Hands using both cards:', bothCards.size());
+```
+
+### Example 9: Notation Abbreviation
+
+```javascript
+import { RangeManager } from 'poker-rangeman';
+
+// Create a range
+const rm = new RangeManager('22,33,44,55,66,77,88,99,TT,JJ,QQ,KK,AA,AKs');
+
+// Get full notation
+console.log(rm.toString());   // "22,33,44,55,66,77,88,99,TT,JJ,QQ,KK,AA,AKs"
+
+// Get abbreviated notation
+console.log(rm.toNotation()); // "22+,AKs"
+
+// Another example
+const rm2 = new RangeManager('A2s,A3s,A4s,A5s,A6s,AJs');
+console.log(rm2.toString());   // "A2s,A3s,A4s,A5s,A6s,AJs"
+console.log(rm2.toNotation()); // "A2s-A6s,AJs"
 ```
 
 ---
@@ -974,4 +763,3 @@ MIT
 ## Author
 
 Poker Range Manager - A tool for managing and analyzing poker hand ranges.
-

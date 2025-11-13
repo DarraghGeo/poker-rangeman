@@ -32,7 +32,7 @@ export class RangeManager {
       throw new Error('Input must be a string or array');
     }
     
-    const parsed = this.parse(input);
+    const parsed = this._parse(input);
     this.hands = parsed;
     this.filteredHands = [...parsed];
   }
@@ -41,26 +41,26 @@ export class RangeManager {
   // VALIDATION METHODS
   // ============================================================================
 
-  isValidRank(rank) {
+  _isValidRank(rank) {
     if (!rank || typeof rank !== 'string') return false;
     return VALID_RANKS.includes(rank);
   }
 
-  isValidSuit(suit) {
+  _isValidSuit(suit) {
     if (!suit || typeof suit !== 'string') return false;
     return VALID_SUITS.includes(suit.toLowerCase());
   }
 
-  isValidCard(card) {
+  _isValidCard(card) {
     if (!card || typeof card !== 'string' || card.length !== 2) return false;
-    return this.isValidRank(card[0]) && this.isValidSuit(card[1]);
+    return this._isValidRank(card[0]) && this._isValidSuit(card[1]);
   }
 
-  isValidHand(hand) {
+  _isValidHand(hand) {
     if (!hand || typeof hand !== 'string' || hand.length !== 4) return false;
     const card1 = hand.substring(0, 2);
     const card2 = hand.substring(2, 4);
-    if (!this.isValidCard(card1) || !this.isValidCard(card2)) return false;
+    if (!this._isValidCard(card1) || !this._isValidCard(card2)) return false;
     return card1 !== card2;
   }
 
@@ -68,19 +68,19 @@ export class RangeManager {
   // NORMALIZATION METHODS
   // ============================================================================
 
-  normalizeCardOrder(card1, card2) {
+  _normalizeCardOrder(card1, card2) {
     // compareRanks returns 1 if rank1 > rank2, so >= 0 means rank1 >= rank2 (higher or equal rank first)
-    if (this.compareRanks(card1[0], card2[0]) >= 0) return [card1, card2];
+    if (this._compareRanks(card1[0], card2[0]) >= 0) return [card1, card2];
     return [card2, card1];
   }
 
-  normalizeHand(hand) {
-    if (!this.isValidHand(hand)) throw new Error(`Invalid hand: ${hand}`);
+  _normalizeHand(hand) {
+    if (!this._isValidHand(hand)) throw new Error(`Invalid hand: ${hand}`);
     const card1 = hand.substring(0, 2);
     const card2 = hand.substring(2, 4);
     const normalizedCard1 = card1[0] + card1[1].toLowerCase();
     const normalizedCard2 = card2[0] + card2[1].toLowerCase();
-    const [high, low] = this.normalizeCardOrder(normalizedCard1, normalizedCard2);
+    const [high, low] = this._normalizeCardOrder(normalizedCard1, normalizedCard2);
     if (high[0] === low[0]) {
       const suits = [high[1], low[1]].sort();
       return high[0] + suits[0] + high[0] + suits[1];
@@ -94,7 +94,7 @@ export class RangeManager {
 
   _normalizeSegment(segment) {
     const trimmed = segment.trim();
-    if (trimmed.length === 4 && this.isValidHand(trimmed)) return this._normalizeHandSegment(trimmed);
+    if (trimmed.length === 4 && this._isValidHand(trimmed)) return this._normalizeHandSegment(trimmed);
     if (trimmed.includes('-')) {
       const parts = trimmed.split('-');
       return parts.map(p => {
@@ -123,7 +123,7 @@ export class RangeManager {
   // RANK & SUIT UTILITY METHODS
   // ============================================================================
 
-  getRankValue(rank) {
+  _getRankValue(rank) {
     if (rank === 'A') return 14;
     if (rank === 'K') return 13;
     if (rank === 'Q') return 12;
@@ -132,15 +132,15 @@ export class RangeManager {
     return parseInt(rank, 10);
   }
 
-  compareRanks(rank1, rank2) {
-    const val1 = this.getRankValue(rank1);
-    const val2 = this.getRankValue(rank2);
+  _compareRanks(rank1, rank2) {
+    const val1 = this._getRankValue(rank1);
+    const val2 = this._getRankValue(rank2);
     if (val1 > val2) return 1;
     if (val1 < val2) return -1;
     return 0;
   }
 
-  getAllRanksBetween(startRank, endRank) {
+  _getAllRanksBetween(startRank, endRank) {
     const startIdx = VALID_RANKS.indexOf(startRank);
     const endIdx = VALID_RANKS.indexOf(endRank);
     if (startIdx === -1 || endIdx === -1) return [];
@@ -148,7 +148,7 @@ export class RangeManager {
     return VALID_RANKS.slice(endIdx, startIdx + 1).reverse();
   }
 
-  getAllSuits() {
+  _getAllSuits() {
     return ['c', 'd', 'h', 's'];
   }
 
@@ -156,7 +156,7 @@ export class RangeManager {
   // PATTERN DETECTION METHODS
   // ============================================================================
 
-  isPairNotation(segment) {
+  _isPairNotation(segment) {
     if (!segment || typeof segment !== 'string') return false;
     if (/^([AKQJT2-9])\1\+$/.test(segment)) return true;
     if (/^([AKQJT2-9])\1$/.test(segment)) return true;
@@ -166,36 +166,36 @@ export class RangeManager {
     return /^([AKQJT2-9])\1$/.test(parts[0]) && /^([AKQJT2-9])\1$/.test(parts[1]);
   }
 
-  isSuitedNotation(segment) {
+  _isSuitedNotation(segment) {
     if (!segment || typeof segment !== 'string') return false;
     if (/^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}s\+$/.test(segment)) return true;
     if (/^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}s-[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}s$/.test(segment)) return true;
     return /^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}s$/.test(segment);
   }
 
-  isOffsuitNotation(segment) {
+  _isOffsuitNotation(segment) {
     if (!segment || typeof segment !== 'string') return false;
     if (/^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}o\+$/.test(segment)) return true;
     if (/^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}o-[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}o$/.test(segment)) return true;
     return /^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}o$/.test(segment);
   }
 
-  isWildcardNotation(segment) {
+  _isWildcardNotation(segment) {
     if (!segment || typeof segment !== 'string' || segment.length !== 4) return false;
     return segment.includes('x') || segment.includes('X');
   }
 
-  isSpecificHandNotation(segment) {
+  _isSpecificHandNotation(segment) {
     if (!segment || typeof segment !== 'string' || segment.length !== 4) return false;
-    return this.isValidHand(segment);
+    return this._isValidHand(segment);
   }
 
-  detectNotationType(segment) {
-    if (this.isPairNotation(segment)) return 'pair';
-    if (this.isSuitedNotation(segment)) return 'suited';
-    if (this.isOffsuitNotation(segment)) return 'offsuit';
-    if (this.isWildcardNotation(segment)) return 'wildcard';
-    if (this.isSpecificHandNotation(segment)) return 'specific';
+  _detectNotationType(segment) {
+    if (this._isPairNotation(segment)) return 'pair';
+    if (this._isSuitedNotation(segment)) return 'suited';
+    if (this._isOffsuitNotation(segment)) return 'offsuit';
+    if (this._isWildcardNotation(segment)) return 'wildcard';
+    if (this._isSpecificHandNotation(segment)) return 'specific';
     return null;
   }
 
@@ -203,12 +203,12 @@ export class RangeManager {
   // EXTRACTION METHODS
   // ============================================================================
 
-  extractCardsFromHand(hand) {
+  _extractCardsFromHand(hand) {
     if (!hand || hand.length !== 4) return [];
     return [hand.substring(0, 2), hand.substring(2, 4)];
   }
 
-  extractPairRanks(range) {
+  _extractPairRanks(range) {
     if (!range || typeof range !== 'string') return [null, null];
     if (range.endsWith('+')) {
       const rank = range[0];
@@ -223,21 +223,21 @@ export class RangeManager {
   }
 
   _extractSuitedPlus(range) {
-    const match = range.match(/^([AKQJT2-9])([AKQJT2-9])s\+$/);
+      const match = range.match(/^([AKQJT2-9])([AKQJT2-9])s\+$/);
     return match ? { rank1: match[1], rank2: match[2], isPlus: true } : null;
-  }
+    }
 
   _extractSuitedRange(range) {
-    const match = range.match(/^([AKQJT2-9])([AKQJT2-9])s-([AKQJT2-9])([AKQJT2-9])s$/);
+      const match = range.match(/^([AKQJT2-9])([AKQJT2-9])s-([AKQJT2-9])([AKQJT2-9])s$/);
     return match ? { rank1: match[1], rank2: match[2], endRank1: match[3], endRank2: match[4] } : null;
-  }
+    }
 
   _extractSuitedSingle(range) {
     const match = range.match(/^([AKQJT2-9])([AKQJT2-9])s$/);
     return match ? { rank1: match[1], rank2: match[2], isPlus: false } : null;
   }
 
-  extractSuitedRanks(range) {
+  _extractSuitedRanks(range) {
     if (!range) return null;
     if (range.endsWith('+')) return this._extractSuitedPlus(range);
     if (range.includes('-')) return this._extractSuitedRange(range);
@@ -259,7 +259,7 @@ export class RangeManager {
     return match ? { rank1: match[1], rank2: match[2], isPlus: false } : null;
   }
 
-  extractOffsuitRanks(range) {
+  _extractOffsuitRanks(range) {
     if (!range) return null;
     if (range.endsWith('+')) return this._extractOffsuitPlus(range);
     if (range.includes('-')) return this._extractOffsuitRange(range);
@@ -287,7 +287,7 @@ export class RangeManager {
     }
   }
 
-  extractWildcardHand(hand) {
+  _extractWildcardHand(hand) {
     if (!hand || hand.length !== 4) return null;
     const card1 = hand.substring(0, 2);
     const card2 = hand.substring(2, 4);
@@ -305,56 +305,56 @@ export class RangeManager {
     const combos = [];
     for (let i = 0; i < suits.length; i++) {
       for (let j = i + 1; j < suits.length; j++) {
-        combos.push(this.normalizeHand(rank + suits[i] + rank + suits[j]));
+        combos.push(this._normalizeHand(rank + suits[i] + rank + suits[j]));
       }
     }
     return combos;
   }
 
-  generatePairCombinations(rank) {
-    return this._generatePairCombos(rank, this.getAllSuits());
+  _generatePairCombinations(rank) {
+    return this._generatePairCombos(rank, this._getAllSuits());
   }
 
-  generatePairRange(startRank, endRank) {
-    const ranks = this.getAllRanksBetween(startRank, endRank);
+  _generatePairRange(startRank, endRank) {
+    const ranks = this._getAllRanksBetween(startRank, endRank);
     const hands = [];
     ranks.forEach(rank => {
-      hands.push(...this.generatePairCombinations(rank));
+      hands.push(...this._generatePairCombinations(rank));
     });
     return hands;
   }
 
-  generateSuitedRange(rank1, rank2) {
-    const suits = this.getAllSuits();
-    return suits.map(suit => this.normalizeHand(rank1 + suit + rank2 + suit));
+  _generateSuitedRange(rank1, rank2) {
+    const suits = this._getAllSuits();
+    return suits.map(suit => this._normalizeHand(rank1 + suit + rank2 + suit));
   }
 
   _generateOffsuitCombos(rank1, rank2, suits) {
     const hands = [];
     suits.forEach(suit1 => {
       suits.forEach(suit2 => {
-        if (suit1 !== suit2) hands.push(this.normalizeHand(rank1 + suit1 + rank2 + suit2));
+        if (suit1 !== suit2) hands.push(this._normalizeHand(rank1 + suit1 + rank2 + suit2));
       });
     });
     return hands;
   }
 
-  generateOffsuitRange(rank1, rank2) {
-    return this._generateOffsuitCombos(rank1, rank2, this.getAllSuits());
+  _generateOffsuitRange(rank1, rank2) {
+    return this._generateOffsuitCombos(rank1, rank2, this._getAllSuits());
   }
 
-  generateSuitedCombination(rank1, suit1, rank2, suit2) {
+  _generateSuitedCombination(rank1, suit1, rank2, suit2) {
     const s1 = suit1.toLowerCase();
     const s2 = suit2.toLowerCase();
     if (s1 !== s2) throw new Error('Suits must match for suited combination');
-    return this.normalizeHand(rank1 + s1 + rank2 + s2);
+    return this._normalizeHand(rank1 + s1 + rank2 + s2);
   }
 
-  generateOffsuitCombination(rank1, suit1, rank2, suit2) {
+  _generateOffsuitCombination(rank1, suit1, rank2, suit2) {
     const s1 = suit1.toLowerCase();
     const s2 = suit2.toLowerCase();
     if (s1 === s2) throw new Error('Suits must differ for offsuit combination');
-    return this.normalizeHand(rank1 + s1 + rank2 + s2);
+    return this._normalizeHand(rank1 + s1 + rank2 + s2);
   }
 
   _getCard1Suits(info) {
@@ -379,59 +379,59 @@ export class RangeManager {
           const card1Full = info.card1Rank + s1;
           if (card2 === card1Full) return;
           const combo = info.card1Rank + s1 + card2;
-          if (!this.isValidHand(combo)) return;
-          hands.push(this.normalizeHand(combo));
+          if (!this._isValidHand(combo)) return;
+          hands.push(this._normalizeHand(combo));
         });
       });
     });
     return hands;
   }
 
-  generateWildcardCombinations(hand) {
-    const info = this.extractWildcardHand(hand);
+  _generateWildcardCombinations(hand) {
+    const info = this._extractWildcardHand(hand);
     if (!info) return [];
     const card1Suits = this._getCard1Suits(info);
     const card2Ranks = this._getCard2Ranks(info);
     const card2Suits = this._getCard2Suits(info);
-    return this.deduplicateHands(this._generateCombosFromWildcard(info, card1Suits, card2Ranks, card2Suits));
+    return this._deduplicateHands(this._generateCombosFromWildcard(info, card1Suits, card2Ranks, card2Suits));
   }
 
   // ============================================================================
   // PARSING METHODS
   // ============================================================================
 
-  parseSpecificHand(hand) {
-    if (!this.isValidHand(hand)) throw new Error(`Invalid hand: ${hand}`);
-    return this.normalizeHand(hand);
+  _parseSpecificHand(hand) {
+    if (!this._isValidHand(hand)) throw new Error(`Invalid hand: ${hand}`);
+    return this._normalizeHand(hand);
   }
 
-  parseWildcardHand(hand) {
-    return this.generateWildcardCombinations(hand);
+  _parseWildcardHand(hand) {
+    return this._generateWildcardCombinations(hand);
   }
 
-  parsePairRange(range) {
-    const [start, end] = this.extractPairRanks(range);
+  _parsePairRange(range) {
+    const [start, end] = this._extractPairRanks(range);
     if (!start || !end) throw new Error(`Invalid pair range: ${range}`);
-    return this.generatePairRange(start, end);
+    return this._generatePairRange(start, end);
   }
 
   _parseSuitedPlus(info) {
-    const ranks = this.getAllRanksBetween(info.rank2, 'K').filter(r => r !== info.rank1);
-    return ranks.flatMap(rank => this.generateSuitedRange(info.rank1, rank));
+    const ranks = this._getAllRanksBetween(info.rank2, 'K').filter(r => r !== info.rank1);
+    return ranks.flatMap(rank => this._generateSuitedRange(info.rank1, rank));
   }
 
   _parseSuitedRangeBetween(info, range) {
     if (info.rank1 !== info.endRank1) throw new Error(`Invalid suited range: ${range}`);
-    const ranks = this.getAllRanksBetween(info.rank2, info.endRank2);
-    return ranks.flatMap(rank => this.generateSuitedRange(info.rank1, rank));
+    const ranks = this._getAllRanksBetween(info.rank2, info.endRank2);
+    return ranks.flatMap(rank => this._generateSuitedRange(info.rank1, rank));
   }
 
   _parseSuitedSingle(info) {
-    return this.generateSuitedRange(info.rank1, info.rank2);
+    return this._generateSuitedRange(info.rank1, info.rank2);
   }
 
-  parseSuitedRange(range) {
-    const info = this.extractSuitedRanks(range);
+  _parseSuitedRange(range) {
+    const info = this._extractSuitedRanks(range);
     if (!info) throw new Error(`Invalid suited range: ${range}`);
     if (info.isPlus) return this._parseSuitedPlus(info);
     if (info.endRank2) return this._parseSuitedRangeBetween(info, range);
@@ -439,62 +439,62 @@ export class RangeManager {
   }
 
   _parseOffsuitPlus(info) {
-    const ranks = this.getAllRanksBetween(info.rank2, 'K').filter(r => r !== info.rank1);
-    return ranks.flatMap(rank => this.generateOffsuitRange(info.rank1, rank));
+    const ranks = this._getAllRanksBetween(info.rank2, 'K').filter(r => r !== info.rank1);
+    return ranks.flatMap(rank => this._generateOffsuitRange(info.rank1, rank));
   }
 
   _parseOffsuitRangeBetween(info, range) {
     if (info.rank1 !== info.endRank1) throw new Error(`Invalid offsuit range: ${range}`);
-      const ranks = this.getAllRanksBetween(info.rank2, info.endRank2);
-    return ranks.flatMap(rank => this.generateOffsuitRange(info.rank1, rank));
-    }
-
-  _parseOffsuitSingle(info) {
-    return this.generateOffsuitRange(info.rank1, info.rank2);
+    const ranks = this._getAllRanksBetween(info.rank2, info.endRank2);
+    return ranks.flatMap(rank => this._generateOffsuitRange(info.rank1, rank));
   }
 
-  parseOffsuitRange(range) {
-    const info = this.extractOffsuitRanks(range);
+  _parseOffsuitSingle(info) {
+    return this._generateOffsuitRange(info.rank1, info.rank2);
+  }
+
+  _parseOffsuitRange(range) {
+    const info = this._extractOffsuitRanks(range);
     if (!info) throw new Error(`Invalid offsuit range: ${range}`);
     if (info.isPlus) return this._parseOffsuitPlus(info);
     if (info.endRank2) return this._parseOffsuitRangeBetween(info, range);
     return this._parseOffsuitSingle(info);
   }
 
-  parseSegment(segment) {
-    const type = this.detectNotationType(segment);
-    if (type === 'pair') return this.parsePairRange(segment);
-    if (type === 'suited') return this.parseSuitedRange(segment);
-    if (type === 'offsuit') return this.parseOffsuitRange(segment);
-    if (type === 'wildcard') return this.parseWildcardHand(segment);
-    if (type === 'specific') return [this.parseSpecificHand(segment)];
+  _parseSegment(segment) {
+    const type = this._detectNotationType(segment);
+    if (type === 'pair') return this._parsePairRange(segment);
+    if (type === 'suited') return this._parseSuitedRange(segment);
+    if (type === 'offsuit') return this._parseOffsuitRange(segment);
+    if (type === 'wildcard') return this._parseWildcardHand(segment);
+    if (type === 'specific') return [this._parseSpecificHand(segment)];
     throw new Error(`Unrecognized notation: ${segment}`);
   }
 
-  parseString(notation) {
+  _parseString(notation) {
     const normalized = this.normalizeNotation(notation);
     const segments = normalized.split(',').map(s => s.trim()).filter(s => s);
     const hands = [];
     segments.forEach(segment => {
-      hands.push(...this.parseSegment(segment));
+      hands.push(...this._parseSegment(segment));
     });
-    return this.deduplicateHands(hands);
+    return this._deduplicateHands(hands);
   }
 
-  parseArray(input) {
+  _parseArray(input) {
     if (!Array.isArray(input)) throw new Error('Input must be an array');
     if (input.length === 0) throw new Error('Array cannot be empty');
     const hands = [];
     input.forEach(hand => {
-      if (!this.isValidHand(hand)) throw new Error(`Invalid hand in array: ${hand}`);
-      hands.push(this.normalizeHand(hand));
+      if (!this._isValidHand(hand)) throw new Error(`Invalid hand in array: ${hand}`);
+      hands.push(this._normalizeHand(hand));
     });
-    return this.deduplicateHands(hands);
+    return this._deduplicateHands(hands);
   }
 
-  parse(input) {
-    if (typeof input === 'string') return this.parseString(input);
-    if (Array.isArray(input)) return this.parseArray(input);
+  _parse(input) {
+    if (typeof input === 'string') return this._parseString(input);
+    if (Array.isArray(input)) return this._parseArray(input);
     throw new Error('Input must be a string or array');
   }
 
@@ -510,8 +510,8 @@ export class RangeManager {
   }
 
   _normalizeInputToHands(input) {
-    if (typeof input === 'string') return this.parseString(input);
-    if (Array.isArray(input)) return this.parseArray(input);
+    if (typeof input === 'string') return this._parseString(input);
+    if (Array.isArray(input)) return this._parseArray(input);
     throw new Error('Input must be a string (range notation) or array of hands');
   }
 
@@ -521,26 +521,26 @@ export class RangeManager {
 
   handContainsDeadCard(hand, deadCards) {
     if (!deadCards || deadCards.length === 0) return false;
-    const [card1, card2] = this.extractCardsFromHand(hand);
+    const [card1, card2] = this._extractCardsFromHand(hand);
     return deadCards.includes(card1) || deadCards.includes(card2);
   }
 
   handHasSuit(hand, suit) {
     const normalizedSuit = suit.toLowerCase();
-    if (!this.isValidSuit(normalizedSuit)) return false;
-    const [card1, card2] = this.extractCardsFromHand(hand);
+    if (!this._isValidSuit(normalizedSuit)) return false;
+    const [card1, card2] = this._extractCardsFromHand(hand);
     return card1[1] === normalizedSuit || card2[1] === normalizedSuit;
   }
 
   handSuitedOf(hand, suit) {
     const normalizedSuit = suit.toLowerCase();
-    if (!this.isValidSuit(normalizedSuit)) return false;
-    const [card1, card2] = this.extractCardsFromHand(hand);
+    if (!this._isValidSuit(normalizedSuit)) return false;
+    const [card1, card2] = this._extractCardsFromHand(hand);
     return card1[1] === normalizedSuit && card2[1] === normalizedSuit;
   }
 
   exclude(input) {
-    if (Array.isArray(input) && (input.length === 0 || this.isValidCard(input[0]))) {
+    if (Array.isArray(input) && (input.length === 0 || this._isValidCard(input[0]))) {
       const filtered = this.filteredHands.filter(hand => !this.handContainsDeadCard(hand, input));
       return this._createFilteredInstance(filtered);
     }
@@ -552,14 +552,14 @@ export class RangeManager {
 
   hasSuit(suit) {
     const normalizedSuit = suit.toLowerCase();
-    if (!this.isValidSuit(normalizedSuit)) throw new Error(`Invalid suit: ${suit}`);
+    if (!this._isValidSuit(normalizedSuit)) throw new Error(`Invalid suit: ${suit}`);
     const filtered = this.filteredHands.filter(hand => this.handHasSuit(hand, normalizedSuit));
     return this._createFilteredInstance(filtered);
   }
 
   suitedOf(suit) {
     const normalizedSuit = suit.toLowerCase();
-    if (!this.isValidSuit(normalizedSuit)) throw new Error(`Invalid suit: ${suit}`);
+    if (!this._isValidSuit(normalizedSuit)) throw new Error(`Invalid suit: ${suit}`);
     const filtered = this.filteredHands.filter(hand => this.handSuitedOf(hand, normalizedSuit));
     return this._createFilteredInstance(filtered);
   }
@@ -574,7 +574,7 @@ export class RangeManager {
       const module = await import('poker-extval');
       evaluateHandCache = module.evaluateHand;
     }
-    const handCards = this.extractCardsFromHand(hand);
+    const handCards = this._extractCardsFromHand(hand);
     const allCards = [...handCards, ...boardCards];
     const uniqueCards = [...new Set(allCards)];
     if (uniqueCards.length < 5) {
@@ -584,7 +584,7 @@ export class RangeManager {
   }
 
   async _handMatchesCriteria(hand, criteria, boardCards) {
-    const handCards = this.extractCardsFromHand(hand);
+    const handCards = this._extractCardsFromHand(hand);
     const handCardSet = new Set(handCards);
     const boardCardSet = new Set(boardCards);
     const hasOverlap = handCards.some(card => boardCardSet.has(card));
@@ -620,7 +620,7 @@ export class RangeManager {
   include(input) {
     const includeHands = this._normalizeInputToHands(input);
     const combined = [...this.filteredHands, ...includeHands];
-    return this._createFilteredInstance(this.deduplicateHands(combined));
+    return this._createFilteredInstance(this._deduplicateHands(combined));
   }
 
   intersect(input) {
@@ -633,7 +633,7 @@ export class RangeManager {
   setDeadCards(deadCards) {
     if (!Array.isArray(deadCards)) throw new Error('Dead cards must be an array');
     deadCards.forEach(card => {
-      if (!this.isValidCard(card)) throw new Error(`Invalid card: ${card}`);
+      if (!this._isValidCard(card)) throw new Error(`Invalid card: ${card}`);
     });
     const newInstance = this._createFilteredInstance([...this.filteredHands]);
     newInstance.deadCards = [...deadCards];
@@ -675,7 +675,7 @@ export class RangeManager {
     const normalizedCriteria = this._validateCriteriaAndBoard(criteria, boardCards);
     const filtered = [];
     for (const hand of this.filteredHands) {
-      const handCards = this.extractCardsFromHand(hand);
+      const handCards = this._extractCardsFromHand(hand);
       const combinations = this._generate5CardCombinations(handCards, boardCards, minHandCards);
       if (await this._evaluateCombinations(combinations, normalizedCriteria)) filtered.push(hand);
     }
@@ -744,12 +744,12 @@ export class RangeManager {
   }
 
   contains(hand) {
-    const normalized = this.normalizeHand(hand);
+    const normalized = this._normalizeHand(hand);
     return this.filteredHands.includes(normalized);
   }
 
   toString() {
-    return this.groupHandsIntoNotation(this.filteredHands);
+    return this._groupHandsIntoNotation(this.filteredHands);
   }
 
   toNotation() {
@@ -763,18 +763,18 @@ export class RangeManager {
   // INTERNAL HELPER METHODS
   // ============================================================================
 
-  deduplicateHands(hands) {
+  _deduplicateHands(hands) {
     return [...new Set(hands)];
   }
 
-  mergeHands(handArrays) {
+  _mergeHands(handArrays) {
     const merged = handArrays.flat();
-    return this.deduplicateHands(merged);
+    return this._deduplicateHands(merged);
   }
 
   _categorizeHand(hand) {
-    const [c1, c2] = this.extractCardsFromHand(hand);
-    const [high, low] = this.normalizeCardOrder(c1, c2);
+    const [c1, c2] = this._extractCardsFromHand(hand);
+    const [high, low] = this._normalizeCardOrder(c1, c2);
     if (high[0] === low[0]) return { type: 'pair', notation: high[0] + low[0] };
     if (high[1] === low[1]) return { type: 'suited', notation: high[0] + low[0] + 's' };
     return { type: 'offsuit', notation: high[0] + low[0] + 'o' };
@@ -788,7 +788,7 @@ export class RangeManager {
     return parts.join(',');
   }
 
-  groupHandsIntoNotation(hands) {
+  _groupHandsIntoNotation(hands) {
     if (hands.length === 0) return '';
     const categories = { pairs: [], suited: [], offsuit: [] };
     hands.forEach(hand => {
@@ -800,19 +800,19 @@ export class RangeManager {
 
   _detectConsecutiveRanks(ranks) {
     if (ranks.length < 2) return { isConsecutive: false };
-    const sortedRanks = [...new Set(ranks)].sort((a, b) => this.getRankValue(b) - this.getRankValue(a));
-    const expected = this.getAllRanksBetween(sortedRanks[0], sortedRanks[sortedRanks.length - 1]);
+    const sortedRanks = [...new Set(ranks)].sort((a, b) => this._getRankValue(b) - this._getRankValue(a));
+    const expected = this._getAllRanksBetween(sortedRanks[0], sortedRanks[sortedRanks.length - 1]);
     if (expected.length !== sortedRanks.length || !expected.every((r, i) => r === sortedRanks[i])) return { isConsecutive: false };
     return { isConsecutive: true, startRank: sortedRanks[0], endRank: sortedRanks[sortedRanks.length - 1], goesToAce: sortedRanks[0] === 'A' };
   }
 
   _findConsecutiveSequences(ranks) {
     if (ranks.length === 0) return [];
-    const sorted = [...new Set(ranks)].sort((a, b) => this.getRankValue(a) - this.getRankValue(b));
+    const sorted = [...new Set(ranks)].sort((a, b) => this._getRankValue(a) - this._getRankValue(b));
     const sequences = [];
     let start = sorted[0], end = sorted[0];
     for (let i = 1; i < sorted.length; i++) {
-      if (this.getRankValue(sorted[i]) === this.getRankValue(end) + 1) end = sorted[i];
+      if (this._getRankValue(sorted[i]) === this._getRankValue(end) + 1) end = sorted[i];
       else { sequences.push({ start, end }); start = end = sorted[i]; }
     }
     return [...sequences, { start, end }];
@@ -829,7 +829,7 @@ export class RangeManager {
     if (pairs.length === 0) return [];
     const ranks = [...new Set(pairs)].map(p => p[0]);
     const sequences = this._findConsecutiveSequences(ranks);
-    return sequences.map(seq => this._processPairSequence(seq)).sort((a, b) => this.getRankValue(b[0]) - this.getRankValue(a[0]));
+    return sequences.map(seq => this._processPairSequence(seq)).sort((a, b) => this._getRankValue(b[0]) - this._getRankValue(a[0]));
   }
 
   _groupByFirstRank(notations) {
@@ -849,7 +849,7 @@ export class RangeManager {
   _processSequence(seq, firstRank, suffix) {
     if (seq.start === seq.end) return [firstRank + seq.start + suffix];
     const detected = this._detectConsecutiveRanks([seq.start, seq.end]);
-    const rankDiff = this.getRankValue(firstRank) - this.getRankValue(seq.end);
+    const rankDiff = this._getRankValue(firstRank) - this._getRankValue(seq.end);
     if (this._shouldUsePlusNotation(firstRank, seq.end, rankDiff, detected)) return [firstRank + seq.start + suffix + '+'];
     return [firstRank + seq.start + suffix + '-' + firstRank + seq.end + suffix];
   }
