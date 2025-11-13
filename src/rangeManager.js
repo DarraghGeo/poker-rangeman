@@ -499,6 +499,23 @@ export class RangeManager {
   }
 
   // ============================================================================
+  // INTERNAL HELPER METHODS (INSTANCE CREATION & NORMALIZATION)
+  // ============================================================================
+
+  _createFilteredInstance(filteredHands) {
+    const newInstance = Object.create(Object.getPrototypeOf(this));
+    Object.assign(newInstance, this);
+    newInstance.filteredHands = filteredHands;
+    return newInstance;
+  }
+
+  _normalizeInputToHands(input) {
+    if (typeof input === 'string') return this.parseString(input);
+    if (Array.isArray(input)) return this.parseArray(input);
+    throw new Error('Input must be a string (range notation) or array of hands');
+  }
+
+  // ============================================================================
   // FILTERING METHODS
   // ============================================================================
 
@@ -522,41 +539,37 @@ export class RangeManager {
     return card1[1] === normalizedSuit && card2[1] === normalizedSuit;
   }
 
-  exclude(deadCards) {
-    if (!Array.isArray(deadCards)) throw new Error('Dead cards must be an array');
-    const filtered = this.filteredHands.filter(hand => !this.handContainsDeadCard(hand, deadCards));
-    const newInstance = Object.create(Object.getPrototypeOf(this));
-    Object.assign(newInstance, this);
-    newInstance.filteredHands = filtered;
-    return newInstance;
+  exclude(input) {
+    if (Array.isArray(input) && (input.length === 0 || this.isValidCard(input[0]))) {
+      const filtered = this.filteredHands.filter(hand => !this.handContainsDeadCard(hand, input));
+      return this._createFilteredInstance(filtered);
+    }
+    const excludeHands = this._normalizeInputToHands(input);
+    const excludeSet = new Set(excludeHands);
+    const filtered = this.filteredHands.filter(hand => !excludeSet.has(hand));
+    return this._createFilteredInstance(filtered);
   }
 
   hasSuit(suit) {
     const normalizedSuit = suit.toLowerCase();
     if (!this.isValidSuit(normalizedSuit)) throw new Error(`Invalid suit: ${suit}`);
     const filtered = this.filteredHands.filter(hand => this.handHasSuit(hand, normalizedSuit));
-    const newInstance = Object.create(Object.getPrototypeOf(this));
-    Object.assign(newInstance, this);
-    newInstance.filteredHands = filtered;
-    return newInstance;
+    return this._createFilteredInstance(filtered);
   }
 
   suitedOf(suit) {
     const normalizedSuit = suit.toLowerCase();
     if (!this.isValidSuit(normalizedSuit)) throw new Error(`Invalid suit: ${suit}`);
     const filtered = this.filteredHands.filter(hand => this.handSuitedOf(hand, normalizedSuit));
-    const newInstance = Object.create(Object.getPrototypeOf(this));
-    Object.assign(newInstance, this);
-    newInstance.filteredHands = filtered;
-    return newInstance;
+    return this._createFilteredInstance(filtered);
   }
 
-  normalizeCriteria(criteria) {
+  _normalizeCriteria(criteria) {
     if (!Array.isArray(criteria)) throw new Error('Criteria must be an array');
     return criteria.map(c => CRITERIA_MAPPING[c] || c);
   }
 
-  async evaluateHandWithBoard(hand, boardCards) {
+  async _evaluateHandWithBoard(hand, boardCards) {
     if (!evaluateHandCache) {
       const module = await import('poker-extval');
       evaluateHandCache = module.evaluateHand;
@@ -570,41 +583,125 @@ export class RangeManager {
     return evaluateHandCache(uniqueCards);
   }
 
-  async handMatchesCriteria(hand, criteria, boardCards) {
+  async _handMatchesCriteria(hand, criteria, boardCards) {
     const handCards = this.extractCardsFromHand(hand);
     const handCardSet = new Set(handCards);
     const boardCardSet = new Set(boardCards);
     const hasOverlap = handCards.some(card => boardCardSet.has(card));
     if (hasOverlap) return false;
-    const evaluation = await this.evaluateHandWithBoard(hand, boardCards);
-    const normalizedCriteria = this.normalizeCriteria(criteria);
+    const evaluation = await this._evaluateHandWithBoard(hand, boardCards);
+    const normalizedCriteria = this._normalizeCriteria(criteria);
     return Object.values(evaluation).some(evalObj => 
       normalizedCriteria.some(c => evalObj[c] === true)
     );
   }
 
-  async match(criteria, boardCards = []) {
-    if (!Array.isArray(criteria)) throw new Error('Criteria must be an array');
-    if (!boardCards || boardCards.length === 0) throw new Error('Board cards are required');
-    const normalizedCriteria = this.normalizeCriteria(criteria);
-    const invalidCriteria = normalizedCriteria.filter(c => !CRITERIA_MAPPING[c] && !c.startsWith('is'));
-    if (invalidCriteria.length > 0) throw new Error(`Invalid criteria: ${invalidCriteria.join(', ')}`);
+  async makesHand(criteria, boardCards = []) {
+    const normalizedCriteria = this._validateCriteriaAndBoard(criteria, boardCards);
     const filtered = [];
     for (const hand of this.filteredHands) {
-      if (await this.handMatchesCriteria(hand, criteria, boardCards)) filtered.push(hand);
+      if (await this._handMatchesCriteria(hand, criteria, boardCards)) filtered.push(hand);
     }
-    const newInstance = Object.create(Object.getPrototypeOf(this));
-    Object.assign(newInstance, this);
-    newInstance.filteredHands = filtered;
-    return newInstance;
+    return this._createFilteredInstance(filtered);
   }
 
   async evaluateHand(hand, boardCards) {
-    const evaluation = await this.evaluateHandWithBoard(hand, boardCards);
+    const evaluation = await this._evaluateHandWithBoard(hand, boardCards);
     return {
       is: (criteria) => this._filterEvaluation(evaluation, criteria, false),
       isAll: (criteria) => this._filterEvaluation(evaluation, criteria, true)
     };
+  }
+
+  async getObject(hand, boardCards) {
+    return await this._evaluateHandWithBoard(hand, boardCards);
+  }
+
+  include(input) {
+    const includeHands = this._normalizeInputToHands(input);
+    const combined = [...this.filteredHands, ...includeHands];
+    return this._createFilteredInstance(this.deduplicateHands(combined));
+  }
+
+  intersect(input) {
+    const intersectHands = this._normalizeInputToHands(input);
+    const intersectSet = new Set(intersectHands);
+    const filtered = this.filteredHands.filter(hand => intersectSet.has(hand));
+    return this._createFilteredInstance(filtered);
+  }
+
+  setDeadCards(deadCards) {
+    if (!Array.isArray(deadCards)) throw new Error('Dead cards must be an array');
+    deadCards.forEach(card => {
+      if (!this.isValidCard(card)) throw new Error(`Invalid card: ${card}`);
+    });
+    const newInstance = this._createFilteredInstance([...this.filteredHands]);
+    newInstance.deadCards = [...deadCards];
+    return newInstance;
+  }
+
+  _generate5CardCombinations(handCards, boardCards, minHandCards) {
+    const allCards = [...handCards, ...boardCards];
+    const uniqueCards = [...new Set(allCards)];
+    if (uniqueCards.length < 5) return [];
+    const combinations = [];
+    this._combineCards(uniqueCards, 5, 0, [], combinations, handCards, minHandCards);
+    return combinations;
+  }
+
+  _combineCards(cards, k, start, current, result, handCards, minHandCards) {
+    if (current.length === k) {
+      const handCount = current.filter(c => handCards.includes(c)).length;
+      if (handCount >= minHandCards) result.push([...current]);
+      return;
+    }
+    for (let i = start; i < cards.length; i++) {
+      current.push(cards[i]);
+      this._combineCards(cards, k, i + 1, current, result, handCards, minHandCards);
+      current.pop();
+    }
+  }
+
+  _validateCriteriaAndBoard(criteria, boardCards) {
+    if (!Array.isArray(criteria)) throw new Error('Criteria must be an array');
+    if (!boardCards || boardCards.length === 0) throw new Error('Board cards are required');
+    const normalizedCriteria = this._normalizeCriteria(criteria);
+    const invalidCriteria = normalizedCriteria.filter(c => !CRITERIA_MAPPING[c] && !c.startsWith('is'));
+    if (invalidCriteria.length > 0) throw new Error(`Invalid criteria: ${invalidCriteria.join(', ')}`);
+    return normalizedCriteria;
+  }
+
+  async _filterByCombinations(criteria, boardCards, minHandCards) {
+    const normalizedCriteria = this._validateCriteriaAndBoard(criteria, boardCards);
+    const filtered = [];
+    for (const hand of this.filteredHands) {
+      const handCards = this.extractCardsFromHand(hand);
+      const combinations = this._generate5CardCombinations(handCards, boardCards, minHandCards);
+      if (await this._evaluateCombinations(combinations, normalizedCriteria)) filtered.push(hand);
+    }
+    return this._createFilteredInstance(filtered);
+  }
+
+  async hitsHand(criteria, boardCards) {
+    return await this._filterByCombinations(criteria, boardCards, 1);
+  }
+
+  async hitsHandBoth(criteria, boardCards) {
+    return await this._filterByCombinations(criteria, boardCards, 2);
+  }
+
+  async _evaluateCombinations(combinations, normalizedCriteria) {
+    if (!evaluateHandCache) {
+      const module = await import('poker-extval');
+      evaluateHandCache = module.evaluateHand;
+    }
+    for (const combo of combinations) {
+      const evaluation = evaluateHandCache(combo);
+      if (Object.values(evaluation).some(evalObj => 
+        normalizedCriteria.some(c => evalObj[c] === true)
+      )) return true;
+    }
+    return false;
   }
 
   _filterEvaluation(evaluation, criteria, matchAll) {

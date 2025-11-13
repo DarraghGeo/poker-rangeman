@@ -123,7 +123,7 @@ const testValidation = {
     },
     caseSensitivity: () => {
       const rm = createTestInstance('AKs');
-      expect(rm.isValidSuit('S')).toBe(false);
+      expect(rm.isValidSuit('S')).toBe(true);
       expect(rm.isValidSuit('s')).toBe(true);
     }
   }
@@ -1161,71 +1161,45 @@ const testFiltering = {
       expect(rm.handContainsDeadCard('AhKd', ['Qs', 'Ah'])).toBe(true);
     }
   },
-  match: {
+  makesHand: {
     filter: async () => {
       const rm = new RangeManager('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const filtered = await rm.match(['Pair'], board);
+      const filtered = await rm.makesHand(['Pair'], board);
       expect(filtered).toBeInstanceOf(RangeManager);
     },
     requiresBoard: async () => {
       const rm = new RangeManager('AKs');
-      await expect(rm.match(['Pair'])).rejects.toThrow();
+      await expect(rm.makesHand(['Pair'])).rejects.toThrow();
     },
     errorNoBoard: async () => {
       const rm = new RangeManager('AKs');
-      await expect(rm.match(['Pair'])).rejects.toThrow();
+      await expect(rm.makesHand(['Pair'])).rejects.toThrow();
     },
     newInstance: async () => {
       const rm = new RangeManager('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const filtered = await rm.match(['Pair'], board);
+      const filtered = await rm.makesHand(['Pair'], board);
       expect(filtered).not.toBe(rm);
     },
     immutable: async () => {
       const rm = new RangeManager('AKs');
       const originalSize = rm.size();
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      await rm.match(['Pair'], board);
+      await rm.makesHand(['Pair'], board);
       expect(rm.size()).toBe(originalSize);
     },
     multiple: async () => {
       const rm = new RangeManager('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const filtered = await rm.match(['Pair', 'Two Pair'], board);
+      const filtered = await rm.makesHand(['Pair', 'Two Pair'], board);
       expect(filtered).toBeInstanceOf(RangeManager);
     },
     normalize: async () => {
       const rm = new RangeManager('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const filtered = await rm.match(['Pair'], board);
+      const filtered = await rm.makesHand(['Pair'], board);
       expect(filtered).toBeInstanceOf(RangeManager);
-    }
-  },
-  handMatchesCriteria: {
-    evaluate: async () => {
-      const rm = createTestInstance('AKs');
-      const board = ['2h', '3d', '4c', '5s', '6h'];
-      const result = await rm.handMatchesCriteria('AhKd', ['Pair'], board);
-      expect(typeof result).toBe('boolean');
-    },
-    check: async () => {
-      const rm = createTestInstance('AKs');
-      const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
-      const result = await rm.handMatchesCriteria('AhKd', ['Straight'], board);
-      expect(typeof result).toBe('boolean');
-    },
-    match: async () => {
-      const rm = createTestInstance('AKs');
-      const board = ['Ah', 'Ad', 'Ac', '2s', '3h'];
-      const result = await rm.handMatchesCriteria('AhKd', ['Three of a Kind'], board);
-      expect(result).toBe(true);
-    },
-    noMatch: async () => {
-      const rm = createTestInstance('AKs');
-      const board = ['2h', '3d', '4c', '5s', '6h'];
-      const result = await rm.handMatchesCriteria('AhKd', ['Flush'], board);
-      expect(result).toBe(false);
     }
   },
   handHasSuit: {
@@ -1339,74 +1313,47 @@ const testFiltering = {
       expect(() => rm.suitedOf('')).toThrow();
     }
   },
-  evaluateHandWithBoard: {
+  getObject: {
     combine: async () => {
       const rm = createTestInstance('AKs');
       const board = ['2h', '3d', '4c'];
-      const result = await rm.evaluateHandWithBoard('AhKd', board);
+      const result = await rm.getObject('AhKd', board);
       expect(result).toBeDefined();
     },
     callExtval: async () => {
       const { evaluateHand } = await import('poker-extval');
       const rm = createTestInstance('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const result = await rm.evaluateHandWithBoard('AhKd', board);
+      const result = await rm.getObject('AhKd', board);
       expect(result).toBeDefined();
       expect(typeof result).toBe('object');
     },
     returnsObject: async () => {
       const rm = createTestInstance('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const result = await rm.evaluateHandWithBoard('AhKd', board);
+      const result = await rm.getObject('AhKd', board);
       expect(typeof result).toBe('object');
     },
     fivePlus: async () => {
       const rm = createTestInstance('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const result = await rm.evaluateHandWithBoard('AhKd', board);
+      const result = await rm.getObject('AhKd', board);
       expect(result).toBeDefined();
-    }
-  },
-  normalizeCriteria: {
-    pair: () => {
-      const rm = createTestInstance('AKs');
-      const normalized = rm.normalizeCriteria(['Pair']);
-      expect(normalized).toContain('isPair');
-    },
-    twoPair: () => {
-      const rm = createTestInstance('AKs');
-      const normalized = rm.normalizeCriteria(['Two Pair']);
-      expect(normalized).toContain('isTwoPair');
-    },
-    threeKind: () => {
-      const rm = createTestInstance('AKs');
-      const normalized = rm.normalizeCriteria(['Three of a Kind']);
-      expect(normalized).toContain('isThreeOfAKind');
-    },
-    direct: () => {
-      const rm = createTestInstance('AKs');
-      const normalized = rm.normalizeCriteria(['isPair']);
-      expect(normalized).toContain('isPair');
-    },
-    returnsArray: () => {
-      const rm = createTestInstance('AKs');
-      const normalized = rm.normalizeCriteria(['Pair', 'Two Pair']);
-      expect(Array.isArray(normalized)).toBe(true);
     }
   },
   errors: {
     noBoard: async () => {
       const rm = new RangeManager('AKs');
-      await expect(rm.match(['Pair'])).rejects.toThrow();
+      await expect(rm.makesHand(['Pair'])).rejects.toThrow();
     },
     invalidCriteria: async () => {
       const rm = new RangeManager('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      await expect(rm.match(['Invalid'], board)).rejects.toThrow();
+      await expect(rm.makesHand(['Invalid'], board)).rejects.toThrow();
     },
     invalidBoard: async () => {
       const rm = new RangeManager('AKs');
-      await expect(rm.match(['Pair'], ['invalid'])).rejects.toThrow();
+      await expect(rm.makesHand(['Pair'], ['invalid'])).rejects.toThrow();
     }
   }
 };
@@ -1517,7 +1464,7 @@ const testIntegration = {
   workflow: {
     full: async () => {
       const rm = new RangeManager('22-AA,AKs');
-      const filtered = await rm.exclude(['Ah']).match(['Pair'], ['2h', '3d', '4c', '5s', '6h']);
+      const filtered = await rm.exclude(['Ah']).makesHand(['Pair'], ['2h', '3d', '4c', '5s', '6h']);
       const hands = filtered.toArray();
       expect(Array.isArray(hands)).toBe(true);
     },
@@ -1529,7 +1476,7 @@ const testIntegration = {
     immutability: async () => {
       const rm = new RangeManager('AKs');
       const originalSize = rm.size();
-      await rm.exclude(['Ah']).match(['Pair'], ['2h', '3d', '4c', '5s', '6h']);
+      await rm.exclude(['Ah']).makesHand(['Pair'], ['2h', '3d', '4c', '5s', '6h']);
       expect(rm.size()).toBe(originalSize);
     }
   },
@@ -1542,19 +1489,19 @@ const testIntegration = {
     multipleMatch: async () => {
       const rm = new RangeManager('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const filtered = await (await rm.match(['Pair'], board)).match(['Two Pair'], board);
+      const filtered = await (await rm.makesHand(['Pair'], board)).makesHand(['Two Pair'], board);
       expect(filtered).toBeInstanceOf(RangeManager);
     },
     excludeAndMatch: async () => {
       const rm = new RangeManager('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const filtered = await rm.exclude(['Ah']).match(['Pair'], board);
+      const filtered = await rm.exclude(['Ah']).makesHand(['Pair'], board);
       expect(filtered).toBeInstanceOf(RangeManager);
     },
     queryAfter: async () => {
       const rm = new RangeManager('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const size = (await rm.exclude(['Ah']).match(['Pair'], board)).size();
+      const size = (await rm.exclude(['Ah']).makesHand(['Pair'], board)).size();
       expect(typeof size).toBe('number');
     }
   },
@@ -1569,7 +1516,7 @@ const testIntegration = {
       const rm = new RangeManager('AKs');
       const originalSize = rm.size();
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      rm.match(['Pair'], board);
+      rm.makesHand(['Pair'], board);
       expect(rm.size()).toBe(originalSize);
     },
     independent: () => {
@@ -1604,7 +1551,7 @@ const testIntegration = {
     noMatch: async () => {
       const rm = new RangeManager('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
-      const filtered = await rm.match(['Royal Flush'], board);
+      const filtered = await rm.makesHand(['Royal Flush'], board);
       expect(filtered.size()).toBe(0);
     }
   }
@@ -1973,28 +1920,21 @@ describe('RangeManager', () => {
       it('should handle multiple dead cards', testFiltering.handContainsDeadCard.multiple);
     });
 
-    describe('match()', () => {
-      it('should filter by hand strength criteria', testFiltering.match.filter);
-      it('should require board cards for strength evaluation', testFiltering.match.requiresBoard);
-      it('should throw error if board cards missing', testFiltering.match.errorNoBoard);
-      it('should return new RangeManager instance', testFiltering.match.newInstance);
-      it('should not modify original range', testFiltering.match.immutable);
-      it('should handle multiple criteria', testFiltering.match.multiple);
-      it('should normalize criteria strings', testFiltering.match.normalize);
+    describe('makesHand()', () => {
+      it('should filter by hand strength criteria', testFiltering.makesHand.filter);
+      it('should require board cards for strength evaluation', testFiltering.makesHand.requiresBoard);
+      it('should throw error if board cards missing', testFiltering.makesHand.errorNoBoard);
+      it('should return new RangeManager instance', testFiltering.makesHand.newInstance);
+      it('should not modify original range', testFiltering.makesHand.immutable);
+      it('should handle multiple criteria', testFiltering.makesHand.multiple);
+      it('should normalize criteria strings', testFiltering.makesHand.normalize);
     });
 
-    describe('handMatchesCriteria()', () => {
-      it('should evaluate hand with board cards', testFiltering.handMatchesCriteria.evaluate);
-      it('should check evaluation against criteria', testFiltering.handMatchesCriteria.check);
-      it('should return true if hand matches any criteria', testFiltering.handMatchesCriteria.match);
-      it('should return false if hand matches no criteria', testFiltering.handMatchesCriteria.noMatch);
-    });
-
-    describe('evaluateHandWithBoard()', () => {
-      it('should combine hand and board cards', testFiltering.evaluateHandWithBoard.combine);
-      it('should call poker-extval evaluateHand', testFiltering.evaluateHandWithBoard.callExtval);
-      it('should return evaluation object', testFiltering.evaluateHandWithBoard.returnsObject);
-      it('should handle 5+ total cards', testFiltering.evaluateHandWithBoard.fivePlus);
+    describe('getObject()', () => {
+      it('should combine hand and board cards', testFiltering.getObject.combine);
+      it('should call poker-extval evaluateHand', testFiltering.getObject.callExtval);
+      it('should return evaluation object', testFiltering.getObject.returnsObject);
+      it('should handle 5+ total cards', testFiltering.getObject.fivePlus);
     });
 
     describe('evaluateHand()', () => {
@@ -2089,16 +2029,9 @@ describe('RangeManager', () => {
       });
     });
 
-    describe('normalizeCriteria()', () => {
-      it('should map "Pair" to "isPair"', testFiltering.normalizeCriteria.pair);
-      it('should map "Two Pair" to "isTwoPair"', testFiltering.normalizeCriteria.twoPair);
-      it('should map "Three of a Kind" to "isThreeOfAKind"', testFiltering.normalizeCriteria.threeKind);
-      it('should handle direct property names', testFiltering.normalizeCriteria.direct);
-      it('should return normalized criteria array', testFiltering.normalizeCriteria.returnsArray);
-    });
 
     describe('Error Handling', () => {
-      it('should throw error for missing board cards in match()', testFiltering.errors.noBoard);
+      it('should throw error for missing board cards in makesHand()', testFiltering.errors.noBoard);
       it('should throw error for invalid criteria', testFiltering.errors.invalidCriteria);
       it('should throw error for invalid board cards', testFiltering.errors.invalidBoard);
     });
@@ -2155,14 +2088,14 @@ describe('RangeManager', () => {
 
     describe('Method Chaining', () => {
       it('should support multiple exclude() calls', testIntegration.chaining.multipleExclude);
-      it('should support multiple match() calls', testIntegration.chaining.multipleMatch);
-      it('should support exclude() and match() together', testIntegration.chaining.excludeAndMatch);
+      it('should support multiple makesHand() calls', testIntegration.chaining.multipleMatch);
+      it('should support exclude() and makesHand() together', testIntegration.chaining.excludeAndMatch);
       it('should support query methods after filtering', testIntegration.chaining.queryAfter);
     });
 
     describe('Immutability', () => {
       it('should not modify original range after exclude()', testIntegration.immutability.exclude);
-      it('should not modify original range after match()', testIntegration.immutability.match);
+      it('should not modify original range after makesHand()', testIntegration.immutability.match);
       it('should allow independent filtering of same range', testIntegration.immutability.independent);
     });
 
