@@ -367,7 +367,7 @@ const hands = await rm.hitsHandBoth(['Pair'], board);
 Sets dead cards for evaluation purposes. Dead cards limit which hands can be dealt but don't directly filter the range.
 
 **Parameters:**
-- `deadCards` (string[]): Array of dead cards (2-character strings, e.g., `['Ah', 'Kd']`)
+- `deadCards` (string[]): Array of dead cards (2-character strings, e.g., `['Ah', 'Kd']`). Supports wildcards: `'Ax'` (all Aces), `'Xh'` (all hearts)
 
 **Returns:** `RangeManager` - New instance with dead cards set
 
@@ -376,11 +376,88 @@ Sets dead cards for evaluation purposes. Dead cards limit which hands can be dea
 const rm = new RangeManager('22+,AKs,AKo');
 const withDeadCards = rm.setDeadCards(['Ah', 'Kd']);
 // Dead cards are used for evaluation but don't change the active range
+
+// Wildcard support
+const withWildcards = rm.setDeadCards(['Ax', 'Xh']); // All Aces and all hearts
 ```
 
 **Throws:**
 - `Error`: If deadCards is not an array
 - `Error`: If any card is invalid
+
+#### `hasKeyCard(cards, and?, handStrength?)`
+
+Filters the range to only include hands where the specified cards are key cards for the hand strength. Requires board cards to be set via `hitsHand()` or `makesHand()` first.
+
+**Parameters:**
+- `cards` (string[]): Array of cards to check (e.g., `['As', 'Kd']`). Supports wildcards: `'Ax'` (all Aces), `'Xh'` (all hearts)
+- `and` (boolean, optional): If `true`, all cards must be present (AND logic). If `false`, any card can be present (OR logic). Default: `false`
+- `handStrength` (string, optional): Specific hand strength to check (e.g., `'Pair'`, `'Top Pair'`). If not provided, uses cached hand strength from previous `hitsHand()` call
+
+**Returns:** `RangeManager` - New instance with filtered hands
+
+**Example:**
+```javascript
+const rm = new RangeManager('22+,AKs,AKo');
+const board = ['Ah', 'Kd', 'Qc'];
+
+// First, filter to hands that hit a pair
+const hitHands = await rm.hitsHand(['Pair'], board);
+
+// Then filter to hands where As is a key card
+const withAs = hitHands.hasKeyCard(['As']);
+console.log(withAs.toString());
+
+// Check for specific hand strength
+const topPairWithAs = hitHands.hasKeyCard(['As'], false, 'Top Pair');
+
+// Check multiple cards (OR logic - any card)
+const withAsOrKd = hitHands.hasKeyCard(['As', 'Kd'], false);
+
+// Check multiple cards (AND logic - all cards)
+const withAsAndKd = hitHands.hasKeyCard(['As', 'Kd'], true);
+
+// Wildcard support
+const withAnyAce = hitHands.hasKeyCard(['Ax']); // Any Ace
+const withAnyHeart = hitHands.hasKeyCard(['Xh']); // Any heart
+```
+
+**Note:** This method requires `poker-extval` 3.0.0+ and board cards to be set via `hitsHand()` or `makesHand()` first. If no board cards are cached, returns an empty range.
+
+#### `hasKicker(cards, and?, handStrength?)`
+
+Filters the range to only include hands where the specified cards are kicker cards for the hand strength. Requires board cards to be set via `hitsHand()` or `makesHand()` first.
+
+**Parameters:**
+- `cards` (string[]): Array of cards to check (e.g., `['As', 'Kd']`). Supports wildcards: `'Ax'` (all Aces), `'Xh'` (all hearts)
+- `and` (boolean, optional): If `true`, all cards must be present (AND logic). If `false`, any card can be present (OR logic). Default: `false`
+- `handStrength` (string, optional): Specific hand strength to check (e.g., `'Pair'`, `'Top Pair'`). If not provided, uses cached hand strength from previous `hitsHand()` call
+
+**Returns:** `RangeManager` - New instance with filtered hands
+
+**Example:**
+```javascript
+const rm = new RangeManager('22+,AKs,AKo');
+const board = ['Ah', 'Kd', 'Qc'];
+
+// First, filter to hands that hit a pair
+const hitHands = await rm.hitsHand(['Pair'], board);
+
+// Then filter to hands where As is a kicker
+const withAsKicker = hitHands.hasKicker(['As']);
+console.log(withAsKicker.toString());
+
+// Check for specific hand strength
+const topPairWithAsKicker = hitHands.hasKicker(['As'], false, 'Top Pair');
+
+// Check multiple cards (OR logic)
+const withAsOrKdKicker = hitHands.hasKicker(['As', 'Kd'], false);
+
+// Wildcard support
+const withAnyAceKicker = hitHands.hasKicker(['Ax']); // Any Ace as kicker
+```
+
+**Note:** This method requires `poker-extval` 3.0.0+ and board cards to be set via `hitsHand()` or `makesHand()` first. If no board cards are cached, returns an empty range.
 
 ---
 
@@ -734,7 +811,42 @@ const bothCards = await rm.hitsHandBoth(['Pair'], board);
 console.log('Hands using both cards:', bothCards.size());
 ```
 
-### Example 9: Notation Abbreviation
+### Example 9: Key Cards and Kickers
+
+```javascript
+import { RangeManager } from 'poker-rangeman';
+
+const rm = new RangeManager('22+,AKs,AKo,AQs,AQo');
+const board = ['Ah', 'Kd', 'Qc'];
+
+// First, filter to hands that hit a pair
+const hitHands = await rm.hitsHand(['Pair'], board);
+
+// Filter to hands where As is a key card
+const withAsKeyCard = hitHands.hasKeyCard(['As']);
+console.log('Hands with As as key card:', withAsKeyCard.toString());
+
+// Filter to hands where Kd is a kicker
+const withKdKicker = hitHands.hasKicker(['Kd']);
+console.log('Hands with Kd as kicker:', withKdKicker.toString());
+
+// Chain methods together
+const result = await rm
+  .hitsHand(['Pair'], board)
+  .hasKeyCard(['As'])
+  .hasKicker(['Kd']);
+console.log('Hands with As key card and Kd kicker:', result.toString());
+
+// Use wildcards
+const withAnyAceKeyCard = hitHands.hasKeyCard(['Ax']);
+console.log('Hands with any Ace as key card:', withAnyAceKeyCard.size());
+
+// Check specific hand strength
+const topPairWithAs = hitHands.hasKeyCard(['As'], false, 'Top Pair');
+console.log('Top pairs with As:', topPairWithAs.toString());
+```
+
+### Example 10: Notation Abbreviation
 
 ```javascript
 import { RangeManager } from 'poker-rangeman';
