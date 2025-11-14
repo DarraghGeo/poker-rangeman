@@ -512,7 +512,7 @@ export class RangeManager {
   _createFilteredInstance(filteredHands) {
     const newInstance = Object.create(Object.getPrototypeOf(this));
     Object.assign(newInstance, this);
-    newInstance.filteredHands = filteredHands;
+    newInstance.filteredHands = this._filterDeadCards(filteredHands);
     newInstance.evaluationCache = new Map(this.evaluationCache);
     newInstance.lastHandStrength = this.lastHandStrength;
     return newInstance;
@@ -535,6 +535,11 @@ export class RangeManager {
     const normalizedCard1 = card1[0].toLowerCase() + card1[1].toLowerCase();
     const normalizedCard2 = card2[0].toLowerCase() + card2[1].toLowerCase();
     return expandedDeadCards.includes(normalizedCard1) || expandedDeadCards.includes(normalizedCard2);
+  }
+
+  _filterDeadCards(hands) {
+    if (!this.deadCards || this.deadCards.length === 0) return hands;
+    return hands.filter(hand => !this.handContainsDeadCard(hand, this.deadCards));
   }
 
   handHasSuit(hand, suit) {
