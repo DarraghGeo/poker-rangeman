@@ -326,6 +326,51 @@ const testFiltering = {
       expect(result).toBeDefined();
     }
   },
+  intersect: {
+    withString: () => {
+      const rm1 = new RangeManager('22+,AKs,AKo');
+      const intersection = rm1.intersect('QQ+');
+      expect(intersection).toBeInstanceOf(RangeManager);
+      expect(intersection.size()).toBeGreaterThan(0);
+    },
+    withRankXNotation: () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      // This should work - intersect with KXo notation
+      const intersection = rm.intersect('KXo');
+      expect(intersection).toBeInstanceOf(RangeManager);
+      expect(intersection.size()).toBeGreaterThan(0);
+    },
+    withJXsJXo: () => {
+      // Reproduces the bug: JXs notation in intersect() should work without throwing "Unrecognized notation: JXs"
+      // This test verifies that JXs,JXo notation is properly parsed when used in intersect()
+      const rm = new RangeManager('22+,AKs,AKo,JQs,JQo,J2o,J2s');
+      // This should NOT throw "Unrecognized notation: JXs"
+      const intersection = rm.intersect('JXs,JXo');
+      expect(intersection).toBeInstanceOf(RangeManager);
+      // Should contain J hands from the original range
+      expect(intersection.contains('JcQc')).toBe(true); // JQs
+      expect(intersection.contains('JcQd')).toBe(true); // JQo
+      expect(intersection.contains('Jc2d')).toBe(true); // J2o
+      expect(intersection.contains('Jc2c')).toBe(true); // J2s
+      expect(intersection.contains('JcJd')).toBe(true); // JJ (from JXo)
+    },
+    withMultipleRankX: () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const intersection = rm.intersect('JXs,JXo,KXo');
+      expect(intersection).toBeInstanceOf(RangeManager);
+    },
+    newInstance: () => {
+      const rm = new RangeManager('AKs');
+      const intersection = rm.intersect('AKo');
+      expect(intersection).not.toBe(rm);
+    },
+    immutable: () => {
+      const rm = new RangeManager('AKs');
+      const originalSize = rm.size();
+      rm.intersect('AKo');
+      expect(rm.size()).toBe(originalSize);
+    }
+  },
   errors: {
     noBoard: async () => {
       const rm = new RangeManager('AKs');
@@ -852,6 +897,15 @@ describe('RangeManager', () => {
       });
     });
 
+
+    describe('intersect()', () => {
+      it('should intersect with string notation', testFiltering.intersect.withString);
+      it('should intersect with Rank X notation (KXo)', testFiltering.intersect.withRankXNotation);
+      it('should intersect with JXs,JXo notation (reproduces bug)', testFiltering.intersect.withJXsJXo);
+      it('should intersect with multiple Rank X notations', testFiltering.intersect.withMultipleRankX);
+      it('should return new RangeManager instance', testFiltering.intersect.newInstance);
+      it('should not modify original range', testFiltering.intersect.immutable);
+    });
 
     describe('Error Handling', () => {
       it('should throw error for missing board cards in makesHand()', testFiltering.errors.noBoard);
