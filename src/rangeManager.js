@@ -187,6 +187,14 @@ export class RangeManager {
     return /^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}o$/.test(segment);
   }
 
+  _isRankXNotation(segment) {
+    if (!segment || typeof segment !== 'string' || segment.length !== 3) return false;
+    const rank = segment[0];
+    const middle = segment[1];
+    const suffix = segment[2];
+    return this._isValidRank(rank) && (middle === 'X' || middle === 'x') && (suffix === 'o' || suffix === 's');
+  }
+
   _isWildcardNotation(segment) {
     if (!segment || typeof segment !== 'string' || segment.length !== 4) return false;
     return segment.includes('x') || segment.includes('X');
@@ -201,6 +209,7 @@ export class RangeManager {
     if (this._isPairNotation(segment)) return 'pair';
     if (this._isSuitedNotation(segment)) return 'suited';
     if (this._isOffsuitNotation(segment)) return 'offsuit';
+    if (this._isRankXNotation(segment)) return 'rankX';
     if (this._isWildcardNotation(segment)) return 'wildcard';
     if (this._isSpecificHandNotation(segment)) return 'specific';
     return null;
@@ -252,14 +261,14 @@ export class RangeManager {
   }
 
   _extractOffsuitPlus(range) {
-    const match = range.match(/^([AKQJT2-9])([AKQJT2-9])o\+$/);
+      const match = range.match(/^([AKQJT2-9])([AKQJT2-9])o\+$/);
     return match ? { rank1: match[1], rank2: match[2], isPlus: true } : null;
-  }
+    }
 
   _extractOffsuitRange(range) {
-    const match = range.match(/^([AKQJT2-9])([AKQJT2-9])o-([AKQJT2-9])([AKQJT2-9])o$/);
+      const match = range.match(/^([AKQJT2-9])([AKQJT2-9])o-([AKQJT2-9])([AKQJT2-9])o$/);
     return match ? { rank1: match[1], rank2: match[2], endRank1: match[3], endRank2: match[4] } : null;
-  }
+    }
 
   _extractOffsuitSingle(range) {
     const match = range.match(/^([AKQJT2-9])([AKQJT2-9])o$/);
@@ -403,6 +412,22 @@ export class RangeManager {
     return this._deduplicateHands(this._generateCombosFromWildcard(info, card1Suits, card2Ranks, card2Suits));
   }
 
+  _generateRankXHands(rank, isOffsuit) {
+    const hands = [];
+    const allRanks = VALID_RANKS.filter(r => r !== rank);
+    allRanks.forEach(otherRank => {
+      if (isOffsuit) {
+        hands.push(...this._generateOffsuitRange(rank, otherRank));
+      } else {
+        hands.push(...this._generateSuitedRange(rank, otherRank));
+      }
+    });
+    if (isOffsuit) {
+      hands.push(...this._generatePairCombinations(rank));
+    }
+    return this._deduplicateHands(hands);
+  }
+
   // ============================================================================
   // PARSING METHODS
   // ============================================================================
@@ -468,11 +493,19 @@ export class RangeManager {
     return this._parseOffsuitSingle(info);
   }
 
+  _parseRankXNotation(segment) {
+    const rank = segment[0].toUpperCase();
+    const isOffsuit = segment[2].toLowerCase() === 'o';
+    if (!this._isValidRank(rank)) throw new Error(`Invalid rank in notation: ${segment}`);
+    return this._generateRankXHands(rank, isOffsuit);
+  }
+
   _parseSegment(segment) {
     const type = this._detectNotationType(segment);
     if (type === 'pair') return this._parsePairRange(segment);
     if (type === 'suited') return this._parseSuitedRange(segment);
     if (type === 'offsuit') return this._parseOffsuitRange(segment);
+    if (type === 'rankX') return this._parseRankXNotation(segment);
     if (type === 'wildcard') return this._parseWildcardHand(segment);
     if (type === 'specific') return [this._parseSpecificHand(segment)];
     throw new Error(`Unrecognized notation: ${segment}`);
@@ -707,9 +740,10 @@ export class RangeManager {
     this.lastHandStrength = normalizedCriteria;
     const filtered = [];
     for (const hand of this.filteredHands) {
+      if (this.deadCards.length > 0 && this.handContainsDeadCard(hand, this.deadCards)) continue;
       const handCards = this._extractCardsFromHand(hand);
       const combinations = this._generate5CardCombinations(handCards, boardCards, minHandCards);
-      if (await this._evaluateCombinations(hand, boardCards, combinations, normalizedCriteria)) filtered.push(hand);
+      if (await this._evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards)) filtered.push(hand);
     }
     const instance = this._createFilteredInstance(filtered);
     instance.lastBoardCards = boardCards;
@@ -802,21 +836,37 @@ export class RangeManager {
     return this._filterByHandStrengthCards(cards, 'keyCards', handStrengthKeys, and);
   }
 
-  async _evaluateCombinations(hand, boardCards, combinations, normalizedCriteria) {
+  async _evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards) {
     if (!evaluateHandCache) {
       const module = await import('poker-extval');
       evaluateHandCache = module.evaluateHand;
     }
     const cacheKey = `${hand}|${boardCards.join(',')}`;
-    let cachedEvaluations = this.evaluationCache.get(cacheKey);
-    if (cachedEvaluations) return cachedEvaluations.some(evalObj => normalizedCriteria.some(c => evalObj[c] === true));
-    const evaluations = [];
-    for (const combo of combinations) {
-      const evaluation = evaluateHandCache(combo);
-      evaluations.push(...Object.values(evaluation));
-    }
+    const cachedEvaluations = this.evaluationCache.get(cacheKey);
+    if (cachedEvaluations) return this._evaluationsMatchWithHandCards(cachedEvaluations, normalizedCriteria, handCards, minHandCards);
+    const evaluations = combinations.flatMap(combo => Object.values(evaluateHandCache(combo)));
     this.evaluationCache.set(cacheKey, evaluations);
-    return evaluations.some(evalObj => normalizedCriteria.some(c => evalObj[c] === true));
+    return this._evaluationsMatchWithHandCards(evaluations, normalizedCriteria, handCards, minHandCards);
+  }
+
+  _evaluationsMatchWithHandCards(evaluations, criteria, handCards, minHandCards) {
+    if (minHandCards === 0) return evaluations.some(evalObj => criteria.some(c => evalObj[c] === true));
+    const normalizedHandCards = handCards.map(c => c[0].toLowerCase() + (c[1] || '').toLowerCase());
+    return evaluations.some(evalObj => this._evalObjMatchesWithHandCards(evalObj, criteria, normalizedHandCards, minHandCards));
+  }
+
+  _evalObjMatchesWithHandCards(evalObj, criteria, normalizedHandCards, minHandCards) {
+    const matchingCriteria = criteria.filter(c => evalObj[c] === true);
+    if (matchingCriteria.length === 0) return false;
+    return matchingCriteria.some(c => this._handCardsInKeyCardsForCriterion(normalizedHandCards, evalObj, c) >= minHandCards);
+  }
+
+  _handCardsInKeyCardsForCriterion(normalizedHandCards, evalObj, criterion) {
+    const keyCards = (evalObj.keyCards?.[criterion] || []).map(c => {
+      if (!c || typeof c !== 'string') return c;
+      return c[0].toLowerCase() + (c[1] || '').toLowerCase();
+    });
+    return normalizedHandCards.filter(c => keyCards.includes(c)).length;
   }
 
   _filterEvaluation(evaluation, criteria, matchAll) {

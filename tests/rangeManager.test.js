@@ -45,50 +45,50 @@ const testNormalization = {
 // ============================================================================
 
 const testConstructor = {
-  string: () => {
-    const rm = new RangeManager('AKs');
-    expect(rm).toBeInstanceOf(RangeManager);
-    expect(rm.size()).toBe(4);
-  },
-  array: () => {
-    const rm = new RangeManager(['AhKd', 'AsKs']);
-    expect(rm).toBeInstanceOf(RangeManager);
-    expect(rm.size()).toBe(2);
-  },
-  deadCards: () => {
-    const rm = new RangeManager('AKs', ['Ah']);
-    expect(rm.deadCards).toContain('Ah');
-  },
-  parse: () => {
-    const rm = new RangeManager('22-AA');
-    expect(rm.size()).toBeGreaterThan(0);
-  },
-  rawInput: () => {
-    const rm = new RangeManager('AKs');
-    expect(rm.rawInput).toBe('AKs');
-  },
-  deadCardsStored: () => {
-    const rm = new RangeManager('AKs', ['Ah', 'Kd']);
-    expect(rm.deadCards.length).toBe(2);
-  },
-  filteredHands: () => {
-    const rm = new RangeManager('AKs');
-    expect(Array.isArray(rm.filteredHands)).toBe(true);
-  }
+    string: () => {
+      const rm = new RangeManager('AKs');
+      expect(rm).toBeInstanceOf(RangeManager);
+      expect(rm.size()).toBe(4);
+    },
+    array: () => {
+      const rm = new RangeManager(['AhKd', 'AsKs']);
+      expect(rm).toBeInstanceOf(RangeManager);
+      expect(rm.size()).toBe(2);
+    },
+    deadCards: () => {
+      const rm = new RangeManager('AKs', ['Ah']);
+      expect(rm.deadCards).toContain('Ah');
+    },
+    parse: () => {
+      const rm = new RangeManager('22-AA');
+      expect(rm.size()).toBeGreaterThan(0);
+    },
+    rawInput: () => {
+      const rm = new RangeManager('AKs');
+      expect(rm.rawInput).toBe('AKs');
+    },
+    deadCardsStored: () => {
+      const rm = new RangeManager('AKs', ['Ah', 'Kd']);
+      expect(rm.deadCards.length).toBe(2);
+    },
+    filteredHands: () => {
+      const rm = new RangeManager('AKs');
+      expect(Array.isArray(rm.filteredHands)).toBe(true);
+    }
 };
 
 const testErrors = {
-  invalidCard: () => {
-    expect(() => new RangeManager('XKs')).toThrow();
-  },
-  invalidNotation: () => {
-    expect(() => new RangeManager('invalid')).toThrow();
-  },
-  empty: () => {
-    expect(() => new RangeManager('')).toThrow();
-  },
-  invalidType: () => {
-    expect(() => new RangeManager(123)).toThrow();
+    invalidCard: () => {
+      expect(() => new RangeManager('XKs')).toThrow();
+    },
+    invalidNotation: () => {
+      expect(() => new RangeManager('invalid')).toThrow();
+    },
+    empty: () => {
+      expect(() => new RangeManager('')).toThrow();
+    },
+    invalidType: () => {
+      expect(() => new RangeManager(123)).toThrow();
   }
 };
 

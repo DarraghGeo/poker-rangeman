@@ -51,6 +51,12 @@ const spadeHands = rm.hasSuit('s');      // Hands with at least one spade
 const heartSuited = rm.suitedOf('h');     // Hands suited in hearts
 console.log(spadeHands.size());
 console.log(heartSuited.toString());
+
+// Use Rank X notation for all hands containing a specific rank
+const allKHands = new RangeManager('KXo');  // All offsuit K hands (including KK)
+const all5Suited = new RangeManager('5Xs');  // All suited 5 hands (excluding 55)
+console.log(allKHands.size());              // 150
+console.log(all5Suited.size());             // 48
 ```
 
 ## API Reference
@@ -541,13 +547,26 @@ const evaluation = await rm.getObject('AcKc', board);
 - `AxKs` - Ace-X suited with King kicker (X excludes A and K)
 - `KxAh` - King-X offsuit with Ace kicker
 
+### Rank X Notation
+
+- `KXo` - All offsuit hands containing a King, including pocket Kings (equivalent to `K2o+,AKo,KK`)
+- `5Xo` - All offsuit hands containing a 5, including pocket 5s (equivalent to `52o+,A5o,55`)
+- `5Xs` - All suited hands containing a 5 from A-2 (equivalent to `52s+,A5s`, excludes `55` since suited pairs don't exist)
+- `AXs` - All suited hands containing an Ace from 2-K (equivalent to `A2s+,AKs`, excludes `AA`)
+
+**Note:** 
+- `RXo` includes the pocket pair (e.g., `KXo` includes `KK`)
+- `RXs` excludes the pocket pair (e.g., `5Xs` excludes `55` since suited pairs don't exist)
+
 ### Combining Notations
 
 Use commas to separate different notation types:
 
 ```javascript
-'22+,AKs,AKo'  // All pairs 22+, plus AKs, plus AKo
-'A2s+,KQo'     // All suited A2s+, plus KQo
+'22+,AKs,AKo'        // All pairs 22+, plus AKs, plus AKo
+'A2s+,KQo'           // All suited A2s+, plus KQo
+'KXo,5Xs'            // All offsuit K hands (including KK), plus all suited 5 hands
+'22+,KXo,AXs'        // All pairs 22+, all offsuit K hands, all suited A hands
 ```
 
 ---
@@ -668,9 +687,10 @@ import { RangeManager } from 'poker-rangeman';
 const tight = new RangeManager('22+,AKs,AKo');
 console.log(tight.size()); // 94
 
-// Create a loose range
-const loose = new RangeManager('22+,A2s+,A2o+,K2s+,K2o+');
+// Create a loose range (using Rank X notation)
+const loose = new RangeManager('22+,A2s+,A2o+,K2s+,KXo');
 console.log(loose.size()); // Much larger
+// Note: KXo is equivalent to K2o+,AKo,KK
 ```
 
 ### Example 2: Dead Cards and Exclusion
