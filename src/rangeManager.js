@@ -4,20 +4,25 @@ const VALID_SUITS = ['s', 'h', 'd', 'c'];
 let evaluateHandCache = null;
 
 const CRITERIA_MAPPING = {
+  // Made Hands
   'Pair': 'isPair', 'Two Pair': 'isTwoPair', 'Three of a Kind': 'isThreeOfAKind',
   'Straight': 'isStraight', 'Flush': 'isFlush', 'Full House': 'isFullHouse',
   'Four of a Kind': 'isFourOfAKind', 'Straight Flush': 'isStraightFlush', 'Royal Flush': 'isRoyalFlush',
-  'Top Pair': 'isTopPair', 'Middle Pair': 'isMiddlePair', 'Bottom Pair': 'isBottomPair', 'Overpair': 'isOverpair',
-  'Set': 'isSet', 'Trips': 'isTrips', 'Top Set': 'isTopSet', 'Middle Set': 'isMiddleSet', 'Bottom Set': 'isBottomSet',
-  'Top Trips': 'isTopTrips', 'Middle Trips': 'isMiddleTrips', 'Bottom Trips': 'isBottomTrips',
-  'Top Two Pair': 'isTopTwoPair', 'Middle Two Pair': 'isMiddleTwoPair', 'Bottom Two Pair': 'isBottomTwoPair',
-  'Top Kicker': 'isTopKicker', 'Middle Kicker': 'isMiddleKicker', 'Bottom Kicker': 'isBottomKicker',
-  'Ace Kicker': 'isAceKicker', 'King Kicker': 'isKingKicker',
-  'Flush Draw': 'isFlushDraw', 'Straight Draw': 'isStraightDraw', 'Inside Straight Draw': 'isInsideStraightDraw',
-  'Open Ended Straight Draw': 'isOpenEndedStraightDraw', 'Backdoor Flush Draw': 'isBackdoorFlushDraw',
-  'Backdoor Straight Draw': 'isBackdoorStraightDraw',
-  'Ace High': 'isAceHigh', 'King High': 'isKingHigh', 'Queen High': 'isQueenHigh', 'Jack High': 'isJackHigh',
-  'No Pair': 'isNoPair', 'High Card': 'isHighCard'
+  'High Card': 'isHighCard',
+  // Pair Categorization
+  'Top Pair': 'isTopPair', 'Middle Pair': 'isMiddlePair', 'Bottom Pair': 'isBottomPair',
+  'Underpair': 'isUnderPair',
+  // Two Pair Categorization
+  'Top And Middle Pair': 'isTopAndMiddlePair', 'Top And Bottom Pair': 'isTopAndBottomPair', 'Middle And Bottom Pair': 'isMiddleAndBottomPair',
+  // Three of a Kind Categorization
+  'Top Three Of A Kind': 'isTopThreeOfAKind', 'Middle Three Of A Kind': 'isMiddleThreeOfAKind', 'Bottom Three Of A Kind': 'isBottomThreeOfAKind',
+  // Draws
+  'Flush Draw': 'isFlushDraw', 'Backdoor Flush Draw': 'isBackdoorFlushDraw',
+  'Open Ended Straight Draw': 'isOpenEndedStraightDraw', 'Inside Straight Draw': 'isInsideStraightDraw',
+  'Straight Draw': 'isStraightDraw', 'Combo Draw': 'isComboDraw',
+  // Wheel Straight Support
+  'Straight Wheel': 'isStraightWheel', 'Open Ended Straight Draw Wheel': 'isOpenEndedStraightDrawWheel',
+  'Inside Straight Draw Wheel': 'isInsideStraightDrawWheel'
 };
 
 export class RangeManager {

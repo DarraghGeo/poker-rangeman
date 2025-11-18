@@ -594,7 +594,7 @@ Use commas to separate different notation types:
 
 ## Hand Strength Criteria
 
-The following criteria can be used with the `makesHand()`, `hitsHand()`, and `hitsHandBoth()` methods:
+The following criteria can be used with the `makesHand()`, `hitsHand()`, and `hitsHandBoth()` methods. All criteria are directly supported by `poker-extval`:
 
 ### Made Hands
 - `'Pair'` - One pair
@@ -606,50 +606,36 @@ The following criteria can be used with the `makesHand()`, `hitsHand()`, and `hi
 - `'Four of a Kind'` - Four of a kind
 - `'Straight Flush'` - Straight flush
 - `'Royal Flush'` - Royal flush
+- `'High Card'` - High card
 
-### Pair Types
+### Pair Categorization
 - `'Top Pair'` - Top pair
 - `'Middle Pair'` - Middle pair
 - `'Bottom Pair'` - Bottom pair
-- `'Overpair'` - Overpair (pocket pair higher than board)
+- `'Underpair'` - Underpair (pocket pair lower than board)
 
-### Sets/Trips
-- `'Set'` - Set (pocket pair + one on board)
-- `'Trips'` - Trips (one in hand + pair on board)
-- `'Top Set'` - Top set
-- `'Middle Set'` - Middle set
-- `'Bottom Set'` - Bottom set
-- `'Top Trips'` - Top trips
-- `'Middle Trips'` - Middle trips
-- `'Bottom Trips'` - Bottom trips
+### Two Pair Categorization
+- `'Top And Middle Pair'` - Top and middle pair
+- `'Top And Bottom Pair'` - Top and bottom pair
+- `'Middle And Bottom Pair'` - Middle and bottom pair
 
-### Two Pair Types
-- `'Top Two Pair'` - Top two pair
-- `'Middle Two Pair'` - Middle two pair
-- `'Bottom Two Pair'` - Bottom two pair
-
-### Kickers
-- `'Top Kicker'` - Top kicker
-- `'Middle Kicker'` - Middle kicker
-- `'Bottom Kicker'` - Bottom kicker
-- `'Ace Kicker'` - Ace kicker
-- `'King Kicker'` - King kicker
+### Three of a Kind Categorization
+- `'Top Three Of A Kind'` - Top three of a kind
+- `'Middle Three Of A Kind'` - Middle three of a kind
+- `'Bottom Three Of A Kind'` - Bottom three of a kind
 
 ### Draws
 - `'Flush Draw'` - Flush draw
-- `'Straight Draw'` - Straight draw
-- `'Inside Straight Draw'` - Inside straight draw (gutshot)
-- `'Open Ended Straight Draw'` - Open-ended straight draw
 - `'Backdoor Flush Draw'` - Backdoor flush draw
-- `'Backdoor Straight Draw'` - Backdoor straight draw
+- `'Open Ended Straight Draw'` - Open-ended straight draw
+- `'Inside Straight Draw'` - Inside straight draw (gutshot)
+- `'Straight Draw'` - Straight draw
+- `'Combo Draw'` - Combo draw (both flush and straight draw)
 
-### High Cards
-- `'Ace High'` - Ace high
-- `'King High'` - King high
-- `'Queen High'` - Queen high
-- `'Jack High'` - Jack high
-- `'No Pair'` - No pair
-- `'High Card'` - High card
+### Wheel Straight Support
+- `'Straight Wheel'` - Wheel straight (A-2-3-4-5)
+- `'Open Ended Straight Draw Wheel'` - Open-ended wheel straight draw
+- `'Inside Straight Draw Wheel'` - Inside wheel straight draw
 
 ---
 
