@@ -445,6 +445,144 @@ const testQuery = {
 // INTEGRATION TEST IMPLEMENTATIONS
 // ============================================================================
 
+const testRankXNotation = {
+  KXo: {
+    parse: () => {
+      const rm = new RangeManager('KXo');
+      expect(rm).toBeInstanceOf(RangeManager);
+      expect(rm.size()).toBe(150); // 12 offsuit combos per rank (12 ranks) + 6 KK combos = 144 + 6 = 150
+    },
+    includesKK: () => {
+      const rm = new RangeManager('KXo');
+      expect(rm.contains('KcKd')).toBe(true);
+      expect(rm.contains('KcKh')).toBe(true);
+      expect(rm.contains('KcKs')).toBe(true);
+      expect(rm.contains('KdKh')).toBe(true);
+      expect(rm.contains('KdKs')).toBe(true);
+      expect(rm.contains('KhKs')).toBe(true);
+    },
+    includesOffsuit: () => {
+      const rm = new RangeManager('KXo');
+      expect(rm.contains('Kc2d')).toBe(true);
+      expect(rm.contains('KcAd')).toBe(true);
+      expect(rm.contains('2cKd')).toBe(true);
+      expect(rm.contains('AcKd')).toBe(true);
+    },
+    excludesSuited: () => {
+      const rm = new RangeManager('KXo');
+      expect(rm.contains('Kc2c')).toBe(false);
+      expect(rm.contains('KcAc')).toBe(false);
+    },
+    size: () => {
+      const rm = new RangeManager('KXo');
+      // 12 ranks (A,2-9,T,J,Q) excluding K = 12 ranks
+      // Each rank has 12 offsuit combos with K = 12 * 12 = 144
+      // Plus 6 KK combos = 6
+      // Total = 150
+      expect(rm.size()).toBe(150);
+    }
+  },
+  '5Xs': {
+    parse: () => {
+      const rm = new RangeManager('5Xs');
+      expect(rm).toBeInstanceOf(RangeManager);
+      expect(rm.size()).toBe(48); // 4 suited combos per rank (12 ranks) = 48
+    },
+    excludes55: () => {
+      const rm = new RangeManager('5Xs');
+      expect(rm.contains('5c5d')).toBe(false);
+      expect(rm.contains('5c5h')).toBe(false);
+    },
+    includesSuited: () => {
+      const rm = new RangeManager('5Xs');
+      expect(rm.contains('5c2c')).toBe(true);
+      expect(rm.contains('5cAc')).toBe(true);
+      expect(rm.contains('2c5c')).toBe(true);
+      expect(rm.contains('Ac5c')).toBe(true);
+    },
+    excludesOffsuit: () => {
+      const rm = new RangeManager('5Xs');
+      expect(rm.contains('5c2d')).toBe(false);
+      expect(rm.contains('5cAd')).toBe(false);
+    },
+    size: () => {
+      const rm = new RangeManager('5Xs');
+      // 12 ranks (A,2-4,6-9,T,J,Q,K) excluding 5 = 12 ranks
+      // Each rank has 4 suited combos with 5 = 12 * 4 = 48
+      expect(rm.size()).toBe(48);
+    }
+  },
+  'AXs': {
+    parse: () => {
+      const rm = new RangeManager('AXs');
+      expect(rm).toBeInstanceOf(RangeManager);
+      expect(rm.size()).toBe(48); // 4 suited combos per rank (12 ranks) = 48
+    },
+    excludesAA: () => {
+      const rm = new RangeManager('AXs');
+      expect(rm.contains('AcAd')).toBe(false);
+    },
+    includesSuited: () => {
+      const rm = new RangeManager('AXs');
+      expect(rm.contains('Ac2c')).toBe(true);
+      expect(rm.contains('AcKc')).toBe(true);
+    },
+    size: () => {
+      const rm = new RangeManager('AXs');
+      // 12 ranks (2-9,T,J,Q,K) excluding A = 12 ranks
+      // Each rank has 4 suited combos with A = 12 * 4 = 48
+      expect(rm.size()).toBe(48);
+    }
+  },
+  caseInsensitive: {
+    lowercase: () => {
+      const rm1 = new RangeManager('KXo');
+      const rm2 = new RangeManager('kxo');
+      expect(rm1.size()).toBe(rm2.size());
+    },
+    mixed: () => {
+      const rm1 = new RangeManager('5Xs');
+      const rm2 = new RangeManager('5xs');
+      expect(rm1.size()).toBe(rm2.size());
+    }
+  },
+  combining: {
+    withPairs: () => {
+      const rm = new RangeManager('22+,KXo');
+      expect(rm.contains('KcKd')).toBe(true);
+      expect(rm.contains('2c2d')).toBe(true);
+      expect(rm.contains('Kc2d')).toBe(true);
+    },
+    withSuited: () => {
+      const rm = new RangeManager('AKs,5Xs');
+      expect(rm.contains('AcKc')).toBe(true);
+      expect(rm.contains('5c2c')).toBe(true);
+    },
+    multipleRX: () => {
+      const rm = new RangeManager('KXo,5Xs,AXs');
+      expect(rm.size()).toBeGreaterThan(0);
+      expect(rm.contains('Kc2d')).toBe(true);
+      expect(rm.contains('5c2c')).toBe(true);
+      expect(rm.contains('Ac2c')).toBe(true);
+    }
+  },
+  edgeCases: {
+    '2Xo': () => {
+      const rm = new RangeManager('2Xo');
+      expect(rm.size()).toBe(150); // Same as KXo
+      expect(rm.contains('2c2d')).toBe(true);
+    },
+    'TXs': () => {
+      const rm = new RangeManager('TXs');
+      expect(rm.size()).toBe(48);
+      expect(rm.contains('Tc2c')).toBe(true);
+      expect(rm.contains('TcAc')).toBe(true);
+      // TXs should not include TT (pocket pairs don't exist for suited notation)
+      // We can't test contains('TcTc') because it's an invalid hand format
+    }
+  }
+};
+
 const testIntegration = {
   workflow: {
     full: async () => {
@@ -757,6 +895,51 @@ describe('RangeManager', () => {
     describe('getHands()', () => {
       it('should return filteredHands as array', testQuery.getHands.returnsArray);
       it('should be alias for toArray()', testQuery.getHands.alias);
+    });
+  });
+
+  // ==========================================================================
+  // RANK X NOTATION TESTS
+  // ==========================================================================
+  
+  describe('Rank X Notation', () => {
+    describe('KXo (All offsuit K hands including KK)', () => {
+      it('should parse KXo notation', testRankXNotation.KXo.parse);
+      it('should include pocket Kings', testRankXNotation.KXo.includesKK);
+      it('should include all offsuit K hands', testRankXNotation.KXo.includesOffsuit);
+      it('should exclude suited K hands', testRankXNotation.KXo.excludesSuited);
+      it('should have correct size (150 hands)', testRankXNotation.KXo.size);
+    });
+
+    describe('5Xs (All suited 5 hands excluding 55)', () => {
+      it('should parse 5Xs notation', testRankXNotation['5Xs'].parse);
+      it('should exclude pocket 5s', testRankXNotation['5Xs'].excludes55);
+      it('should include all suited 5 hands', testRankXNotation['5Xs'].includesSuited);
+      it('should exclude offsuit 5 hands', testRankXNotation['5Xs'].excludesOffsuit);
+      it('should have correct size (48 hands)', testRankXNotation['5Xs'].size);
+    });
+
+    describe('AXs (All suited A hands excluding AA)', () => {
+      it('should parse AXs notation', testRankXNotation.AXs.parse);
+      it('should exclude pocket Aces', testRankXNotation.AXs.excludesAA);
+      it('should include all suited A hands', testRankXNotation.AXs.includesSuited);
+      it('should have correct size (48 hands)', testRankXNotation.AXs.size);
+    });
+
+    describe('Case Insensitivity', () => {
+      it('should handle lowercase notation', testRankXNotation.caseInsensitive.lowercase);
+      it('should handle mixed case notation', testRankXNotation.caseInsensitive.mixed);
+    });
+
+    describe('Combining with Other Notations', () => {
+      it('should combine with pair notation', testRankXNotation.combining.withPairs);
+      it('should combine with suited notation', testRankXNotation.combining.withSuited);
+      it('should combine multiple RX notations', testRankXNotation.combining.multipleRX);
+    });
+
+    describe('Edge Cases', () => {
+      it('should handle 2Xo notation', testRankXNotation.edgeCases['2Xo']);
+      it('should handle TXs notation', testRankXNotation.edgeCases['TXs']);
     });
   });
 

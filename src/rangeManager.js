@@ -207,9 +207,9 @@ export class RangeManager {
 
   _detectNotationType(segment) {
     if (this._isPairNotation(segment)) return 'pair';
+    if (this._isRankXNotation(segment)) return 'rankX';  // Check this BEFORE suited/offsuit
     if (this._isSuitedNotation(segment)) return 'suited';
     if (this._isOffsuitNotation(segment)) return 'offsuit';
-    if (this._isRankXNotation(segment)) return 'rankX';
     if (this._isWildcardNotation(segment)) return 'wildcard';
     if (this._isSpecificHandNotation(segment)) return 'specific';
     return null;

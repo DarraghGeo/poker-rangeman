@@ -57,6 +57,12 @@ const allKHands = new RangeManager('KXo');  // All offsuit K hands (including KK
 const all5Suited = new RangeManager('5Xs');  // All suited 5 hands (excluding 55)
 console.log(allKHands.size());              // 150
 console.log(all5Suited.size());             // 48
+
+// Use specific hand notation for exact hands
+const specificHand = new RangeManager('5h2s');  // Exact hand: 5h2s
+const combined = new RangeManager('5h2s,AKs,22+');  // Specific hand + other notation
+console.log(specificHand.size());            // 1
+console.log(combined.contains('5h2s'));     // true
 ```
 
 ## API Reference
@@ -558,6 +564,19 @@ const evaluation = await rm.getObject('AcKc', board);
 - `RXo` includes the pocket pair (e.g., `KXo` includes `KK`)
 - `RXs` excludes the pocket pair (e.g., `5Xs` excludes `55` since suited pairs don't exist)
 
+### Specific Hands
+
+You can specify exact hands using rank and suit notation:
+
+- `5h2s` - Five of hearts, Two of spades (1 combination)
+- `AcKd` - Ace of clubs, King of diamonds (1 combination)
+- `KhKs` - King of hearts, King of spades (1 combination - pocket pair)
+
+**Note:**
+- Hands are automatically normalized (sorted by rank, suits sorted for pairs)
+- `5h2s` and `2s5h` are treated as the same hand
+- Can be combined with other notation types using commas
+
 ### Combining Notations
 
 Use commas to separate different notation types:
@@ -567,6 +586,8 @@ Use commas to separate different notation types:
 'A2s+,KQo'           // All suited A2s+, plus KQo
 'KXo,5Xs'            // All offsuit K hands (including KK), plus all suited 5 hands
 '22+,KXo,AXs'        // All pairs 22+, all offsuit K hands, all suited A hands
+'5h2s,AKs'           // Specific hand 5h2s, plus all AK suited hands
+'AcKd,22+'           // Specific hand AcKd, plus all pairs 22+
 ```
 
 ---
