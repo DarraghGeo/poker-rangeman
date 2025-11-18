@@ -500,7 +500,7 @@ const testRankXNotation = {
     includesKK: () => {
       const rm = new RangeManager('KXo');
       expect(rm.contains('KcKd')).toBe(true);
-      expect(rm.contains('KcKh')).toBe(true);
+      expect(rm.contains('KcKh')).toBe(true)
       expect(rm.contains('KcKs')).toBe(true);
       expect(rm.contains('KdKh')).toBe(true);
       expect(rm.contains('KdKs')).toBe(true);
@@ -905,6 +905,191 @@ describe('RangeManager', () => {
       it('should intersect with multiple Rank X notations', testFiltering.intersect.withMultipleRankX);
       it('should return new RangeManager instance', testFiltering.intersect.newInstance);
       it('should not modify original range', testFiltering.intersect.immutable);
+    });
+
+    describe('hitsHand() - Pair on paired board bug assessment', () => {
+      it('should not return hands that make Two Pair when searching for Pair on paired board', async () => {
+        // Board: 3♠ K♠ T♠ K♦ (has pair of Kings)
+        // Hand: A3 makes Two Pair (KK + 33), not just Pair
+        // This should NOT be returned by hitsHand(['Pair'])
+        const rm = new RangeManager('22+,A2o+,A2s+');
+        const board = ['3s', 'Ks', 'Ts', 'Kd'];
+        const result = await rm.hitsHand(['Pair'], board);
+        
+        // Check each returned hand to ensure it only makes Pair, not Two Pair
+        const hands = result.toArray();
+        for (const hand of hands) {
+          const evaluation = await rm.getObject(hand, board);
+          const evaluations = Object.values(evaluation);
+          const makesTwoPair = evaluations.some(e => e.isTwoPair === true);
+          
+          // If it makes Two Pair, it should not be in results when searching for Pair
+          expect(makesTwoPair).toBe(false);
+        }
+      });
+
+      it('should return hands that make only Pair (not Two Pair) on paired board', async () => {
+        // Board: 3♠ K♠ T♠ K♦ (has pair of Kings)
+        // Hand: A2 should make only Pair (AA or 22), not Two Pair
+        const rm = new RangeManager('A2o,A2s,22');
+        const board = ['3s', 'Ks', 'Ts', 'Kd'];
+        const result = await rm.hitsHand(['Pair'], board);
+        
+        const hands = result.toArray();
+        for (const hand of hands) {
+          const evaluation = await rm.getObject(hand, board);
+          const evaluations = Object.values(evaluation);
+          const makesTwoPair = evaluations.some(e => e.isTwoPair === true);
+          const makesPair = evaluations.some(e => e.isPair === true);
+          
+          // Should make Pair but NOT Two Pair
+          expect(makesPair).toBe(true);
+          expect(makesTwoPair).toBe(false);
+        }
+      });
+
+      it('should correctly filter Pair on board without a pair', async () => {
+        // Board: 3♠ 4♠ T♠ 5♦ (no pair on board)
+        // All hands that make a pair should be returned
+        const rm = new RangeManager('22+,A2o+,A2s+');
+        const board = ['3s', '4s', 'Ts', '5d'];
+        const result = await rm.hitsHand(['Pair'], board);
+        
+        const hands = result.toArray();
+        for (const hand of hands) {
+          const evaluation = await rm.getObject(hand, board);
+          const evaluations = Object.values(evaluation);
+          const makesPair = evaluations.some(e => e.isPair === true);
+          const makesTwoPair = evaluations.some(e => e.isTwoPair === true);
+          
+          // Should make Pair (Two Pair is fine if board has no pair)
+          expect(makesPair || makesTwoPair).toBe(true);
+        }
+      });
+
+      it('should not return hands that make trips when searching for Pair on paired board', async () => {
+        // Board: 3♠ K♠ T♠ K♦ (has pair of Kings)
+        // Hand: KK makes trips (KKK), not Pair
+        const rm = new RangeManager('KK');
+        const board = ['3s', 'Ks', 'Ts', 'Kd'];
+        const result = await rm.hitsHand(['Pair'], board);
+        
+        const hands = result.toArray();
+        for (const hand of hands) {
+          const evaluation = await rm.getObject(hand, board);
+          const evaluations = Object.values(evaluation);
+          const makesTrips = evaluations.some(e => e.isThreeOfAKind === true);
+          
+          // Should not make trips if we're searching for Pair
+          expect(makesTrips).toBe(false);
+        }
+      });
+
+      it('should handle makesHand([Pair]) on paired board for comparison', async () => {
+        // Compare makesHand behavior with hitsHand
+        const rm = new RangeManager('22+,A2o+,A2s+');
+        const board = ['3s', 'Ks', 'Ts', 'Kd'];
+        const result = await rm.makesHand(['Pair'], board);
+        
+        const hands = result.toArray();
+        for (const hand of hands) {
+          const evaluation = await rm.getObject(hand, board);
+          const evaluations = Object.values(evaluation);
+          const makesTwoPair = evaluations.some(e => e.isTwoPair === true);
+          
+          // makesHand should also only return Pair, not Two Pair
+          expect(makesTwoPair).toBe(false);
+        }
+      });
+
+      it('should handle hitsHandBoth([Pair]) on paired board', async () => {
+        // Test hitsHandBoth with same scenario
+        const rm = new RangeManager('22+,A2o+,A2s+');
+        const board = ['3s', 'Ks', 'Ts', 'Kd'];
+        const result = await rm.hitsHandBoth(['Pair'], board);
+        
+        const hands = result.toArray();
+        for (const hand of hands) {
+          const evaluation = await rm.getObject(hand, board);
+          const evaluations = Object.values(evaluation);
+          const makesTwoPair = evaluations.some(e => e.isTwoPair === true);
+          
+          // Should only make Pair, not Two Pair
+          expect(makesTwoPair).toBe(false);
+        }
+      });
+
+      it('should verify specific example: A3 on K♠ K♦ 3♠ T♠ makes Two Pair, not Pair', async () => {
+        // Specific test case from the bug report
+        const rm = new RangeManager('A3o,A3s');
+        const board = ['Ks', 'Kd', '3s', 'Ts'];
+        const result = await rm.hitsHand(['Pair'], board);
+        
+        // A3 should NOT be in results because it makes Two Pair (KK + 33)
+        const hands = result.toArray();
+        const a3Hands = hands.filter(h => (h.includes('A') && h.includes('3')) || (h.includes('3') && h.includes('A')));
+        
+        // Verify A3 makes Two Pair
+        if (a3Hands.length > 0) {
+          const evaluation = await rm.getObject(a3Hands[0], board);
+          const evaluations = Object.values(evaluation);
+          const makesTwoPair = evaluations.some(e => e.isTwoPair === true);
+          expect(makesTwoPair).toBe(true); // This confirms the bug if A3 is in results
+        }
+        
+        // A3 should not be returned when searching for Pair only
+        expect(a3Hands.length).toBe(0);
+      });
+
+      it('should return hands that pair the board card (not the paired rank) on paired board', async () => {
+        // Board: 3♠ K♠ T♠ K♦ (has pair of Kings)
+        // Hand: A3 makes Two Pair (should be excluded)
+        // Hand: AT makes Two Pair (should be excluded)
+        // Hand: A2 makes only Pair (should be included)
+        const rm = new RangeManager('A2o,A3o,ATo');
+        const board = ['3s', 'Ks', 'Ts', 'Kd'];
+        const result = await rm.hitsHand(['Pair'], board);
+        
+        const hands = result.toArray();
+        const a3Hands = hands.filter(h => (h.includes('A') && h.includes('3')) || (h.includes('3') && h.includes('A')));
+        const atHands = hands.filter(h => (h.includes('A') && h.includes('T')) || (h.includes('T') && h.includes('A')));
+        
+        // A3 and AT should not be in results (they make Two Pair)
+        expect(a3Hands.length).toBe(0);
+        expect(atHands.length).toBe(0);
+        
+        // A2 should be in results if it makes only Pair
+        const a2Hands = hands.filter(h => (h.includes('A') && h.includes('2')) || (h.includes('2') && h.includes('A')));
+        if (a2Hands.length > 0) {
+          const evaluation = await rm.getObject(a2Hands[0], board);
+          const evaluations = Object.values(evaluation);
+          const makesTwoPair = evaluations.some(e => e.isTwoPair === true);
+          expect(makesTwoPair).toBe(false);
+        }
+      });
+
+      it('should return hands that make Two Pair when searching for Two Pair on paired board', async () => {
+        // This test verifies that searching for "Two Pair" correctly returns those hands
+        // Board: 3♠ K♠ T♠ K♦ (has pair of Kings)
+        // Hand: A3 makes Two Pair (KK + 33)
+        const rm = new RangeManager('A3o,A3s,A2o');
+        const board = ['3s', 'Ks', 'Ts', 'Kd'];
+        const result = await rm.hitsHand(['Two Pair'], board);
+        
+        const hands = result.toArray();
+        const a3Hands = hands.filter(h => (h.includes('A') && h.includes('3')) || (h.includes('3') && h.includes('A')));
+        
+        // A3 should be in results when searching for Two Pair
+        expect(a3Hands.length).toBeGreaterThan(0);
+        
+        // Verify A3 actually makes Two Pair
+        if (a3Hands.length > 0) {
+          const evaluation = await rm.getObject(a3Hands[0], board);
+          const evaluations = Object.values(evaluation);
+          const makesTwoPair = evaluations.some(e => e.isTwoPair === true);
+          expect(makesTwoPair).toBe(true);
+        }
+      });
     });
 
     describe('Error Handling', () => {

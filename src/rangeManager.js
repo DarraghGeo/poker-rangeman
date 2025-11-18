@@ -844,7 +844,10 @@ export class RangeManager {
     const cacheKey = `${hand}|${boardCards.join(',')}`;
     const cachedEvaluations = this.evaluationCache.get(cacheKey);
     if (cachedEvaluations) return this._evaluationsMatchWithHandCards(cachedEvaluations, normalizedCriteria, handCards, minHandCards);
-    const evaluations = combinations.flatMap(combo => Object.values(evaluateHandCache(combo)));
+    const allCards = [...handCards, ...boardCards];
+    const uniqueCards = [...new Set(allCards)];
+    if (uniqueCards.length < 5) return false;
+    const evaluations = Object.values(evaluateHandCache(uniqueCards));
     this.evaluationCache.set(cacheKey, evaluations);
     return this._evaluationsMatchWithHandCards(evaluations, normalizedCriteria, handCards, minHandCards);
   }
