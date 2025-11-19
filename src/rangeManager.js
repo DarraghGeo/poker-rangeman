@@ -663,12 +663,14 @@ export class RangeManager {
   async makesHand(criteria, boardCards = [], strict = true) {
     this.lastBoardCards = boardCards;
     const normalizedCriteria = this._validateCriteriaAndBoard(criteria, boardCards);
+    this.lastHandStrength = normalizedCriteria;
     const filtered = [];
     for (const hand of this.filteredHands) {
       if (await this._handMatchesCriteria(hand, criteria, boardCards, strict)) filtered.push(hand);
     }
     const instance = this._createFilteredInstance(filtered);
     instance.lastBoardCards = boardCards;
+    instance.lastHandStrength = normalizedCriteria;
     return instance;
   }
 
@@ -839,6 +841,43 @@ export class RangeManager {
     const handStrengthKeys = this._getHandStrengthKeys(handStrength, this.lastHandStrength);
     if (handStrengthKeys.length === 0) return this._createFilteredInstance([]);
     return this._filterByHandStrengthCards(cards, 'keyCards', handStrengthKeys, and);
+  }
+
+  getKeyCards(handStrength = null) {
+    if (!this.lastBoardCards) return [];
+    const handStrengthKeys = this._getHandStrengthKeys(handStrength, this.lastHandStrength);
+    if (handStrengthKeys.length === 0) return [];
+    
+    const allKeyCards = new Set();
+    
+    for (const hand of this.filteredHands) {
+      // Try both strict=true and strict=false cache keys since we don't know which was used
+      let evaluations = this.evaluationCache.get(`${hand}|${this.lastBoardCards.join(',')}|strict:true`);
+      if (!evaluations) {
+        evaluations = this.evaluationCache.get(`${hand}|${this.lastBoardCards.join(',')}|strict:false`);
+      }
+      if (!evaluations) continue;
+      
+      for (const evalObj of evaluations) {
+        if (!evalObj.keyCards) continue;
+        
+        // Collect key cards for all matching criteria
+        for (const criterion of handStrengthKeys) {
+          const keyCards = evalObj.keyCards[criterion];
+          if (Array.isArray(keyCards)) {
+            keyCards.forEach(card => {
+              if (card && typeof card === 'string') {
+                // Normalize card format (lowercase)
+                const normalized = card[0].toLowerCase() + (card[1] || '').toLowerCase();
+                allKeyCards.add(normalized);
+              }
+            });
+          }
+        }
+      }
+    }
+    
+    return Array.from(allKeyCards).sort();
   }
 
   async _evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards, strict = true) {

@@ -483,6 +483,108 @@ const testQuery = {
       const rm = new RangeManager('AKs');
       expect(rm.getHands()).toEqual(rm.toArray());
     }
+  },
+  getKeyCards: {
+    returnsEmptyArrayWhenNoBoard: async () => {
+      const rm = new RangeManager('22+,AKs');
+      const keyCards = rm.getKeyCards();
+      expect(Array.isArray(keyCards)).toBe(true);
+      expect(keyCards.length).toBe(0);
+    },
+    returnsEmptyArrayWhenNoHandStrength: async () => {
+      const rm = new RangeManager('22+,AKs');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
+      // No filtering done, so lastHandStrength is null
+      const keyCards = rm.getKeyCards();
+      expect(Array.isArray(keyCards)).toBe(true);
+      expect(keyCards.length).toBe(0);
+    },
+    returnsKeyCardsForPair: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const keyCards = filtered.getKeyCards();
+      
+      expect(Array.isArray(keyCards)).toBe(true);
+      expect(keyCards.length).toBeGreaterThan(0);
+      // Should include board cards that are part of pairs
+      expect(keyCards).toContain('ah');
+      expect(keyCards).toContain('kd');
+    },
+    returnsKeyCardsForSpecificHandStrength: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const topPairKeyCards = filtered.getKeyCards('Top Pair');
+      
+      expect(Array.isArray(topPairKeyCards)).toBe(true);
+      // Top Pair key cards should be the highest pair on board
+      if (topPairKeyCards.length > 0) {
+        expect(topPairKeyCards.some(c => c.includes('a') || c.includes('k'))).toBe(true);
+      }
+    },
+    returnsSortedKeyCards: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const keyCards = filtered.getKeyCards();
+      
+      expect(Array.isArray(keyCards)).toBe(true);
+      if (keyCards.length > 1) {
+        const sorted = [...keyCards].sort();
+        expect(keyCards).toEqual(sorted);
+      }
+    },
+    returnsUniqueKeyCards: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const keyCards = filtered.getKeyCards();
+      
+      expect(Array.isArray(keyCards)).toBe(true);
+      const unique = [...new Set(keyCards)];
+      expect(keyCards.length).toBe(unique.length);
+    },
+    returnsKeyCardsForMultipleCriteria: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair', 'Two Pair'], board);
+      const keyCards = filtered.getKeyCards();
+      
+      expect(Array.isArray(keyCards)).toBe(true);
+      expect(keyCards.length).toBeGreaterThan(0);
+    },
+    returnsEmptyArrayForEmptyRange: async () => {
+      const rm = new RangeManager('22+,AKs');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      // Exclude all hands in the range to create an empty range
+      const allHands = rm.toArray();
+      const filtered = await rm.exclude(allHands);
+      const hitHands = await filtered.hitsHand(['Pair'], board);
+      const keyCards = hitHands.getKeyCards();
+      
+      expect(Array.isArray(keyCards)).toBe(true);
+      expect(keyCards.length).toBe(0);
+    },
+    worksAfterMakesHand: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.makesHand(['Pair'], board);
+      const keyCards = filtered.getKeyCards();
+      
+      expect(Array.isArray(keyCards)).toBe(true);
+      expect(keyCards.length).toBeGreaterThan(0);
+    },
+    worksAfterHitsHandBoth: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHandBoth(['Pair'], board);
+      const keyCards = filtered.getKeyCards();
+      
+      expect(Array.isArray(keyCards)).toBe(true);
+      // May be empty if no hands use both cards, but should still return array
+      expect(Array.isArray(keyCards)).toBe(true);
+    }
   }
 };
 
@@ -1134,6 +1236,19 @@ describe('RangeManager', () => {
     describe('getHands()', () => {
       it('should return filteredHands as array', testQuery.getHands.returnsArray);
       it('should be alias for toArray()', testQuery.getHands.alias);
+    });
+
+    describe('getKeyCards()', () => {
+      it('should return empty array when no board cards', testQuery.getKeyCards.returnsEmptyArrayWhenNoBoard);
+      it('should return empty array when no hand strength', testQuery.getKeyCards.returnsEmptyArrayWhenNoHandStrength);
+      it('should return key cards for Pair', testQuery.getKeyCards.returnsKeyCardsForPair);
+      it('should return key cards for specific hand strength', testQuery.getKeyCards.returnsKeyCardsForSpecificHandStrength);
+      it('should return sorted key cards', testQuery.getKeyCards.returnsSortedKeyCards);
+      it('should return unique key cards', testQuery.getKeyCards.returnsUniqueKeyCards);
+      it('should return key cards for multiple criteria', testQuery.getKeyCards.returnsKeyCardsForMultipleCriteria);
+      it('should return empty array for empty range', testQuery.getKeyCards.returnsEmptyArrayForEmptyRange);
+      it('should work after makesHand', testQuery.getKeyCards.worksAfterMakesHand);
+      it('should work after hitsHandBoth', testQuery.getKeyCards.worksAfterHitsHandBoth);
     });
   });
 
