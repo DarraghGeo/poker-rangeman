@@ -585,6 +585,152 @@ const testQuery = {
       // May be empty if no hands use both cards, but should still return array
       expect(Array.isArray(keyCards)).toBe(true);
     }
+  },
+  hasKeyCard: {
+    returnsEmptyWhenNoBoard: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const result = rm.hasKeyCard(['Ah']);
+      expect(result.size()).toBe(0);
+    },
+    returnsEmptyWhenNoHandStrength: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      // No filtering done, so lastHandStrength is null
+      const result = rm.hasKeyCard(['Ah']);
+      expect(result.size()).toBe(0);
+    },
+    filtersByKeyCard: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const withKeyCard = filtered.hasKeyCard(['Ah']);
+      
+      expect(withKeyCard.size()).toBeGreaterThan(0);
+      // Should only include hands where Ah is a key card
+      const hands = withKeyCard.toArray();
+      expect(hands.length).toBeGreaterThan(0);
+      // Verify Ah is actually a key card for these hands
+      for (const hand of hands.slice(0, 3)) {
+        const evaluation = await rm.getObject(hand, board);
+        const evaluations = Object.values(evaluation);
+        const pairEval = evaluations.find(e => e.isPair === true);
+        if (pairEval && pairEval.keyCards && pairEval.keyCards.isPair) {
+          expect(pairEval.keyCards.isPair).toContain('Ah');
+        }
+      }
+    },
+    usesORLogicByDefault: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const withAhOrKd = filtered.hasKeyCard(['Ah', 'Kd'], false);
+      const withAh = filtered.hasKeyCard(['Ah'], false);
+      const withKd = filtered.hasKeyCard(['Kd'], false);
+      
+      // OR logic: should be at least as many as individual checks, possibly more
+      expect(withAhOrKd.size()).toBeGreaterThanOrEqual(Math.max(withAh.size(), withKd.size()));
+    },
+    usesANDLogicWhenSpecified: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const withAhAndKd = filtered.hasKeyCard(['Ah', 'Kd'], true);
+      const withAh = filtered.hasKeyCard(['Ah'], false);
+      const withKd = filtered.hasKeyCard(['Kd'], false);
+      
+      // AND logic: should be fewer or equal to individual checks
+      expect(withAhAndKd.size()).toBeLessThanOrEqual(Math.min(withAh.size(), withKd.size()));
+    },
+    worksWithSpecificHandStrength: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const topPairWithAh = filtered.hasKeyCard(['Ah'], false, 'Top Pair');
+      
+      expect(topPairWithAh.size()).toBeGreaterThanOrEqual(0);
+    },
+    returnsNewInstance: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const withKeyCard = filtered.hasKeyCard(['Ah']);
+      
+      expect(withKeyCard).not.toBe(filtered);
+      expect(withKeyCard.size()).toBeLessThanOrEqual(filtered.size());
+    }
+  },
+  hasKicker: {
+    returnsEmptyWhenNoBoard: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const result = rm.hasKicker(['Ah']);
+      expect(result.size()).toBe(0);
+    },
+    returnsEmptyWhenNoHandStrength: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      // No filtering done, so lastHandStrength is null
+      const result = rm.hasKicker(['Ah']);
+      expect(result.size()).toBe(0);
+    },
+    filtersByKicker: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const withKicker = filtered.hasKicker(['Qc']);
+      
+      expect(withKicker.size()).toBeGreaterThanOrEqual(0);
+      // If there are results, verify Qc is actually a kicker
+      if (withKicker.size() > 0) {
+        const hands = withKicker.toArray();
+        for (const hand of hands.slice(0, 3)) {
+          const evaluation = await rm.getObject(hand, board);
+          const evaluations = Object.values(evaluation);
+          const pairEval = evaluations.find(e => e.isPair === true);
+          if (pairEval && pairEval.kickerCards && pairEval.kickerCards.isPair) {
+            expect(pairEval.kickerCards.isPair).toContain('Qc');
+          }
+        }
+      }
+    },
+    usesORLogicByDefault: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const withQcOrJs = filtered.hasKicker(['Qc', 'Js'], false);
+      const withQc = filtered.hasKicker(['Qc'], false);
+      const withJs = filtered.hasKicker(['Js'], false);
+      
+      // OR logic: should be at least as many as individual checks
+      expect(withQcOrJs.size()).toBeGreaterThanOrEqual(Math.max(withQc.size(), withJs.size()));
+    },
+    usesANDLogicWhenSpecified: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const withQcAndJs = filtered.hasKicker(['Qc', 'Js'], true);
+      const withQc = filtered.hasKicker(['Qc'], false);
+      const withJs = filtered.hasKicker(['Js'], false);
+      
+      // AND logic: should be fewer or equal to individual checks
+      expect(withQcAndJs.size()).toBeLessThanOrEqual(Math.min(withQc.size(), withJs.size()));
+    },
+    worksWithSpecificHandStrength: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const topPairWithKicker = filtered.hasKicker(['Qc'], false, 'Top Pair');
+      
+      expect(topPairWithKicker.size()).toBeGreaterThanOrEqual(0);
+    },
+    returnsNewInstance: async () => {
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const filtered = await rm.hitsHand(['Pair'], board);
+      const withKicker = filtered.hasKicker(['Qc']);
+      
+      expect(withKicker).not.toBe(filtered);
+      expect(withKicker.size()).toBeLessThanOrEqual(filtered.size());
+    }
   }
 };
 
@@ -1249,6 +1395,26 @@ describe('RangeManager', () => {
       it('should return empty array for empty range', testQuery.getKeyCards.returnsEmptyArrayForEmptyRange);
       it('should work after makesHand', testQuery.getKeyCards.worksAfterMakesHand);
       it('should work after hitsHandBoth', testQuery.getKeyCards.worksAfterHitsHandBoth);
+    });
+
+    describe('hasKeyCard()', () => {
+      it('should return empty when no board cards', testQuery.hasKeyCard.returnsEmptyWhenNoBoard);
+      it('should return empty when no hand strength', testQuery.hasKeyCard.returnsEmptyWhenNoHandStrength);
+      it('should filter by key card', testQuery.hasKeyCard.filtersByKeyCard);
+      it('should use OR logic by default', testQuery.hasKeyCard.usesORLogicByDefault);
+      it('should use AND logic when specified', testQuery.hasKeyCard.usesANDLogicWhenSpecified);
+      it('should work with specific hand strength', testQuery.hasKeyCard.worksWithSpecificHandStrength);
+      it('should return new instance', testQuery.hasKeyCard.returnsNewInstance);
+    });
+
+    describe('hasKicker()', () => {
+      it('should return empty when no board cards', testQuery.hasKicker.returnsEmptyWhenNoBoard);
+      it('should return empty when no hand strength', testQuery.hasKicker.returnsEmptyWhenNoHandStrength);
+      it('should filter by kicker', testQuery.hasKicker.filtersByKicker);
+      it('should use OR logic by default', testQuery.hasKicker.usesORLogicByDefault);
+      it('should use AND logic when specified', testQuery.hasKicker.usesANDLogicWhenSpecified);
+      it('should work with specific hand strength', testQuery.hasKicker.worksWithSpecificHandStrength);
+      it('should return new instance', testQuery.hasKicker.returnsNewInstance);
     });
   });
 

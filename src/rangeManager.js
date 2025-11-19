@@ -772,8 +772,12 @@ export class RangeManager {
 
   _getCachedOnly(hand, boardCards) {
     if (!boardCards) return null;
-    const cacheKey = `${hand}|${boardCards.join(',')}`;
-    return this.evaluationCache.get(cacheKey) || null;
+    // Try both strict=true and strict=false cache keys since we don't know which was used
+    let evaluations = this.evaluationCache.get(`${hand}|${boardCards.join(',')}|strict:true`);
+    if (!evaluations) {
+      evaluations = this.evaluationCache.get(`${hand}|${boardCards.join(',')}|strict:false`);
+    }
+    return evaluations || null;
   }
 
   _parseSingleCard(card) {
