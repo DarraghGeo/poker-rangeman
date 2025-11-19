@@ -625,7 +625,7 @@ export class RangeManager {
     return criteria.map(c => CRITERIA_MAPPING[c] || c);
   }
 
-  async _evaluateHandWithBoard(hand, boardCards) {
+  async _evaluateHandWithBoard(hand, boardCards, strict = true) {
     if (!evaluateHandCache) {
       const module = await import('poker-extval');
       evaluateHandCache = module.evaluateHand;
@@ -636,52 +636,52 @@ export class RangeManager {
     if (uniqueCards.length < 5) {
       throw new Error(`Need at least 5 unique cards total (hand + board). Got ${uniqueCards.length} unique cards from hand [${handCards.join(', ')}] and board [${boardCards.join(', ')}]`);
     }
-    return evaluateHandCache(uniqueCards);
+    return evaluateHandCache(uniqueCards, strict);
   }
 
-  async _getCachedOrEvaluate(hand, boardCards) {
-    const cacheKey = `${hand}|${boardCards.join(',')}`;
+  async _getCachedOrEvaluate(hand, boardCards, strict = true) {
+    const cacheKey = `${hand}|${boardCards.join(',')}|strict:${strict}`;
     const cached = this.evaluationCache.get(cacheKey);
     if (cached) return cached;
-    const evaluation = await this._evaluateHandWithBoard(hand, boardCards);
+    const evaluation = await this._evaluateHandWithBoard(hand, boardCards, strict);
     const evaluations = Object.values(evaluation);
     this.evaluationCache.set(cacheKey, evaluations);
     return evaluations;
   }
 
-  async _handMatchesCriteria(hand, criteria, boardCards) {
+  async _handMatchesCriteria(hand, criteria, boardCards, strict = true) {
     const handCards = this._extractCardsFromHand(hand);
     const handCardSet = new Set(handCards);
     const boardCardSet = new Set(boardCards);
     const hasOverlap = handCards.some(card => boardCardSet.has(card));
     if (hasOverlap) return false;
-    const evaluations = await this._getCachedOrEvaluate(hand, boardCards);
+    const evaluations = await this._getCachedOrEvaluate(hand, boardCards, strict);
     const normalizedCriteria = this._normalizeCriteria(criteria);
     return evaluations.some(evalObj => normalizedCriteria.some(c => evalObj[c] === true));
   }
 
-  async makesHand(criteria, boardCards = []) {
+  async makesHand(criteria, boardCards = [], strict = true) {
     this.lastBoardCards = boardCards;
     const normalizedCriteria = this._validateCriteriaAndBoard(criteria, boardCards);
     const filtered = [];
     for (const hand of this.filteredHands) {
-      if (await this._handMatchesCriteria(hand, criteria, boardCards)) filtered.push(hand);
+      if (await this._handMatchesCriteria(hand, criteria, boardCards, strict)) filtered.push(hand);
     }
     const instance = this._createFilteredInstance(filtered);
     instance.lastBoardCards = boardCards;
     return instance;
   }
 
-  async evaluateHand(hand, boardCards) {
-    const evaluation = await this._evaluateHandWithBoard(hand, boardCards);
+  async evaluateHand(hand, boardCards, strict = true) {
+    const evaluation = await this._evaluateHandWithBoard(hand, boardCards, strict);
     return {
       is: (criteria) => this._filterEvaluation(evaluation, criteria, false),
       isAll: (criteria) => this._filterEvaluation(evaluation, criteria, true)
     };
   }
 
-  async getObject(hand, boardCards) {
-    return await this._evaluateHandWithBoard(hand, boardCards);
+  async getObject(hand, boardCards, strict = true) {
+    return await this._evaluateHandWithBoard(hand, boardCards, strict);
   }
 
   include(input) {
@@ -739,7 +739,7 @@ export class RangeManager {
     return normalizedCriteria;
   }
 
-  async _filterByCombinations(criteria, boardCards, minHandCards) {
+  async _filterByCombinations(criteria, boardCards, minHandCards, strict = true) {
     this.lastBoardCards = boardCards;
     const normalizedCriteria = this._validateCriteriaAndBoard(criteria, boardCards);
     this.lastHandStrength = normalizedCriteria;
@@ -748,7 +748,7 @@ export class RangeManager {
       if (this.deadCards.length > 0 && this.handContainsDeadCard(hand, this.deadCards)) continue;
       const handCards = this._extractCardsFromHand(hand);
       const combinations = this._generate5CardCombinations(handCards, boardCards, minHandCards);
-      if (await this._evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards)) filtered.push(hand);
+      if (await this._evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards, strict)) filtered.push(hand);
     }
     const instance = this._createFilteredInstance(filtered);
     instance.lastBoardCards = boardCards;
@@ -756,12 +756,12 @@ export class RangeManager {
     return instance;
   }
 
-  async hitsHand(criteria, boardCards) {
-    return await this._filterByCombinations(criteria, boardCards, 1);
+  async hitsHand(criteria, boardCards, strict = true) {
+    return await this._filterByCombinations(criteria, boardCards, 1, strict);
   }
 
-  async hitsHandBoth(criteria, boardCards) {
-    return await this._filterByCombinations(criteria, boardCards, 2);
+  async hitsHandBoth(criteria, boardCards, strict = true) {
+    return await this._filterByCombinations(criteria, boardCards, 2, strict);
   }
 
   _getBoardCards(boardCards) {
@@ -841,18 +841,18 @@ export class RangeManager {
     return this._filterByHandStrengthCards(cards, 'keyCards', handStrengthKeys, and);
   }
 
-  async _evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards) {
+  async _evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards, strict = true) {
     if (!evaluateHandCache) {
       const module = await import('poker-extval');
       evaluateHandCache = module.evaluateHand;
     }
-    const cacheKey = `${hand}|${boardCards.join(',')}`;
+    const cacheKey = `${hand}|${boardCards.join(',')}|strict:${strict}`;
     const cachedEvaluations = this.evaluationCache.get(cacheKey);
     if (cachedEvaluations) return this._evaluationsMatchWithHandCards(cachedEvaluations, normalizedCriteria, handCards, minHandCards);
     const allCards = [...handCards, ...boardCards];
     const uniqueCards = [...new Set(allCards)];
     if (uniqueCards.length < 5) return false;
-    const evaluations = Object.values(evaluateHandCache(uniqueCards));
+    const evaluations = Object.values(evaluateHandCache(uniqueCards, strict));
     this.evaluationCache.set(cacheKey, evaluations);
     return this._evaluationsMatchWithHandCards(evaluations, normalizedCriteria, handCards, minHandCards);
   }
