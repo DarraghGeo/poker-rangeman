@@ -508,8 +508,8 @@ const testQuery = {
       expect(Array.isArray(keyCards)).toBe(true);
       expect(keyCards.length).toBeGreaterThan(0);
       // Should include board cards that are part of pairs
-      expect(keyCards).toContain('ah');
-      expect(keyCards).toContain('kd');
+      expect(keyCards).toContain('Ah');
+      expect(keyCards).toContain('Kd');
     },
     returnsKeyCardsForSpecificHandStrength: async () => {
       const rm = new RangeManager('22+,AKs,AKo');
@@ -520,7 +520,7 @@ const testQuery = {
       expect(Array.isArray(topPairKeyCards)).toBe(true);
       // Top Pair key cards should be the highest pair on board
       if (topPairKeyCards.length > 0) {
-        expect(topPairKeyCards.some(c => c.includes('a') || c.includes('k'))).toBe(true);
+        expect(topPairKeyCards.some(c => c.includes('A') || c.includes('K'))).toBe(true);
       }
     },
     returnsSortedKeyCards: async () => {

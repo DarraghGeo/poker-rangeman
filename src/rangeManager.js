@@ -570,8 +570,8 @@ export class RangeManager {
     if (!deadCards || deadCards.length === 0) return false;
     const expandedDeadCards = this._parseCardArray(deadCards);
     const [card1, card2] = this._extractCardsFromHand(hand);
-    const normalizedCard1 = card1[0].toLowerCase() + card1[1].toLowerCase();
-    const normalizedCard2 = card2[0].toLowerCase() + card2[1].toLowerCase();
+    const normalizedCard1 = card1[0].toUpperCase() + card1[1].toLowerCase();
+    const normalizedCard2 = card2[0].toUpperCase() + card2[1].toLowerCase();
     return expandedDeadCards.includes(normalizedCard1) || expandedDeadCards.includes(normalizedCard2);
   }
 
@@ -784,9 +784,9 @@ export class RangeManager {
     if (!card || typeof card !== 'string' || card.length !== 2) return [card];
     const rank = card[0].toUpperCase();
     const suit = card[1].toLowerCase();
-    if (rank === 'X' && this._isValidSuit(suit)) return VALID_RANKS.map(r => r.toLowerCase() + suit);
-    if (this._isValidRank(rank) && suit === 'x') return VALID_SUITS.map(s => rank.toLowerCase() + s);
-    return [rank.toLowerCase() + suit];
+    if (rank === 'X' && this._isValidSuit(suit)) return VALID_RANKS.map(r => r + suit);
+    if (this._isValidRank(rank) && suit === 'x') return VALID_SUITS.map(s => rank + s);
+    return [rank + suit];
   }
 
   _parseCardArray(cards) {
@@ -800,7 +800,7 @@ export class RangeManager {
     const expandedCards = this._parseCardArray(cards);
     const normalizedTarget = targetArray.map(c => {
       if (!c || typeof c !== 'string') return c;
-      return c[0].toLowerCase() + (c[1] || '').toLowerCase();
+      return c[0].toUpperCase() + (c[1] || '').toLowerCase();
     });
     if (and) return expandedCards.every(c => normalizedTarget.includes(c));
     return expandedCards.some(c => normalizedTarget.includes(c));
@@ -871,8 +871,8 @@ export class RangeManager {
           if (Array.isArray(keyCards)) {
             keyCards.forEach(card => {
               if (card && typeof card === 'string') {
-                // Normalize card format (lowercase)
-                const normalized = card[0].toLowerCase() + (card[1] || '').toLowerCase();
+                // Normalize card format (uppercase rank, lowercase suit)
+                const normalized = card[0].toUpperCase() + (card[1] || '').toLowerCase();
                 allKeyCards.add(normalized);
               }
             });
@@ -902,7 +902,7 @@ export class RangeManager {
 
   _evaluationsMatchWithHandCards(evaluations, criteria, handCards, minHandCards) {
     if (minHandCards === 0) return evaluations.some(evalObj => criteria.some(c => evalObj[c] === true));
-    const normalizedHandCards = handCards.map(c => c[0].toLowerCase() + (c[1] || '').toLowerCase());
+    const normalizedHandCards = handCards.map(c => c[0].toUpperCase() + (c[1] || '').toLowerCase());
     return evaluations.some(evalObj => this._evalObjMatchesWithHandCards(evalObj, criteria, normalizedHandCards, minHandCards));
   }
 
@@ -915,7 +915,7 @@ export class RangeManager {
   _handCardsInKeyCardsForCriterion(normalizedHandCards, evalObj, criterion) {
     const keyCards = (evalObj.keyCards?.[criterion] || []).map(c => {
       if (!c || typeof c !== 'string') return c;
-      return c[0].toLowerCase() + (c[1] || '').toLowerCase();
+      return c[0].toUpperCase() + (c[1] || '').toLowerCase();
     });
     return normalizedHandCards.filter(c => keyCards.includes(c)).length;
   }
