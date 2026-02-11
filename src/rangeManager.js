@@ -160,6 +160,17 @@ export class RangeManager {
     return VALID_RANKS.slice(endIdx, startIdx + 1).reverse();
   }
 
+  _getRankBelow(rank) {
+    // Returns the rank that is one rank below the given rank
+    // For 'A', returns 'K'
+    // For 'K', returns 'Q'
+    // For '2', returns null (no rank below 2)
+    const rankIdx = VALID_RANKS.indexOf(rank);
+    if (rankIdx === -1) return null;
+    if (rankIdx === VALID_RANKS.length - 1) return null; // '2' has no rank below
+    return VALID_RANKS[rankIdx + 1];
+  }
+
   _getAllSuits() {
     return ['c', 'd', 'h', 's'];
   }
@@ -453,7 +464,14 @@ export class RangeManager {
   }
 
   _parseSuitedPlus(info) {
-    const ranks = this._getAllRanksBetween(info.rank2, 'K').filter(r => r !== info.rank1);
+    // Find the rank that is one rank below rank1 (the first rank)
+    const targetRank = this._getRankBelow(info.rank1);
+    if (!targetRank) {
+      // If rank1 is '2', there's no rank below it, so return empty
+      return [];
+    }
+    // Get all ranks from rank2 up to (and including) the target rank
+    const ranks = this._getAllRanksBetween(info.rank2, targetRank).filter(r => r !== info.rank1);
     return ranks.flatMap(rank => this._generateSuitedRange(info.rank1, rank));
   }
 
@@ -476,7 +494,14 @@ export class RangeManager {
   }
 
   _parseOffsuitPlus(info) {
-    const ranks = this._getAllRanksBetween(info.rank2, 'K').filter(r => r !== info.rank1);
+    // Find the rank that is one rank below rank1 (the first rank)
+    const targetRank = this._getRankBelow(info.rank1);
+    if (!targetRank) {
+      // If rank1 is '2', there's no rank below it, so return empty
+      return [];
+    }
+    // Get all ranks from rank2 up to (and including) the target rank
+    const ranks = this._getAllRanksBetween(info.rank2, targetRank).filter(r => r !== info.rank1);
     return ranks.flatMap(rank => this._generateOffsuitRange(info.rank1, rank));
   }
 
@@ -1060,8 +1085,11 @@ export class RangeManager {
   }
 
   _shouldUsePlusNotation(firstRank, highestSecondRank, rankDiff, detected) {
-    const isHighRank = firstRank === 'Q' || firstRank === 'K' || firstRank === 'A';
-    return (isHighRank && rankDiff === 1) || highestSecondRank === 'Q' || highestSecondRank === 'K' || detected.startRank === 'K';
+    // Only use plus notation if highestSecondRank is exactly one rank below firstRank
+    // This matches the new parsing logic where + means "up to one rank below the first rank"
+    const rankBelow = this._getRankBelow(firstRank);
+    if (rankBelow === null) return false; // No rank below (e.g., if firstRank is '2')
+    return highestSecondRank === rankBelow && rankDiff === 1;
   }
 
   _processSequence(seq, firstRank, suffix) {

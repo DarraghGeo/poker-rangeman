@@ -1202,6 +1202,170 @@ const testQuery = {
 };
 
 // ============================================================================
+// PLUS NOTATION TEST IMPLEMENTATIONS
+// ============================================================================
+
+const testPlusNotation = {
+  suitedPlus: {
+    QTPlus: () => {
+      // QTs+ should generate QTs, QJs (T to J where J is one below Q)
+      const rm = new RangeManager('QTs+');
+      expect(rm.size()).toBe(8); // 2 hands × 4 suits
+      expect(rm.contains('QcTc')).toBe(true);
+      expect(rm.contains('QcJc')).toBe(true);
+      expect(rm.contains('QcKc')).toBe(false); // Should not include QKs
+    },
+    J8Plus: () => {
+      // J8s+ should generate J8s, J9s, JTs (8 to T where T is one below J)
+      const rm = new RangeManager('J8s+');
+      expect(rm.size()).toBe(12); // 3 hands × 4 suits
+      expect(rm.contains('Jc8c')).toBe(true);
+      expect(rm.contains('Jc9c')).toBe(true);
+      expect(rm.contains('JcTc')).toBe(true);
+      expect(rm.contains('JcQc')).toBe(false); // Should not include JQs
+      expect(rm.contains('JcKc')).toBe(false); // Should not include JKs
+    },
+    A2sPlus: () => {
+      // A2s+ should generate A2s, A3s, ..., AKs (2 to K where K is one below A)
+      const rm = new RangeManager('A2s+');
+      expect(rm.size()).toBe(48); // 12 hands × 4 suits
+      expect(rm.contains('Ac2c')).toBe(true);
+      expect(rm.contains('AcKc')).toBe(true);
+      // Should not include AA (pairs don't exist in suited notation)
+    },
+    eightFourPlus: () => {
+      // 84s+ should generate 84s, 85s, 86s, 87s (4 to 7 where 7 is one below 8)
+      const rm = new RangeManager('84s+');
+      expect(rm.size()).toBe(16); // 4 hands × 4 suits
+      expect(rm.contains('8c4c')).toBe(true);
+      expect(rm.contains('8c5c')).toBe(true);
+      expect(rm.contains('8c6c')).toBe(true);
+      expect(rm.contains('8c7c')).toBe(true);
+      expect(rm.contains('8c9c')).toBe(false); // Should not include 89
+      // Pairs (88) are not valid in suited notation, so we don't check for them
+    },
+    K2sPlus: () => {
+      // K2s+ should generate K2s, K3s, ..., KQs (2 to Q where Q is one below K)
+      const rm = new RangeManager('K2s+');
+      expect(rm.size()).toBe(44); // 11 hands × 4 suits
+      expect(rm.contains('Kc2c')).toBe(true);
+      expect(rm.contains('KcQc')).toBe(true);
+      // Should not include KK (pairs don't exist in suited notation)
+      expect(rm.contains('KcAc')).toBe(false); // Should not include KAs
+    },
+    Q9Plus: () => {
+      // Q9s+ should generate Q9s, QTs, QJs (9 to J where J is one below Q)
+      const rm = new RangeManager('Q9s+');
+      expect(rm.size()).toBe(12); // 3 hands × 4 suits
+      expect(rm.contains('Qc9c')).toBe(true);
+      expect(rm.contains('QcTc')).toBe(true);
+      expect(rm.contains('QcJc')).toBe(true);
+      expect(rm.contains('QcKc')).toBe(false); // Should not include QKs
+    }
+  },
+  offsuitPlus: {
+    QToPlus: () => {
+      // QTo+ should generate QTo, QJo (T to J where J is one below Q)
+      const rm = new RangeManager('QTo+');
+      expect(rm.size()).toBe(24); // 2 hands × 12 offsuit combos
+      expect(rm.contains('QcTd')).toBe(true);
+      expect(rm.contains('QcJd')).toBe(true);
+      expect(rm.contains('QcKd')).toBe(false); // Should not include QKo
+    },
+    J8oPlus: () => {
+      // J8o+ should generate J8o, J9o, JTo (8 to T where T is one below J)
+      const rm = new RangeManager('J8o+');
+      expect(rm.size()).toBe(36); // 3 hands × 12 offsuit combos
+      expect(rm.contains('Jc8d')).toBe(true);
+      expect(rm.contains('Jc9d')).toBe(true);
+      expect(rm.contains('JcTd')).toBe(true);
+      expect(rm.contains('JcQd')).toBe(false); // Should not include JQo
+    },
+    A2oPlus: () => {
+      // A2o+ should generate A2o, A3o, ..., AKo (2 to K where K is one below A)
+      const rm = new RangeManager('A2o+');
+      expect(rm.size()).toBe(144); // 12 hands × 12 offsuit combos
+      expect(rm.contains('Ac2d')).toBe(true);
+      expect(rm.contains('AcKd')).toBe(true);
+      expect(rm.contains('AcAd')).toBe(false); // Should not include AA (pairs)
+    },
+    eightFourOPlus: () => {
+      // 84o+ should generate 84o, 85o, 86o, 87o (4 to 7 where 7 is one below 8)
+      const rm = new RangeManager('84o+');
+      expect(rm.size()).toBe(48); // 4 hands × 12 offsuit combos
+      expect(rm.contains('8c4d')).toBe(true);
+      expect(rm.contains('8c5d')).toBe(true);
+      expect(rm.contains('8c6d')).toBe(true);
+      expect(rm.contains('8c7d')).toBe(true);
+      expect(rm.contains('8c8d')).toBe(false); // Should not include 88 (pairs)
+    }
+  },
+  pairsUnchanged: {
+    twentyTwoPlus: () => {
+      // 22+ should still generate all pairs 22 to AA (unchanged behavior)
+      const rm = new RangeManager('22+');
+      expect(rm.size()).toBe(78); // All pairs from 22 to AA
+      expect(rm.contains('2c2d')).toBe(true);
+      expect(rm.contains('AcAd')).toBe(true);
+    }
+  },
+  toNotationPlusNotation: {
+    QTsPlusCorrect: () => {
+      // QTs+ should generate QTs, QJs and abbreviate to QTs+
+      const rm = new RangeManager('QTs+');
+      expect(rm.toNotation()).toBe('QTs+');
+      expect(rm.size()).toBe(8); // 2 hands × 4 suits
+    },
+    QTsQJsQKsShouldNotUsePlus: () => {
+      // QTs, QJs, QKs should NOT use QTs+ because QKs is beyond one rank below Q
+      // Note: QKs gets normalized to KQs (K > Q)
+      const rm = new RangeManager('QTs,QJs,QKs');
+      const notation = rm.toNotation();
+      // Should NOT be QTs+ because QKs (normalized to KQs) shouldn't be included in QTs+
+      expect(notation).not.toBe('QTs+');
+      // Should contain QTs and KQs (normalized form of QKs)
+      expect(notation).toContain('QTs');
+      expect(notation).toContain('KQs'); // QKs normalized to KQs
+    },
+    J8sPlusCorrect: () => {
+      // J8s+ should generate J8s, J9s, JTs and abbreviate to J8s+
+      const rm = new RangeManager('J8s+');
+      expect(rm.toNotation()).toBe('J8s+');
+      expect(rm.size()).toBe(12); // 3 hands × 4 suits
+    },
+    J8sJ9sJTsJQsShouldNotUsePlus: () => {
+      // J8s, J9s, JTs, JQs should NOT use J8s+ because JQs is beyond one rank below J
+      // Note: JQs gets normalized to QJs (Q > J)
+      const rm = new RangeManager('J8s,J9s,JTs,JQs');
+      const notation = rm.toNotation();
+      // Should NOT be J8s+ because JQs (normalized to QJs) shouldn't be included in J8s+
+      expect(notation).not.toBe('J8s+');
+      // Should contain all hands (JQs normalized to QJs)
+      expect(notation).toContain('J8s');
+      expect(notation).toContain('QJs'); // JQs normalized to QJs
+    },
+    QToPlusCorrect: () => {
+      // QTo+ should generate QTo, QJo and abbreviate to QTo+
+      const rm = new RangeManager('QTo+');
+      expect(rm.toNotation()).toBe('QTo+');
+      expect(rm.size()).toBe(24); // 2 hands × 12 offsuit combos
+    },
+    J8oPlusCorrect: () => {
+      // J8o+ should generate J8o, J9o, JTo and abbreviate to J8o+
+      const rm = new RangeManager('J8o+');
+      expect(rm.toNotation()).toBe('J8o+');
+      expect(rm.size()).toBe(36); // 3 hands × 12 offsuit combos
+    },
+    A2sPlusCorrect: () => {
+      // A2s+ should generate A2s to AKs and abbreviate to A2s+
+      const rm = new RangeManager('A2s+');
+      expect(rm.toNotation()).toBe('A2s+');
+      expect(rm.size()).toBe(48); // 12 hands × 4 suits
+    }
+  }
+};
+
+// ============================================================================
 // INTEGRATION TEST IMPLEMENTATIONS
 // ============================================================================
 
@@ -1924,6 +2088,42 @@ describe('RangeManager', () => {
       it('should use AND logic when specified', testQuery.hasKicker.usesANDLogicWhenSpecified);
       it('should work with specific hand strength', testQuery.hasKicker.worksWithSpecificHandStrength);
       it('should return new instance', testQuery.hasKicker.returnsNewInstance);
+    });
+  });
+
+  // ==========================================================================
+  // PLUS NOTATION TESTS
+  // ==========================================================================
+  
+  describe('Plus Notation', () => {
+    describe('Suited Plus Notation', () => {
+      it('should generate correct hands for QT+', testPlusNotation.suitedPlus.QTPlus);
+      it('should generate correct hands for J8+', testPlusNotation.suitedPlus.J8Plus);
+      it('should generate correct hands for A2s+', testPlusNotation.suitedPlus.A2sPlus);
+      it('should generate correct hands for 84+', testPlusNotation.suitedPlus.eightFourPlus);
+      it('should generate correct hands for K2s+', testPlusNotation.suitedPlus.K2sPlus);
+      it('should generate correct hands for Q9+', testPlusNotation.suitedPlus.Q9Plus);
+    });
+
+    describe('Offsuit Plus Notation', () => {
+      it('should generate correct hands for QTo+', testPlusNotation.offsuitPlus.QToPlus);
+      it('should generate correct hands for J8o+', testPlusNotation.offsuitPlus.J8oPlus);
+      it('should generate correct hands for A2o+', testPlusNotation.offsuitPlus.A2oPlus);
+      it('should generate correct hands for 84o+', testPlusNotation.offsuitPlus.eightFourOPlus);
+    });
+
+    describe('Pairs (Unchanged)', () => {
+      it('should still generate all pairs for 22+', testPlusNotation.pairsUnchanged.twentyTwoPlus);
+    });
+
+    describe('toNotation() with Plus Notation', () => {
+      it('should correctly abbreviate QTs+ to QTs+', testPlusNotation.toNotationPlusNotation.QTsPlusCorrect);
+      it('should NOT use QTs+ for QTs,QJs,QKs (QKs beyond one rank below Q)', testPlusNotation.toNotationPlusNotation.QTsQJsQKsShouldNotUsePlus);
+      it('should correctly abbreviate J8s+ to J8s+', testPlusNotation.toNotationPlusNotation.J8sPlusCorrect);
+      it('should NOT use J8s+ for J8s,J9s,JTs,JQs (JQs beyond one rank below J)', testPlusNotation.toNotationPlusNotation.J8sJ9sJTsJQsShouldNotUsePlus);
+      it('should correctly abbreviate QTo+ to QTo+', testPlusNotation.toNotationPlusNotation.QToPlusCorrect);
+      it('should correctly abbreviate J8o+ to J8o+', testPlusNotation.toNotationPlusNotation.J8oPlusCorrect);
+      it('should correctly abbreviate A2s+ to A2s+', testPlusNotation.toNotationPlusNotation.A2sPlusCorrect);
     });
   });
 

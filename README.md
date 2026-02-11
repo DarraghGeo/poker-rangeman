@@ -557,12 +557,18 @@ const evaluation = await rm.getObject('AcKc', board);
 
 - `AKs` - Ace-King suited (4 combinations)
 - `A2s+` - All suited hands from A2s to AKs (48 combinations)
+  - The `+` notation means the second rank increases until it reaches one rank below the first rank
+  - For `A2s+`, the second rank goes from 2 to K (where K is one rank below A)
+  - Examples: `QTs+` = QTs, QJs (T to J, where J is one rank below Q); `J8s+` = J8s, J9s, JTs (8 to T, where T is one rank below J)
 - `A3s-A6s` - Suited range from A3s to A6s (16 combinations)
 
 ### Offsuit Hands
 
 - `AKo` - Ace-King offsuit (12 combinations)
 - `A2o+` - All offsuit hands from A2o to AKo (144 combinations)
+  - The `+` notation means the second rank increases until it reaches one rank below the first rank
+  - For `A2o+`, the second rank goes from 2 to K (where K is one rank below A)
+  - Examples: `QTo+` = QTo, QJo (T to J, where J is one rank below Q); `J8o+` = J8o, J9o, JTo (8 to T, where T is one rank below J)
 - `A3o-A6o` - Offsuit range from A3o to A6o (48 combinations)
 
 ### Wildcards
