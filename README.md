@@ -386,21 +386,28 @@ const hands = await rm.hitsHandBoth(['Pair'], board);
 
 #### `setDeadCards(deadCards)`
 
-Sets dead cards for evaluation purposes. Dead cards limit which hands can be dealt but don't directly filter the range.
+Sets dead cards and filters the range to exclude any hands containing those dead cards.
 
 **Parameters:**
 - `deadCards` (string[]): Array of dead cards (2-character strings, e.g., `['Ah', 'Kd']`). Supports wildcards: `'Ax'` (all Aces), `'Xh'` (all hearts)
 
-**Returns:** `RangeManager` - New instance with dead cards set
+**Returns:** `RangeManager` - New instance with dead cards set and hands filtered
 
 **Example:**
 ```javascript
-const rm = new RangeManager('22+,AKs,AKo');
-const withDeadCards = rm.setDeadCards(['Ah', 'Kd']);
-// Dead cards are used for evaluation but don't change the active range
+const rm = new RangeManager('87s');
+const withDeadCards = rm.setDeadCards(['7c', '7s']);
+// Filters out hands containing 7c or 7s
+// Original: ['8c7c', '8d7d', '8h7h', '8s7s'] (4 combos)
+// Filtered: ['8d7d', '8h7h'] (2 combos)
+console.log(withDeadCards.size()); // 2
+console.log(withDeadCards.toArray()); // ['8d7d', '8h7h']
 
 // Wildcard support
-const withWildcards = rm.setDeadCards(['Ax', 'Xh']); // All Aces and all hearts
+const rm2 = new RangeManager('AKs');
+const withWildcards = rm2.setDeadCards(['Ax']); // All Aces are dead
+// Filters out all hands containing any Ace
+console.log(withWildcards.size()); // 0 (all AKs combos contain an Ace)
 ```
 
 **Throws:**

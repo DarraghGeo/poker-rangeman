@@ -705,7 +705,9 @@ export class RangeManager {
       if (!this._isValidCard(card)) throw new Error(`Invalid card: ${card}`);
     });
     const expanded = this._parseCardArray(deadCards);
-    const newInstance = this._createFilteredInstance([...this.filteredHands]);
+    // Filter hands using the NEW dead cards before creating instance
+    const filtered = this.filteredHands.filter(hand => !this.handContainsDeadCard(hand, expanded));
+    const newInstance = this._createFilteredInstance(filtered);
     newInstance.deadCards = expanded;
     return newInstance;
   }

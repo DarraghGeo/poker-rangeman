@@ -489,6 +489,169 @@ const testFiltering = {
       // May be empty, but shouldn't throw
     }
   },
+  setDeadCards: {
+    basicFiltering: () => {
+      // Basic filtering with setDeadCards() - exact scenario from bug report
+      const rm = new RangeManager('87s');
+      const filtered = rm.setDeadCards(['7c', '7s']);
+      
+      // Should exclude 8c7c (contains 7c) and 8s7s (contains 7s)
+      // Should return ['8d7d', '8h7h']
+      const hands = filtered.toArray();
+      expect(hands.length).toBe(2);
+      expect(hands).toContain('8d7d');
+      expect(hands).toContain('8h7h');
+      expect(hands).not.toContain('8c7c');
+      expect(hands).not.toContain('8s7s');
+      expect(filtered.size()).toBe(2);
+    },
+    exactBugScenario: () => {
+      // Exact scenario from bug report
+      const rm = new RangeManager('87s');
+      const filtered = rm.setDeadCards(['7c', '7s', '2d', 'As', 'Kd']);
+      
+      // Should exclude 8c7c (contains 7c) and 8s7s (contains 7s)
+      // Should return ['8d7d', '8h7h']
+      const hands = filtered.toArray();
+      expect(hands.length).toBe(2);
+      expect(hands).toContain('8d7d');
+      expect(hands).toContain('8h7h');
+      expect(hands).not.toContain('8c7c');
+      expect(hands).not.toContain('8s7s');
+      expect(filtered.size()).toBe(2);
+    },
+    multipleDeadCardsAffectingDifferentHands: () => {
+      // Multiple dead cards affecting different hands
+      const rm = new RangeManager('AKs');
+      const filtered = rm.setDeadCards(['Ah', 'Kd']);
+      
+      // AKs has 4 combos: AcKc, AdKd, AhKh, AsKs
+      // Should exclude AdKd (contains Kd) and AhKh (contains Ah)
+      const hands = filtered.toArray();
+      expect(hands.length).toBe(2);
+      expect(hands).toContain('AcKc');
+      expect(hands).toContain('AsKs');
+      expect(hands).not.toContain('AdKd');
+      expect(hands).not.toContain('AhKh');
+      expect(filtered.size()).toBe(2);
+    },
+    deadCardsWithPairs: () => {
+      // Dead cards with pairs
+      const rm = new RangeManager('22');
+      const filtered = rm.setDeadCards(['2h', '2d']);
+      
+      // 22 has 6 combos: 2c2d, 2c2h, 2c2s, 2d2h, 2d2s, 2h2s
+      // Should exclude combos containing 2h or 2d
+      const hands = filtered.toArray();
+      // Should only have 2c2s (doesn't contain 2h or 2d)
+      expect(hands.length).toBe(1);
+      expect(hands).toContain('2c2s');
+      expect(filtered.size()).toBe(1);
+    },
+    wildcardDeadCards: () => {
+      // Wildcard dead cards - Ax should expand to all Aces
+      const rm = new RangeManager('AKs');
+      const filtered = rm.setDeadCards(['Ax']);
+      
+      // Ax expands to: Ac, Ad, Ah, As
+      // AKs has 4 combos: AcKc, AdKd, AhKh, AsKs
+      // All combos contain an Ace, so all should be filtered
+      const hands = filtered.toArray();
+      expect(hands.length).toBe(0);
+      expect(filtered.size()).toBe(0);
+    },
+    chainingSetDeadCards: () => {
+      // Chaining setDeadCards - multiple calls should work correctly
+      const rm = new RangeManager('AKs');
+      const filtered1 = rm.setDeadCards(['Ah']);
+      const filtered2 = filtered1.setDeadCards(['Kd']);
+      
+      // First filter removes AhKh, leaving: AcKc, AdKd, AsKs
+      // Second filter removes AdKd, leaving: AcKc, AsKs
+      const hands = filtered2.toArray();
+      expect(hands.length).toBe(2);
+      expect(hands).toContain('AcKc');
+      expect(hands).toContain('AsKs');
+      expect(hands).not.toContain('AdKd');
+      expect(hands).not.toContain('AhKh');
+      expect(filtered2.size()).toBe(2);
+    },
+    emptyDeadCards: () => {
+      // Empty dead cards should return all hands unchanged
+      const rm = new RangeManager('AKs');
+      const filtered = rm.setDeadCards([]);
+      
+      expect(filtered.size()).toBe(rm.size());
+      expect(filtered.toArray()).toEqual(rm.toArray());
+    },
+    deadCardsThatDontAffectRange: () => {
+      // Dead cards that don't match any hands in range
+      const rm = new RangeManager('AKs');
+      const filtered = rm.setDeadCards(['2c', '3d', '4h', '5s']);
+      
+      // No AKs combo contains 2, 3, 4, or 5, so all should remain
+      expect(filtered.size()).toBe(rm.size());
+      expect(filtered.toArray()).toEqual(rm.toArray());
+    },
+    newInstance: () => {
+      // Should return new RangeManager instance
+      const rm = new RangeManager('AKs');
+      const filtered = rm.setDeadCards(['Ah']);
+      
+      expect(filtered).toBeInstanceOf(RangeManager);
+      expect(filtered).not.toBe(rm);
+    },
+    immutable: () => {
+      // Should not modify original range
+      const rm = new RangeManager('AKs');
+      const originalSize = rm.size();
+      rm.setDeadCards(['Ah']);
+      
+      expect(rm.size()).toBe(originalSize);
+    },
+    withPairsRange: () => {
+      // Test with pairs range
+      const rm = new RangeManager('22+');
+      const filtered = rm.setDeadCards(['Ah', 'Ad']);
+      
+      // Should filter out AA combos containing Ah or Ad
+      // AA has 6 combos, some will be filtered
+      const originalSize = rm.size();
+      expect(filtered.size()).toBeLessThan(originalSize);
+      
+      // Verify no hands contain Ah or Ad
+      const hands = filtered.toArray();
+      hands.forEach(hand => {
+        expect(hand).not.toContain('Ah');
+        expect(hand).not.toContain('Ad');
+      });
+    },
+    withOffsuitRange: () => {
+      // Test with offsuit range
+      const rm = new RangeManager('AKo');
+      const filtered = rm.setDeadCards(['Ah', 'Kd']);
+      
+      // AKo has 12 combos
+      // Should filter out combos containing Ah or Kd
+      const hands = filtered.toArray();
+      hands.forEach(hand => {
+        expect(hand).not.toContain('Ah');
+        expect(hand).not.toContain('Kd');
+      });
+      expect(filtered.size()).toBeLessThan(rm.size());
+    },
+    toNotationWithDeadCards: () => {
+      // Test that toNotation() works correctly after setDeadCards()
+      const rm = new RangeManager('87s');
+      const filtered = rm.setDeadCards(['7c', '7s']);
+      
+      const notation = filtered.toNotation();
+      expect(typeof notation).toBe('string');
+      // Should not contain excluded hands
+      const hands = filtered.toArray();
+      expect(hands.length).toBe(2);
+    }
+  },
   errors: {
     noBoard: async () => {
       const rm = new RangeManager('AKs');
@@ -1467,6 +1630,22 @@ describe('RangeManager', () => {
       it('should allow hasKicker() after intersect()', testFiltering.intersect.hasKickerAfterIntersect);
       it('should support chained operations with hasKeyCard()', testFiltering.intersect.chainedOperationsWithHasKeyCard);
       it('should allow getKeyCards() after intersect()', testFiltering.intersect.getKeyCardsAfterIntersect);
+    });
+
+    describe('setDeadCards()', () => {
+      it('should filter hands containing dead cards', testFiltering.setDeadCards.basicFiltering);
+      it('should filter hands correctly in exact bug scenario', testFiltering.setDeadCards.exactBugScenario);
+      it('should filter multiple dead cards affecting different hands', testFiltering.setDeadCards.multipleDeadCardsAffectingDifferentHands);
+      it('should filter pairs with dead cards', testFiltering.setDeadCards.deadCardsWithPairs);
+      it('should filter with wildcard dead cards', testFiltering.setDeadCards.wildcardDeadCards);
+      it('should support chaining setDeadCards calls', testFiltering.setDeadCards.chainingSetDeadCards);
+      it('should handle empty dead cards array', testFiltering.setDeadCards.emptyDeadCards);
+      it('should handle dead cards that do not affect range', testFiltering.setDeadCards.deadCardsThatDontAffectRange);
+      it('should return new RangeManager instance', testFiltering.setDeadCards.newInstance);
+      it('should not modify original range', testFiltering.setDeadCards.immutable);
+      it('should filter pairs range correctly', testFiltering.setDeadCards.withPairsRange);
+      it('should filter offsuit range correctly', testFiltering.setDeadCards.withOffsuitRange);
+      it('should work correctly with toNotation()', testFiltering.setDeadCards.toNotationWithDeadCards);
     });
 
     describe('hitsHand() - Pair on paired board bug assessment', () => {
