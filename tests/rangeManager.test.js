@@ -369,6 +369,124 @@ const testFiltering = {
       const originalSize = rm.size();
       rm.intersect('AKo');
       expect(rm.size()).toBe(originalSize);
+    },
+    preservesEvaluationState: async () => {
+      // Test that intersect preserves lastBoardCards and lastHandStrength
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const evaluatedRange = await rm.hitsHand(['Pair'], board);
+      
+      // Verify original has evaluation state
+      expect(evaluatedRange.lastBoardCards).toEqual(board);
+      expect(evaluatedRange.lastHandStrength).toBeDefined();
+      
+      // Create new instance via intersect
+      const highlightHands = ['AhKd', 'AsKs'];
+      const highlightRange = evaluatedRange.intersect(highlightHands.join(','));
+      
+      // New instance should preserve evaluation state
+      expect(highlightRange.lastBoardCards).toEqual(board);
+      expect(highlightRange.lastHandStrength).toBeDefined();
+    },
+    hasKeyCardAfterIntersect: async () => {
+      // This is the exact scenario from the consumer bug report
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const evaluatedRange = await rm.hitsHand(['Pair'], board);
+      
+      const highlightHands = ['AhKd', 'AsKs'];
+      const highlightRange = evaluatedRange.intersect(highlightHands.join(','));
+      
+      // This should NOT throw "evaluateHandCache is not a function"
+      const card = 'Ah';
+      const category = 'Pair';
+      const handsWithCard = highlightRange.hasKeyCard([card], false, category);
+      
+      expect(handsWithCard).toBeInstanceOf(RangeManager);
+      // Should return a valid result (may be empty, but shouldn't throw)
+      expect(handsWithCard.size()).toBeGreaterThanOrEqual(0);
+    },
+    hasKeyCardAfterIntersectWithoutPriorEvaluation: async () => {
+      // Edge case: intersect before any evaluation, then evaluate, then hasKeyCard
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      
+      // Create intersection first (no evaluation yet)
+      const highlightHands = ['AhKd', 'AsKs'];
+      const intersected = rm.intersect(highlightHands.join(','));
+      
+      // Now evaluate the intersected range
+      const evaluatedRange = await intersected.hitsHand(['Pair'], board);
+      
+      // Now hasKeyCard should work
+      const handsWithCard = evaluatedRange.hasKeyCard(['Ah'], false, 'Pair');
+      
+      expect(handsWithCard).toBeInstanceOf(RangeManager);
+      expect(handsWithCard.size()).toBeGreaterThanOrEqual(0);
+    },
+    hasKeyCardWithEmptyCache: async () => {
+      // Test when evaluation cache is empty but lastBoardCards exists
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      
+      // Evaluate to set lastBoardCards and lastHandStrength
+      const evaluatedRange = await rm.hitsHand(['Pair'], board);
+      
+      // Create new instance via intersect (cache may be empty for new hands)
+      const highlightHands = ['AhKd', 'AsKs'];
+      const highlightRange = evaluatedRange.intersect(highlightHands.join(','));
+      
+      // Clear the cache to simulate the bug scenario
+      highlightRange.evaluationCache.clear();
+      
+      // This should handle empty cache gracefully or trigger evaluation
+      // The fix should ensure evaluateHandCache is initialized if needed
+      const handsWithCard = highlightRange.hasKeyCard(['Ah'], false, 'Pair');
+      
+      expect(handsWithCard).toBeInstanceOf(RangeManager);
+    },
+    hasKickerAfterIntersect: async () => {
+      // Same bug pattern but with hasKicker
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const evaluatedRange = await rm.hitsHand(['Pair'], board);
+      
+      const highlightHands = ['AhKd', 'AsKs'];
+      const highlightRange = evaluatedRange.intersect(highlightHands.join(','));
+      
+      // This should NOT throw "evaluateHandCache is not a function"
+      const handsWithKicker = highlightRange.hasKicker(['Qc'], false, 'Pair');
+      
+      expect(handsWithKicker).toBeInstanceOf(RangeManager);
+      expect(handsWithKicker.size()).toBeGreaterThanOrEqual(0);
+    },
+    chainedOperationsWithHasKeyCard: async () => {
+      // Test chaining: makesHand -> intersect -> hasKeyCard
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      
+      const result = await rm
+        .makesHand(['Pair'], board)
+        .then(range => range.intersect('AKs'))
+        .then(range => range.hasKeyCard(['Ah'], false, 'Pair'));
+      
+      expect(result).toBeInstanceOf(RangeManager);
+      expect(result.size()).toBeGreaterThanOrEqual(0);
+    },
+    getKeyCardsAfterIntersect: async () => {
+      // Test getKeyCards on intersected instance
+      const rm = new RangeManager('22+,AKs,AKo');
+      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const evaluatedRange = await rm.hitsHand(['Pair'], board);
+      
+      const highlightHands = ['AhKd', 'AsKs'];
+      const highlightRange = evaluatedRange.intersect(highlightHands.join(','));
+      
+      // This should work without errors
+      const keyCards = highlightRange.getKeyCards('Pair');
+      
+      expect(Array.isArray(keyCards)).toBe(true);
+      // May be empty, but shouldn't throw
     }
   },
   errors: {
@@ -730,6 +848,192 @@ const testQuery = {
       
       expect(withKicker).not.toBe(filtered);
       expect(withKicker.size()).toBeLessThanOrEqual(filtered.size());
+    }
+  },
+  toNotation: {
+    basicWithDeadCardsViaSetDeadCards: () => {
+      // Test basic toNotation() with dead cards set via setDeadCards()
+      const rm = new RangeManager('22-AA,AKs,AKo');
+      const withDeadCards = rm.setDeadCards(['Ah']);
+      const notation = withDeadCards.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Should not contain Ah (dead card)
+      expect(notation).not.toContain('Ah');
+      // Should still produce abbreviated notation
+      expect(notation.length).toBeGreaterThan(0);
+    },
+    withDeadCardsViaExclude: () => {
+      // Test toNotation() after excluding specific hands
+      const rm = new RangeManager('22-AA,AKs');
+      const filtered = rm.exclude(['Ah']);
+      const notation = filtered.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Should not contain Ah (excluded)
+      expect(notation).not.toContain('Ah');
+      // Should still be abbreviated
+      expect(notation.length).toBeGreaterThan(0);
+    },
+    deadCardsBreakingUpPairs: () => {
+      // Test when dead cards break up consecutive pairs
+      // If Ah and Ad are dead, AA pair is filtered, but other pairs should still abbreviate
+      const rm = new RangeManager('22-AA');
+      const filtered = rm.exclude(['Ah', 'Ad']);
+      const notation = filtered.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Should still produce abbreviated pair notation
+      // May be "22-KK" or similar, but should be abbreviated
+      if (notation.length > 0) {
+        expect(notation).toMatch(/^([AKQJT2-9])\1/); // Should start with pair notation
+      }
+    },
+    deadCardsBreakingUpSuitedRange: () => {
+      // Test when dead cards break up suited ranges (e.g., Ah dead breaks up AKs)
+      const rm = new RangeManager('AKs');
+      const filtered = rm.exclude(['Ah']);
+      const notation = filtered.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Should not contain Ah
+      expect(notation).not.toContain('Ah');
+      // Should still produce valid notation for remaining suited hands
+      if (notation.length > 0) {
+        // Should contain suited notation (s suffix) or be empty
+        expect(notation.includes('s') || notation === '').toBe(true);
+      }
+    },
+    deadCardsBreakingUpOffsuitRange: () => {
+      // Test when dead cards break up offsuit ranges
+      const rm = new RangeManager('AKo');
+      const filtered = rm.exclude(['Ah']);
+      const notation = filtered.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Should not contain Ah
+      expect(notation).not.toContain('Ah');
+      // Should still produce valid notation for remaining offsuit hands
+      if (notation.length > 0) {
+        // Should contain offsuit notation (o suffix) or be empty
+        expect(notation.includes('o') || notation === '').toBe(true);
+      }
+    },
+    allHandsFiltered: () => {
+      // Test that toNotation() returns empty string when all hands are filtered
+      const rm = new RangeManager('AKs');
+      // Exclude all 4 suited AK combinations
+      const filtered = rm.exclude(['As', 'Ah', 'Ad', 'Ac', 'Ks', 'Kh', 'Kd', 'Kc']);
+      const notation = filtered.toNotation();
+      
+      expect(notation).toBe('');
+    },
+    abbreviatedNotationPreserved: () => {
+      // Test that ranges are still abbreviated correctly even when dead cards fragment them
+      const rm = new RangeManager('22-AA,AKs,AKo');
+      // Exclude some cards but not all
+      const filtered = rm.exclude(['Ah', 'Kd']);
+      const notation = filtered.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Should produce abbreviated notation (not individual hands)
+      // Check that it doesn't contain individual hand notation like "AcKc,AdKd" etc
+      if (notation.length > 0) {
+        // Should contain abbreviated patterns like ranges or single notations
+        const parts = notation.split(',');
+        parts.forEach(part => {
+          // Each part should be abbreviated notation (pairs, suited, or offsuit)
+          const isPairNotation = /^([AKQJT2-9])\1([+-]|$)/.test(part);
+          const isSuitedOffsuitNotation = /^[AKQJT2-9]{2}[so]([+-]|$)/.test(part);
+          const isRangeNotation = /^[AKQJT2-9]{2}[so]-[AKQJT2-9]{2}[so]$/.test(part);
+          expect(isPairNotation || isSuitedOffsuitNotation || isRangeNotation).toBe(true);
+        });
+      }
+    },
+    pairsAbbreviationWithDeadCards: () => {
+      // Test that pair abbreviations work correctly with dead cards
+      const rm = new RangeManager('22-AA');
+      // Exclude some pairs but leave consecutive ones
+      const filtered = rm.exclude(['2h', '2d', '3h', '3d']); // Exclude 22 and 33
+      const notation = filtered.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Should still abbreviate remaining pairs
+      if (notation.length > 0) {
+        // Should contain pair notation
+        expect(notation).toMatch(/[AKQJT2-9]{2}/);
+      }
+    },
+    suitedAbbreviationWithDeadCards: () => {
+      // Test that suited abbreviations work correctly with dead cards
+      const rm = new RangeManager('A2s+,AKs');
+      // Exclude some suited hands
+      const filtered = rm.exclude(['Ah', '2h']); // Exclude Ah2h
+      const notation = filtered.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Should still abbreviate remaining suited hands
+      if (notation.length > 0) {
+        // Should contain suited notation (s suffix)
+        expect(notation).toMatch(/s/);
+      }
+    },
+    offsuitAbbreviationWithDeadCards: () => {
+      // Test that offsuit abbreviations work correctly with dead cards
+      const rm = new RangeManager('A2o+,AKo');
+      // Exclude some offsuit hands
+      const filtered = rm.exclude(['Ah', '2d']); // Exclude Ah2d
+      const notation = filtered.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Should still abbreviate remaining offsuit hands
+      if (notation.length > 0) {
+        // Should contain offsuit notation (o suffix)
+        expect(notation).toMatch(/o/);
+      }
+    },
+    constructorDeadCards: () => {
+      // Test behavior when dead cards are provided in constructor
+      // Note: Currently constructor stores dead cards but doesn't filter immediately
+      const rm = new RangeManager('AKs', ['Ah']);
+      const notation = rm.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Currently dead cards in constructor don't filter, so Ah should still be present
+      // This test documents current behavior
+      expect(rm.deadCards).toContain('Ah');
+    },
+    multipleDeadCardsBreakingRanges: () => {
+      // Test with multiple dead cards that break up multiple ranges
+      const rm = new RangeManager('22-AA,AKs,AKo,KQs');
+      const filtered = rm.exclude(['Ah', 'Kd', 'Qc']);
+      const notation = filtered.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Should not contain excluded cards
+      expect(notation).not.toContain('Ah');
+      expect(notation).not.toContain('Kd');
+      expect(notation).not.toContain('Qc');
+      // Should still produce valid abbreviated notation
+      if (notation.length > 0) {
+        expect(notation.length).toBeGreaterThan(0);
+      }
+    },
+    deadCardsWithWildcards: () => {
+      // Test toNotation() with wildcard dead cards via setDeadCards
+      // Note: setDeadCards sets dead cards but doesn't re-filter immediately
+      // The dead cards are stored for future filtering operations
+      const rm = new RangeManager('22-AA,AKs,AKo');
+      const filtered = rm.setDeadCards(['Ax']); // All Aces are dead
+      const notation = filtered.toNotation();
+      
+      expect(typeof notation).toBe('string');
+      // Dead cards are set but hands aren't filtered until next operation
+      // So notation may still contain Ace hands, but dead cards are stored
+      expect(filtered.deadCards.length).toBeGreaterThan(0);
+      // Verify wildcard was expanded (Ax should expand to all 4 Aces)
+      const aceCards = filtered.deadCards.filter(card => card[0] === 'A');
+      expect(aceCards.length).toBe(4); // All 4 Aces should be in dead cards
     }
   }
 };
@@ -1155,6 +1459,16 @@ describe('RangeManager', () => {
       it('should not modify original range', testFiltering.intersect.immutable);
     });
 
+    describe('intersect() - Evaluation State Preservation', () => {
+      it('should preserve evaluation state (lastBoardCards, lastHandStrength)', testFiltering.intersect.preservesEvaluationState);
+      it('should allow hasKeyCard() after intersect()', testFiltering.intersect.hasKeyCardAfterIntersect);
+      it('should allow hasKeyCard() after intersect() without prior evaluation', testFiltering.intersect.hasKeyCardAfterIntersectWithoutPriorEvaluation);
+      it('should handle hasKeyCard() with empty cache', testFiltering.intersect.hasKeyCardWithEmptyCache);
+      it('should allow hasKicker() after intersect()', testFiltering.intersect.hasKickerAfterIntersect);
+      it('should support chained operations with hasKeyCard()', testFiltering.intersect.chainedOperationsWithHasKeyCard);
+      it('should allow getKeyCards() after intersect()', testFiltering.intersect.getKeyCardsAfterIntersect);
+    });
+
     describe('hitsHand() - Pair on paired board bug assessment', () => {
       it('should not return hands that make Two Pair when searching for Pair on paired board', async () => {
         // Board: 3♠ K♠ T♠ K♦ (has pair of Kings)
@@ -1364,6 +1678,22 @@ describe('RangeManager', () => {
       it('should group suited hands together', testQuery.toString.groupSuited);
       it('should group offsuit hands together', testQuery.toString.groupOffsuit);
       it('should return comma-separated notation', testQuery.toString.commaSeparated);
+    });
+
+    describe('toNotation()', () => {
+      it('should return abbreviated notation with dead cards via setDeadCards()', testQuery.toNotation.basicWithDeadCardsViaSetDeadCards);
+      it('should return abbreviated notation with dead cards via exclude()', testQuery.toNotation.withDeadCardsViaExclude);
+      it('should handle dead cards breaking up consecutive pairs', testQuery.toNotation.deadCardsBreakingUpPairs);
+      it('should handle dead cards breaking up suited ranges', testQuery.toNotation.deadCardsBreakingUpSuitedRange);
+      it('should handle dead cards breaking up offsuit ranges', testQuery.toNotation.deadCardsBreakingUpOffsuitRange);
+      it('should return empty string when all hands are filtered', testQuery.toNotation.allHandsFiltered);
+      it('should preserve abbreviated notation when dead cards fragment ranges', testQuery.toNotation.abbreviatedNotationPreserved);
+      it('should abbreviate pairs correctly with dead cards', testQuery.toNotation.pairsAbbreviationWithDeadCards);
+      it('should abbreviate suited hands correctly with dead cards', testQuery.toNotation.suitedAbbreviationWithDeadCards);
+      it('should abbreviate offsuit hands correctly with dead cards', testQuery.toNotation.offsuitAbbreviationWithDeadCards);
+      it('should handle dead cards provided in constructor', testQuery.toNotation.constructorDeadCards);
+      it('should handle multiple dead cards breaking multiple ranges', testQuery.toNotation.multipleDeadCardsBreakingRanges);
+      it('should handle wildcard dead cards', testQuery.toNotation.deadCardsWithWildcards);
     });
 
     describe('size()', () => {

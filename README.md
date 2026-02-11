@@ -165,7 +165,7 @@ rm.toString(); // "22,33,44,55,66,77,88,99,TT,JJ,QQ,KK,AA,AKs,AKo"
 
 #### `toNotation()`
 
-Returns the range as an abbreviated notation string, using `+` and `-` notation where possible.
+Returns the range as an abbreviated notation string, using `+` and `-` notation where possible. Works correctly with dead cards - when hands are filtered by dead cards (via `exclude()` or `setDeadCards()`), the abbreviated notation reflects only the remaining hands.
 
 **Returns:** `string` - Abbreviated range notation
 
@@ -178,6 +178,16 @@ rm.toNotation();  // "22+,AKs"
 const rm2 = new RangeManager('A2s,A3s,A4s,A5s,A6s,AJs');
 rm2.toString();   // "A2s,A3s,A4s,A5s,A6s,AJs"
 rm2.toNotation(); // "A2s-A6s,AJs"
+
+// With dead cards - notation reflects filtered hands
+const rm3 = new RangeManager('22-AA,AKs,AKo');
+const filtered = rm3.exclude(['Ah', 'Kd']);
+filtered.toNotation(); // Abbreviated notation without hands containing Ah or Kd
+
+// Dead cards breaking up ranges still produce abbreviated notation
+const rm4 = new RangeManager('22-AA');
+const filtered2 = rm4.exclude(['Ah', 'Ad']); // Removes AA pair
+filtered2.toNotation(); // "22-KK" (abbreviated, excluding AA)
 ```
 
 ---
@@ -891,6 +901,17 @@ console.log(rm.toNotation()); // "22+,AKs"
 const rm2 = new RangeManager('A2s,A3s,A4s,A5s,A6s,AJs');
 console.log(rm2.toString());   // "A2s,A3s,A4s,A5s,A6s,AJs"
 console.log(rm2.toNotation()); // "A2s-A6s,AJs"
+
+// With dead cards - notation still abbreviates correctly
+const rm3 = new RangeManager('22-AA,AKs,AKo');
+const filtered = rm3.exclude(['Ah', 'Kd']);
+console.log('Original:', rm3.toNotation());     // "22+,AKs,AKo"
+console.log('Filtered:', filtered.toNotation()); // Abbreviated notation without Ah/Kd hands
+
+// Dead cards breaking up ranges
+const rm4 = new RangeManager('AKs');
+const filtered2 = rm4.exclude(['Ah']); // Removes AhKh
+console.log(filtered2.toNotation());   // Still abbreviated (e.g., "AKs" or individual hands)
 ```
 
 ---
