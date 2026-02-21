@@ -632,10 +632,20 @@ The following criteria can be used with the `makesHand()`, `hitsHand()`, and `hi
 - `'High Card'` - High card
 
 ### Pair Categorization
-- `'Top Pair'` - Top pair
-- `'Middle Pair'` - Middle pair
-- `'Bottom Pair'` - Bottom pair
-- `'Underpair'` - Underpair (pocket pair lower than board)
+
+When a board is provided, pair types are **board-relative** (defined by the hand’s pair rank vs the board’s ranks):
+
+- **Pairs that use a board card:** `'Top Pair'` (pair the board’s highest card), `'Middle Pair'` (pair the board’s middle card), `'Bottom Pair'` (pair the board’s lowest card).
+- **Pocket pairs vs board:** `'Overpair'` (pocket pair above the board’s highest card), `'Underpair'` (pocket pair below the board’s lowest card), `'Middling Pair'` (pocket pair with rank strictly between the board’s highest and lowest, and that rank does not appear on the board; distinct from Middle Pair, which pairs a board card).
+
+Criteria available for use with `makesHand()`, `hitsHand()`, and `hitsHandBoth()`:
+
+- `'Top Pair'` - Top pair (pair the board’s highest card)
+- `'Middle Pair'` - Middle pair (pair the board’s middle card)
+- `'Bottom Pair'` - Bottom pair (pair the board’s lowest card)
+- `'Overpair'` - Overpair (pocket pair above the board’s highest card)
+- `'Underpair'` - Underpair (pocket pair below the board’s lowest card)
+- `'Middling Pair'` - Middling pair (pocket pair between board high and low, rank not on board)
 
 ### Two Pair Categorization
 - `'Top And Middle Pair'` - Top and middle pair

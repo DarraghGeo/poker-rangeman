@@ -11,7 +11,7 @@ const CRITERIA_MAPPING = {
   'High Card': 'isHighCard',
   // Pair Categorization
   'Top Pair': 'isTopPair', 'Middle Pair': 'isMiddlePair', 'Bottom Pair': 'isBottomPair',
-  'Underpair': 'isUnderPair',
+  'Overpair': 'isOverpair', 'Underpair': 'isUnderPair', 'Middling Pair': 'isMiddlingPair',
   // Two Pair Categorization
   'Top And Middle Pair': 'isTopAndMiddlePair', 'Top And Bottom Pair': 'isTopAndBottomPair', 'Middle And Bottom Pair': 'isMiddleAndBottomPair',
   // Three of a Kind Categorization
@@ -169,6 +169,50 @@ export class RangeManager {
     if (rankIdx === -1) return null;
     if (rankIdx === VALID_RANKS.length - 1) return null; // '2' has no rank below
     return VALID_RANKS[rankIdx + 1];
+  }
+
+  _getBoardRankInfo(boardCards) {
+    if (!boardCards || boardCards.length === 0) return null;
+    const ranks = [...new Set(boardCards.map(c => c[0].toUpperCase()))];
+    const sorted = ranks.sort((a, b) => this._getRankValue(b) - this._getRankValue(a));
+    const midIdx = Math.floor(sorted.length / 2);
+    return {
+      highest: sorted[0],
+      middle: sorted[midIdx],
+      lowest: sorted[sorted.length - 1],
+      ranksOnBoard: new Set(sorted)
+    };
+  }
+
+  _isPocketPair(handCards) {
+    if (!handCards || handCards.length !== 2) return false;
+    return handCards[0][0].toUpperCase() === handCards[1][0].toUpperCase();
+  }
+
+  _getPocketPairRank(handCards) {
+    if (!this._isPocketPair(handCards)) return null;
+    return handCards[0][0].toUpperCase();
+  }
+
+  _isMiddlingPairVsBoard(pairRank, boardInfo) {
+    const aboveLow = this._compareRanks(pairRank, boardInfo.lowest) > 0;
+    const belowHigh = this._compareRanks(pairRank, boardInfo.highest) < 0;
+    return aboveLow && belowHigh && !boardInfo.ranksOnBoard.has(pairRank);
+  }
+
+  _buildBoardRelativePairResult(pairRank, boardInfo) {
+    return {
+      isOverpair: this._compareRanks(pairRank, boardInfo.highest) > 0,
+      isUnderPair: this._compareRanks(pairRank, boardInfo.lowest) < 0,
+      isMiddlingPair: this._isMiddlingPairVsBoard(pairRank, boardInfo)
+    };
+  }
+
+  _getBoardRelativePairType(handCards, boardCards) {
+    if (!this._isPocketPair(handCards)) return null;
+    const boardInfo = this._getBoardRankInfo(boardCards);
+    if (!boardInfo) return null;
+    return this._buildBoardRelativePairResult(this._getPocketPairRank(handCards), boardInfo);
   }
 
   _getAllSuits() {
@@ -674,15 +718,27 @@ export class RangeManager {
     return evaluations;
   }
 
+  _criterionMatchWithBoardRelative(evalObj, criterion, boardRelative) {
+    const boardRelativeKeys = ['isOverpair', 'isUnderPair', 'isMiddlingPair'];
+    if (boardRelative && boardRelativeKeys.includes(criterion)) {
+      return boardRelative[criterion] === true;
+    }
+    return evalObj[criterion] === true;
+  }
+
+  _evaluationsMatchCriteria(evaluations, normalizedCriteria, boardRelative) {
+    return evaluations.some(evalObj =>
+      normalizedCriteria.some(c => this._criterionMatchWithBoardRelative(evalObj, c, boardRelative))
+    );
+  }
+
   async _handMatchesCriteria(hand, criteria, boardCards, strict = true) {
     const handCards = this._extractCardsFromHand(hand);
-    const handCardSet = new Set(handCards);
-    const boardCardSet = new Set(boardCards);
-    const hasOverlap = handCards.some(card => boardCardSet.has(card));
-    if (hasOverlap) return false;
+    if (handCards.some(card => new Set(boardCards).has(card))) return false;
     const evaluations = await this._getCachedOrEvaluate(hand, boardCards, strict);
     const normalizedCriteria = this._normalizeCriteria(criteria);
-    return evaluations.some(evalObj => normalizedCriteria.some(c => evalObj[c] === true));
+    const boardRelative = boardCards.length > 0 ? this._getBoardRelativePairType(handCards, boardCards) : null;
+    return this._evaluationsMatchCriteria(evaluations, normalizedCriteria, boardRelative);
   }
 
   async makesHand(criteria, boardCards = [], strict = true) {
@@ -776,8 +832,9 @@ export class RangeManager {
     for (const hand of this.filteredHands) {
       if (this.deadCards.length > 0 && this.handContainsDeadCard(hand, this.deadCards)) continue;
       const handCards = this._extractCardsFromHand(hand);
+      const boardRelative = this._getBoardRelativePairType(handCards, boardCards);
       const combinations = this._generate5CardCombinations(handCards, boardCards, minHandCards);
-      if (await this._evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards, strict)) filtered.push(hand);
+      if (await this._evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards, strict, boardRelative)) filtered.push(hand);
     }
     const instance = this._createFilteredInstance(filtered);
     instance.lastBoardCards = boardCards;
@@ -911,32 +968,37 @@ export class RangeManager {
     return Array.from(allKeyCards).sort();
   }
 
-  async _evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards, strict = true) {
+  async _evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards, strict = true, boardRelative = null) {
     if (!evaluateHandCache) {
       const module = await import('poker-extval');
       evaluateHandCache = module.evaluateHand;
     }
     const cacheKey = `${hand}|${boardCards.join(',')}|strict:${strict}`;
     const cachedEvaluations = this.evaluationCache.get(cacheKey);
-    if (cachedEvaluations) return this._evaluationsMatchWithHandCards(cachedEvaluations, normalizedCriteria, handCards, minHandCards);
+    if (cachedEvaluations) return this._evaluationsMatchWithHandCards(cachedEvaluations, normalizedCriteria, handCards, minHandCards, boardRelative);
     const allCards = [...handCards, ...boardCards];
     const uniqueCards = [...new Set(allCards)];
     if (uniqueCards.length < 5) return false;
     const evaluations = Object.values(evaluateHandCache(uniqueCards, strict));
     this.evaluationCache.set(cacheKey, evaluations);
-    return this._evaluationsMatchWithHandCards(evaluations, normalizedCriteria, handCards, minHandCards);
+    return this._evaluationsMatchWithHandCards(evaluations, normalizedCriteria, handCards, minHandCards, boardRelative);
   }
 
-  _evaluationsMatchWithHandCards(evaluations, criteria, handCards, minHandCards) {
-    if (minHandCards === 0) return evaluations.some(evalObj => criteria.some(c => evalObj[c] === true));
+  _evaluationsMatchWithHandCards(evaluations, criteria, handCards, minHandCards, boardRelative = null) {
+    const criterionMatches = (evalObj, c) => this._criterionMatchWithBoardRelative(evalObj, c, boardRelative);
+    if (minHandCards === 0) return evaluations.some(evalObj => criteria.some(c => criterionMatches(evalObj, c)));
     const normalizedHandCards = handCards.map(c => c[0].toUpperCase() + (c[1] || '').toLowerCase());
-    return evaluations.some(evalObj => this._evalObjMatchesWithHandCards(evalObj, criteria, normalizedHandCards, minHandCards));
+    return evaluations.some(evalObj => this._evalObjMatchesWithHandCards(evalObj, criteria, normalizedHandCards, minHandCards, boardRelative));
   }
 
-  _evalObjMatchesWithHandCards(evalObj, criteria, normalizedHandCards, minHandCards) {
-    const matchingCriteria = criteria.filter(c => evalObj[c] === true);
+  _evalObjMatchesWithHandCards(evalObj, criteria, normalizedHandCards, minHandCards, boardRelative = null) {
+    const matchingCriteria = criteria.filter(c => this._criterionMatchWithBoardRelative(evalObj, c, boardRelative));
     if (matchingCriteria.length === 0) return false;
-    return matchingCriteria.some(c => this._handCardsInKeyCardsForCriterion(normalizedHandCards, evalObj, c) >= minHandCards);
+    const boardRelativeKeys = ['isOverpair', 'isUnderPair', 'isMiddlingPair'];
+    return matchingCriteria.some(c => {
+      if (boardRelative && boardRelativeKeys.includes(c) && boardRelative[c]) return minHandCards <= 2;
+      return this._handCardsInKeyCardsForCriterion(normalizedHandCards, evalObj, c) >= minHandCards;
+    });
   }
 
   _handCardsInKeyCardsForCriterion(normalizedHandCards, evalObj, criterion) {

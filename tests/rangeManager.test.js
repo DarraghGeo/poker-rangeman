@@ -1997,6 +1997,114 @@ describe('RangeManager', () => {
       });
     });
 
+    describe('Board-relative pair criteria (Overpair, Underpair, Middling Pair)', () => {
+      const board8T4 = ['8s', 'Td', '4d'];
+
+      it('hitsHand Overpair returns only pocket pairs above board high', async () => {
+        const rm = new RangeManager('22+');
+        const result = await rm.hitsHand(['Overpair'], board8T4);
+        const hands = result.toArray();
+        ['AA', 'KK', 'QQ', 'JJ'].forEach(pair => {
+          const hasPair = hands.some(h => h[0] === pair[0] && h[2] === pair[0]);
+          expect(hasPair).toBe(true);
+        });
+        ['9', '8', '7', '4', '3', '2'].forEach(rank => {
+          const pairHands = hands.filter(h => h[0] === rank && h[2] === rank);
+          expect(pairHands.length).toBe(0);
+        });
+      });
+
+      it('makesHand Overpair returns only hands that make overpair', async () => {
+        const rm = new RangeManager('22+');
+        const result = await rm.makesHand(['Overpair'], board8T4);
+        const hands = result.toArray();
+        expect(hands.length).toBeGreaterThan(0);
+        for (const hand of hands) {
+          const [c1, c2] = [hand.slice(0, 2), hand.slice(2, 4)];
+          expect(c1[0]).toBe(c2[0]);
+          const pairRank = c1[0];
+          expect(['J', 'Q', 'K', 'A'].includes(pairRank)).toBe(true);
+        }
+      });
+
+      it('hitsHand Underpair includes only pocket pairs below board low', async () => {
+        const rm = new RangeManager('22+');
+        const result = await rm.hitsHand(['Underpair'], board8T4);
+        const hands = result.toArray();
+        ['33', '22'].forEach(pair => {
+          const hasPair = hands.some(h => h[0] === pair[0] && h[2] === pair[0]);
+          expect(hasPair).toBe(true);
+        });
+        ['44', '77', '88', 'AA'].forEach(pair => {
+          const pairRank = pair[0];
+          const pairHands = hands.filter(h => (h[0] === pairRank && h[2] === pairRank));
+          expect(pairHands.length).toBe(0);
+        });
+      });
+
+      it('hitsHand Underpair on board with low 5 includes 44, 33, 22 only', async () => {
+        const board = ['8s', 'Td', '5d'];
+        const rm = new RangeManager('22+');
+        const result = await rm.hitsHand(['Underpair'], board);
+        const hands = result.toArray();
+        ['44', '33', '22'].forEach(pair => {
+          const hasPair = hands.some(h => h[0] === pair[0] && h[2] === pair[0]);
+          expect(hasPair).toBe(true);
+        });
+        const has77 = hands.some(h => h[0] === '7' && h[2] === '7');
+        expect(has77).toBe(false);
+      });
+
+      it('hitsHand Middling Pair includes 77, 66, 55, 99 on 8s Td 4d (between board high and low, not on board)', async () => {
+        const rm = new RangeManager('22+');
+        const result = await rm.hitsHand(['Middling Pair'], board8T4);
+        const hands = result.toArray();
+        ['77', '66', '55', '99'].forEach(pair => {
+          const hasPair = hands.some(h => h[0] === pair[0] && h[2] === pair[0]);
+          expect(hasPair).toBe(true);
+        });
+      });
+
+      it('hitsHand Middling Pair excludes 88 and 44 on 8s Td 4d (pair board)', async () => {
+        const rm = new RangeManager('88,44');
+        const result = await rm.hitsHand(['Middling Pair'], board8T4);
+        expect(result.size()).toBe(0);
+      });
+
+      it('77 on 8s Td 4d is Middling Pair; 44 on same board is not', async () => {
+        const rm77 = new RangeManager('77');
+        const rm44 = new RangeManager('44');
+        const hit77 = await rm77.hitsHand(['Middling Pair'], board8T4);
+        const hit44 = await rm44.hitsHand(['Middling Pair'], board8T4);
+        expect(hit77.size()).toBeGreaterThan(0);
+        expect(hit44.size()).toBe(0);
+      });
+
+      it('99 on 8s Td 4d is Middling Pair; 33 is not (underpair)', async () => {
+        const rm99 = new RangeManager('99');
+        const rm33 = new RangeManager('33');
+        const hit99 = await rm99.hitsHand(['Middling Pair'], board8T4);
+        const hit33 = await rm33.hitsHand(['Middling Pair'], board8T4);
+        expect(hit99.size()).toBeGreaterThan(0);
+        expect(hit33.size()).toBe(0);
+      });
+
+      it('hitsHand Overpair requires board and throws without board', async () => {
+        const rm = new RangeManager('AA');
+        await expect(rm.hitsHand(['Overpair'], [])).rejects.toThrow();
+      });
+
+      it('non-pocket-pair hands never match Overpair, Underpair, or Middling Pair', async () => {
+        const rm = new RangeManager('AKo,AKs');
+        const over = await rm.hitsHand(['Overpair'], board8T4);
+        const under = await rm.hitsHand(['Underpair'], board8T4);
+        const middling = await rm.hitsHand(['Middling Pair'], board8T4);
+        expect(over.size()).toBe(0);
+        expect(under.size()).toBe(0);
+        expect(middling.size()).toBe(0);
+      });
+    });
+
     describe('Error Handling', () => {
       it('should throw error for missing board cards in makesHand()', testFiltering.errors.noBoard);
       it('should throw error for invalid criteria', testFiltering.errors.invalidCriteria);
