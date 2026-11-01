@@ -782,15 +782,16 @@ const testQuery = {
     },
     returnsKeyCardsForPair: async () => {
       const rm = new RangeManager('22+,AKs,AKo');
-      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      // Hands sharing a card with the board are impossible and must not be evaluated
+      const board = ['Ah', '8d', '7c', '4s', '2h'];
       const filtered = await rm.hitsHand(['Pair'], board);
       const keyCards = filtered.getKeyCards();
       
       expect(Array.isArray(keyCards)).toBe(true);
       expect(keyCards.length).toBeGreaterThan(0);
-      // Should include board cards that are part of pairs
+      // Board Ah pairs with the Ace in AK
       expect(keyCards).toContain('Ah');
-      expect(keyCards).toContain('Kd');
+      expect(keyCards).toContain('Ac');
     },
     returnsKeyCardsForSpecificHandStrength: async () => {
       const rm = new RangeManager('22+,AKs,AKo');
@@ -882,7 +883,7 @@ const testQuery = {
     },
     filtersByKeyCard: async () => {
       const rm = new RangeManager('22+,AKs,AKo');
-      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
+      const board = ['Ah', '8d', '7c', '4s', '2h'];
       const filtered = await rm.hitsHand(['Pair'], board);
       const withKeyCard = filtered.hasKeyCard(['Ah']);
       
@@ -1157,13 +1158,13 @@ const testQuery = {
     },
     constructorDeadCards: () => {
       // Test behavior when dead cards are provided in constructor
-      // Note: Currently constructor stores dead cards but doesn't filter immediately
+      // Constructor dead cards are stored and filtered immediately
       const rm = new RangeManager('AKs', ['Ah']);
       const notation = rm.toNotation();
       
       expect(typeof notation).toBe('string');
-      // Currently dead cards in constructor don't filter, so Ah should still be present
-      // This test documents current behavior
+      // The AhKh combo is removed
+      expect(rm.size()).toBe(3);
       expect(rm.deadCards).toContain('Ah');
     },
     multipleDeadCardsBreakingRanges: () => {
@@ -2316,3 +2317,177 @@ describe('RangeManager', () => {
 
 
 
+
+// ============================================================================
+// REGRESSION TESTS
+// ============================================================================
+
+describe('RangeManager regressions', () => {
+  const board = ['2c', '7d', '9h'];
+
+  describe('toNotation()', () => {
+    it('does not collapse non-consecutive K-suited hands into a plus range', () => {
+      const rm = new RangeManager('KQs,K2s');
+      const notation = rm.toNotation();
+      expect(notation).toBe('K2s,KQs');
+      expect(new RangeManager(notation).size()).toBe(8);
+    });
+
+    it('abbreviates pair ranges reaching AA with plus notation', () => {
+      expect(new RangeManager('KK+').toNotation()).toBe('KK+');
+      expect(new RangeManager('QQ+').toNotation()).toBe('QQ+');
+      expect(new RangeManager('99+').toNotation()).toBe('99+');
+      expect(new RangeManager('TT-77').toNotation()).toBe('TT-77');
+    });
+
+    it('round-trips pair plus notation to the same hands', () => {
+      const rm = new RangeManager('KK+');
+      expect(new RangeManager(rm.toNotation()).toArray().sort()).toEqual(rm.toArray().sort());
+    });
+  });
+
+  describe('constructor dead cards', () => {
+    it('filters hands containing dead cards immediately', () => {
+      const rm = new RangeManager('AA', ['As']);
+      expect(rm.size()).toBe(3);
+      expect(rm.toArray().some(h => h.includes('As'))).toBe(false);
+    });
+
+    it('expands wildcard dead cards', () => {
+      const rm = new RangeManager('AKs,QQ', ['Ax']);
+      expect(rm.size()).toBe(6);
+      expect(rm.deadCards).toHaveLength(4);
+    });
+
+    it('rejects invalid dead cards and non-array input', () => {
+      expect(() => new RangeManager('AKs', ['Zz'])).toThrow('Invalid card');
+      expect(() => new RangeManager('AKs', 'Ah')).toThrow('Dead cards must be an array');
+    });
+  });
+
+  describe('card normalization', () => {
+    it('uppercases lowercase ranks in array input', () => {
+      expect(new RangeManager(['ahkd']).toArray()).toEqual(['AhKd']);
+    });
+
+    it('uppercases lowercase ranks in notation and contains()', () => {
+      expect(new RangeManager('ahkd').toArray()).toEqual(['AhKd']);
+      expect(new RangeManager('AKo').contains('ahkd')).toBe(true);
+    });
+
+    it('rejects hands with the same card twice regardless of case', () => {
+      expect(() => new RangeManager(['AsAS'])).toThrow('Invalid hand');
+      expect(() => new RangeManager('AsAS')).toThrow();
+    });
+
+    it('rejects wildcard cards in array input', () => {
+      expect(() => new RangeManager(['XsKh'])).toThrow('Invalid hand');
+    });
+  });
+
+  describe('wildcard hands', () => {
+    it('AxKh generates offsuit hands with Kh', () => {
+      expect(new RangeManager('AxKh').toArray().sort()).toEqual(['AcKh', 'AdKh', 'AsKh']);
+    });
+
+    it('AxKs generates offsuit hands with Ks', () => {
+      expect(new RangeManager('AxKs').toArray().sort()).toEqual(['AcKs', 'AdKs', 'AhKs']);
+    });
+
+    it('treats a rank wildcard in first position like second position', () => {
+      const hands = new RangeManager('XsKh').toArray();
+      expect(hands.sort()).toEqual(new RangeManager('KhXs').toArray().sort());
+      expect(hands.every(h => /^[AKQJT2-9][shdc][AKQJT2-9][shdc]$/.test(h))).toBe(true);
+    });
+
+    it('rejects a hand with two rank wildcards', () => {
+      expect(() => new RangeManager('XsXh')).toThrow();
+    });
+  });
+
+  describe('immutability of evaluation state', () => {
+    it('makesHand() does not set board state on the source instance', async () => {
+      const rm = new RangeManager('AA,KK');
+      const filtered = await rm.makesHand(['Pair'], board);
+      expect(rm.lastBoardCards).toBeNull();
+      expect(rm.lastHandStrength).toBeNull();
+      expect(filtered.lastBoardCards).toEqual(board);
+    });
+
+    it('hitsHand() does not set board state on the source instance', async () => {
+      const rm = new RangeManager('AA,KK');
+      await rm.hitsHand(['Pair'], board);
+      expect(rm.lastBoardCards).toBeNull();
+      expect(rm.lastHandStrength).toBeNull();
+    });
+  });
+
+  describe('criteria validation', () => {
+    it('rejects unknown is* criteria', async () => {
+      const rm = new RangeManager('AA');
+      await expect(rm.makesHand(['isBogus'], board)).rejects.toThrow('Invalid criteria');
+      await expect(rm.hitsHand(['isBogus'], board)).rejects.toThrow('Invalid criteria');
+    });
+
+    it('rejects non-string and inherited-property criteria', async () => {
+      const rm = new RangeManager('AA');
+      await expect(rm.makesHand([42], board)).rejects.toThrow('Invalid criteria');
+      await expect(rm.makesHand(['toString'], board)).rejects.toThrow('Invalid criteria');
+    });
+
+    it('accepts raw criterion keys', async () => {
+      const rm = new RangeManager('AA');
+      expect((await rm.makesHand(['isOverpair'], board)).size()).toBe(6);
+    });
+  });
+
+  describe('board normalization', () => {
+    it('accepts board cards in any case', async () => {
+      const rm = new RangeManager('AA');
+      expect((await rm.makesHand(['Pair'], ['2c', '7d', '9h'])).size()).toBe(6);
+      expect((await rm.makesHand(['Pair'], ['2C', '7D', '9H'])).size()).toBe(6);
+      expect((await rm.makesHand(['Pair'], ['2c', '7d', '9h'].map(c => c.toUpperCase()))).lastBoardCards).toEqual(board);
+    });
+
+    it('excludes hands overlapping a lowercase board', async () => {
+      const rm = new RangeManager('AsKs,AhKh');
+      const filtered = await rm.makesHand(['Pair'], ['as', '2d', '3h']);
+      // AsKs is impossible on this board; AhKh pairs the board Ace
+      expect(filtered.toArray()).toEqual(['AhKh']);
+    });
+
+    it('hitsHand() excludes hands that share a card with the board', async () => {
+      const rm = new RangeManager('KK');
+      const filtered = await rm.hitsHand(['Three of a Kind'], ['Kd', '7c', '2h']);
+      expect(filtered.toArray().some(h => h.includes('Kd'))).toBe(false);
+      expect(filtered.size()).toBe(3);
+    });
+
+    it('rejects invalid or duplicate board cards', async () => {
+      const rm = new RangeManager('AA');
+      await expect(rm.makesHand(['Pair'], ['Zz', '7d', '9h'])).rejects.toThrow('Invalid board card');
+      await expect(rm.makesHand(['Pair'], ['2c', '2c', '9h'])).rejects.toThrow('unique');
+    });
+
+    it('evaluateHand() and getObject() normalize input and reject overlap', async () => {
+      const rm = new RangeManager('AA');
+      const result = await rm.getObject('ahkd', ['qc', 'js', 'th']);
+      expect(Object.values(result)[0].isStraight).toBe(true);
+      await expect(rm.evaluateHand('AsKs', ['As', '2d', '3h', '4c'])).rejects.toThrow('shares cards');
+    });
+  });
+
+  describe('strict mode in cached lookups', () => {
+    it('cached lookups use the strict mode of the evaluation that produced the instance', async () => {
+      const rm = new RangeManager('AA');
+      const strictRange = await rm.makesHand(['Pair'], board, true);
+      // The cache now holds both strict:true and strict:false entries for each hand
+      const nonStrict = await strictRange.makesHand(['Pair'], board, false);
+      const hand = nonStrict.toArray()[0];
+      const prefix = `${hand}|${board.join(',')}|strict:`;
+      expect(nonStrict.lastStrict).toBe(false);
+      expect(nonStrict.evaluationCache.has(prefix + 'true')).toBe(true);
+      expect(nonStrict._getCachedOnly(hand, board)).toBe(nonStrict.evaluationCache.get(prefix + 'false'));
+    });
+  });
+});

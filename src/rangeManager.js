@@ -25,24 +25,30 @@ const CRITERIA_MAPPING = {
   'Inside Straight Draw Wheel': 'isInsideStraightDrawWheel'
 };
 
+// Map lookups avoid matching inherited Object properties (e.g. 'toString')
+const CRITERIA_LOOKUP = new Map(Object.entries(CRITERIA_MAPPING));
+const VALID_CRITERIA = new Set(Object.values(CRITERIA_MAPPING));
+const BOARD_RELATIVE_KEYS = new Set(['isOverpair', 'isUnderPair', 'isMiddlingPair']);
+
 export class RangeManager {
   constructor(input, deadCards = []) {
     this.rawInput = input;
-    this.deadCards = deadCards || [];
     this.hands = [];
     this.filteredHands = [];
     this.lastBoardCards = null;
     this.lastHandStrength = null;
+    this.lastStrict = null;
     this.evaluationCache = new Map();
-    
+
     if (!input) throw new Error('Input is required');
     if (!Array.isArray(input) && typeof input !== 'string') {
       throw new Error('Input must be a string or array');
     }
-    
+    this.deadCards = this._validateAndExpandDeadCards(deadCards || []);
+
     const parsed = this._parse(input);
     this.hands = parsed;
-    this.filteredHands = [...parsed];
+    this.filteredHands = this._filterDeadCards(parsed);
   }
 
   // ============================================================================
@@ -68,12 +74,19 @@ export class RangeManager {
     return this._isValidRank(rank) && this._isValidSuit(suit);
   }
 
-  _isValidHand(hand) {
+  _isValidConcreteCard(card) {
+    if (!card || typeof card !== 'string' || card.length !== 2) return false;
+    return this._isValidRank(card[0].toUpperCase()) && this._isValidSuit(card[1]);
+  }
+
+  // Wildcard cards ('Ax', 'Xs') are only accepted when allowWildcards is true
+  _isValidHand(hand, allowWildcards = false) {
     if (!hand || typeof hand !== 'string' || hand.length !== 4) return false;
     const card1 = hand.substring(0, 2);
     const card2 = hand.substring(2, 4);
-    if (!this._isValidCard(card1) || !this._isValidCard(card2)) return false;
-    return card1 !== card2;
+    const isValidCard = allowWildcards ? c => this._isValidCard(c) : c => this._isValidConcreteCard(c);
+    if (!isValidCard(card1) || !isValidCard(card2)) return false;
+    return this._normalizeCard(card1) !== this._normalizeCard(card2);
   }
 
   // ============================================================================
@@ -86,12 +99,14 @@ export class RangeManager {
     return [card2, card1];
   }
 
+  _normalizeCard(card) {
+    return card[0].toUpperCase() + card[1].toLowerCase();
+  }
+
   _normalizeHand(hand) {
     if (!this._isValidHand(hand)) throw new Error(`Invalid hand: ${hand}`);
-    const card1 = hand.substring(0, 2);
-    const card2 = hand.substring(2, 4);
-    const normalizedCard1 = card1[0] + card1[1].toLowerCase();
-    const normalizedCard2 = card2[0] + card2[1].toLowerCase();
+    const normalizedCard1 = this._normalizeCard(hand.substring(0, 2));
+    const normalizedCard2 = this._normalizeCard(hand.substring(2, 4));
     const [high, low] = this._normalizeCardOrder(normalizedCard1, normalizedCard2);
     if (high[0] === low[0]) {
       const suits = [high[1], low[1]].sort();
@@ -101,12 +116,12 @@ export class RangeManager {
   }
 
   _normalizeHandSegment(segment) {
-    return segment[0] + segment[1].toLowerCase() + segment[2] + segment[3].toLowerCase();
+    return this._normalizeCard(segment.substring(0, 2)) + this._normalizeCard(segment.substring(2, 4));
   }
 
   _normalizeSegment(segment) {
     const trimmed = segment.trim();
-    if (trimmed.length === 4 && this._isValidHand(trimmed)) return this._normalizeHandSegment(trimmed);
+    if (trimmed.length === 4 && this._isValidHand(trimmed, true)) return this._normalizeHandSegment(trimmed);
     if (trimmed.includes('-')) {
       const parts = trimmed.split('-');
       return parts.map(p => {
@@ -345,7 +360,8 @@ export class RangeManager {
   _extractCard1Wildcard(card1, result) {
     if (card1[1].toLowerCase() === 'x') {
       result.card1SuitWildcard = true;
-      result.card1ExcludeSuit = 's';
+      // 'AxKh' means offsuit with Kh: card1 takes every suit except card2's suit
+      result.card1ExcludeSuit = result.card2SuitWildcard ? null : result.card2Suit;
     } else {
       result.card1Suit = card1[1].toLowerCase();
     }
@@ -365,11 +381,15 @@ export class RangeManager {
 
   _extractWildcardHand(hand) {
     if (!hand || hand.length !== 4) return null;
-    const card1 = hand.substring(0, 2);
-    const card2 = hand.substring(2, 4);
+    let card1 = hand.substring(0, 2);
+    let card2 = hand.substring(2, 4);
+    // A rank wildcard is only supported on card2: 'XsKh' is treated as 'KhXs'
+    if (card1[0] === 'X') [card1, card2] = [card2, card1];
+    if (card1[0] === 'X') return null;
     const result = { card1Rank: card1[0] };
-    this._extractCard1Wildcard(card1, result);
+    // card2 is extracted first because card1's excluded suit depends on it
     this._extractCard2Wildcard(card2, card1, result);
+    this._extractCard1Wildcard(card1, result);
     return result;
   }
 
@@ -498,7 +518,9 @@ export class RangeManager {
   }
 
   _parseWildcardHand(hand) {
-    return this._generateWildcardCombinations(hand);
+    const hands = this._generateWildcardCombinations(hand);
+    if (hands.length === 0) throw new Error(`Invalid wildcard hand: ${hand}`);
+    return hands;
   }
 
   _parsePairRange(range) {
@@ -689,9 +711,32 @@ export class RangeManager {
     return this._createFilteredInstance(filtered);
   }
 
+  _toCriterionKey(criterion) {
+    return CRITERIA_LOOKUP.get(criterion) || criterion;
+  }
+
   _normalizeCriteria(criteria) {
     if (!Array.isArray(criteria)) throw new Error('Criteria must be an array');
-    return criteria.map(c => CRITERIA_MAPPING[c] || c);
+    return criteria.map(c => this._toCriterionKey(c));
+  }
+
+  _normalizeBoardCards(boardCards) {
+    if (!Array.isArray(boardCards) || boardCards.length === 0) throw new Error('Board cards are required');
+    const normalized = boardCards.map(card => {
+      if (!this._isValidConcreteCard(card)) throw new Error(`Invalid board card: ${card}`);
+      return this._normalizeCard(card);
+    });
+    if (new Set(normalized).size !== normalized.length) throw new Error('Board cards must be unique');
+    return normalized;
+  }
+
+  // Normalizes a hand + board for the public evaluation methods and rejects overlapping cards
+  _prepareEvaluationInput(hand, boardCards) {
+    const normalizedHand = this._normalizeHand(hand);
+    const board = this._normalizeBoardCards(boardCards);
+    const overlap = this._extractCardsFromHand(normalizedHand).filter(c => board.includes(c));
+    if (overlap.length > 0) throw new Error(`Hand ${hand} shares cards with board: ${overlap.join(', ')}`);
+    return [normalizedHand, board];
   }
 
   async _evaluateHandWithBoard(hand, boardCards, strict = true) {
@@ -719,8 +764,7 @@ export class RangeManager {
   }
 
   _criterionMatchWithBoardRelative(evalObj, criterion, boardRelative) {
-    const boardRelativeKeys = ['isOverpair', 'isUnderPair', 'isMiddlingPair'];
-    if (boardRelative && boardRelativeKeys.includes(criterion)) {
+    if (boardRelative && BOARD_RELATIVE_KEYS.has(criterion)) {
       return boardRelative[criterion] === true;
     }
     return evalObj[criterion] === true;
@@ -732,31 +776,26 @@ export class RangeManager {
     );
   }
 
-  async _handMatchesCriteria(hand, criteria, boardCards, strict = true) {
+  async _handMatchesCriteria(hand, normalizedCriteria, boardCards, strict = true) {
     const handCards = this._extractCardsFromHand(hand);
-    if (handCards.some(card => new Set(boardCards).has(card))) return false;
+    if (handCards.some(card => boardCards.includes(card))) return false;
     const evaluations = await this._getCachedOrEvaluate(hand, boardCards, strict);
-    const normalizedCriteria = this._normalizeCriteria(criteria);
-    const boardRelative = boardCards.length > 0 ? this._getBoardRelativePairType(handCards, boardCards) : null;
+    const boardRelative = this._getBoardRelativePairType(handCards, boardCards);
     return this._evaluationsMatchCriteria(evaluations, normalizedCriteria, boardRelative);
   }
 
   async makesHand(criteria, boardCards = [], strict = true) {
-    this.lastBoardCards = boardCards;
-    const normalizedCriteria = this._validateCriteriaAndBoard(criteria, boardCards);
-    this.lastHandStrength = normalizedCriteria;
+    const { normalizedCriteria, board } = this._validateCriteriaAndBoard(criteria, boardCards);
     const filtered = [];
     for (const hand of this.filteredHands) {
-      if (await this._handMatchesCriteria(hand, criteria, boardCards, strict)) filtered.push(hand);
+      if (await this._handMatchesCriteria(hand, normalizedCriteria, board, strict)) filtered.push(hand);
     }
-    const instance = this._createFilteredInstance(filtered);
-    instance.lastBoardCards = boardCards;
-    instance.lastHandStrength = normalizedCriteria;
-    return instance;
+    return this._createEvaluatedInstance(filtered, board, normalizedCriteria, strict);
   }
 
   async evaluateHand(hand, boardCards, strict = true) {
-    const evaluation = await this._evaluateHandWithBoard(hand, boardCards, strict);
+    const [normalizedHand, board] = this._prepareEvaluationInput(hand, boardCards);
+    const evaluation = await this._evaluateHandWithBoard(normalizedHand, board, strict);
     return {
       is: (criteria) => this._filterEvaluation(evaluation, criteria, false),
       isAll: (criteria) => this._filterEvaluation(evaluation, criteria, true)
@@ -764,7 +803,8 @@ export class RangeManager {
   }
 
   async getObject(hand, boardCards, strict = true) {
-    return await this._evaluateHandWithBoard(hand, boardCards, strict);
+    const [normalizedHand, board] = this._prepareEvaluationInput(hand, boardCards);
+    return await this._evaluateHandWithBoard(normalizedHand, board, strict);
   }
 
   include(input) {
@@ -780,12 +820,16 @@ export class RangeManager {
     return this._createFilteredInstance(filtered);
   }
 
-  setDeadCards(deadCards) {
+  _validateAndExpandDeadCards(deadCards) {
     if (!Array.isArray(deadCards)) throw new Error('Dead cards must be an array');
     deadCards.forEach(card => {
       if (!this._isValidCard(card)) throw new Error(`Invalid card: ${card}`);
     });
-    const expanded = this._parseCardArray(deadCards);
+    return this._parseCardArray(deadCards);
+  }
+
+  setDeadCards(deadCards) {
+    const expanded = this._validateAndExpandDeadCards(deadCards);
     // Filter hands using the NEW dead cards before creating instance
     const filtered = this.filteredHands.filter(hand => !this.handContainsDeadCard(hand, expanded));
     const newInstance = this._createFilteredInstance(filtered);
@@ -793,53 +837,34 @@ export class RangeManager {
     return newInstance;
   }
 
-  _generate5CardCombinations(handCards, boardCards, minHandCards) {
-    const allCards = [...handCards, ...boardCards];
-    const uniqueCards = [...new Set(allCards)];
-    if (uniqueCards.length < 5) return [];
-    const combinations = [];
-    this._combineCards(uniqueCards, 5, 0, [], combinations, handCards, minHandCards);
-    return combinations;
-  }
-
-  _combineCards(cards, k, start, current, result, handCards, minHandCards) {
-    if (current.length === k) {
-      const handCount = current.filter(c => handCards.includes(c)).length;
-      if (handCount >= minHandCards) result.push([...current]);
-      return;
-    }
-    for (let i = start; i < cards.length; i++) {
-      current.push(cards[i]);
-      this._combineCards(cards, k, i + 1, current, result, handCards, minHandCards);
-      current.pop();
-    }
-  }
-
   _validateCriteriaAndBoard(criteria, boardCards) {
     if (!Array.isArray(criteria)) throw new Error('Criteria must be an array');
-    if (!boardCards || boardCards.length === 0) throw new Error('Board cards are required');
-    const normalizedCriteria = this._normalizeCriteria(criteria);
-    const invalidCriteria = normalizedCriteria.filter(c => !CRITERIA_MAPPING[c] && !c.startsWith('is'));
+    const board = this._normalizeBoardCards(boardCards);
+    const invalidCriteria = criteria.filter(c => typeof c !== 'string' || !VALID_CRITERIA.has(this._toCriterionKey(c)));
     if (invalidCriteria.length > 0) throw new Error(`Invalid criteria: ${invalidCriteria.join(', ')}`);
-    return normalizedCriteria;
+    return { normalizedCriteria: this._normalizeCriteria(criteria), board };
+  }
+
+  // Board/criteria/strict state is set only on the returned instance, never on `this`
+  _createEvaluatedInstance(filtered, board, normalizedCriteria, strict) {
+    const instance = this._createFilteredInstance(filtered);
+    instance.lastBoardCards = board;
+    instance.lastHandStrength = normalizedCriteria;
+    instance.lastStrict = strict;
+    return instance;
   }
 
   async _filterByCombinations(criteria, boardCards, minHandCards, strict = true) {
-    this.lastBoardCards = boardCards;
-    const normalizedCriteria = this._validateCriteriaAndBoard(criteria, boardCards);
-    this.lastHandStrength = normalizedCriteria;
+    const { normalizedCriteria, board } = this._validateCriteriaAndBoard(criteria, boardCards);
     const filtered = [];
     for (const hand of this.filteredHands) {
       if (this.deadCards.length > 0 && this.handContainsDeadCard(hand, this.deadCards)) continue;
       const handCards = this._extractCardsFromHand(hand);
-      const boardRelative = this._getBoardRelativePairType(handCards, boardCards);
-      const combinations = this._generate5CardCombinations(handCards, boardCards, minHandCards);
-      if (await this._evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards, strict, boardRelative)) filtered.push(hand);
+      if (handCards.some(card => board.includes(card))) continue;
+      const boardRelative = this._getBoardRelativePairType(handCards, board);
+      if (await this._evaluateCombinations(hand, board, normalizedCriteria, handCards, minHandCards, strict, boardRelative)) filtered.push(hand);
     }
-    const instance = this._createFilteredInstance(filtered);
-    instance.lastBoardCards = boardCards;
-    instance.lastHandStrength = normalizedCriteria;
-    return instance;
+    return this._createEvaluatedInstance(filtered, board, normalizedCriteria, strict);
   }
 
   async hitsHand(criteria, boardCards, strict = true) {
@@ -856,12 +881,12 @@ export class RangeManager {
 
   _getCachedOnly(hand, boardCards) {
     if (!boardCards) return null;
-    // Try both strict=true and strict=false cache keys since we don't know which was used
-    let evaluations = this.evaluationCache.get(`${hand}|${boardCards.join(',')}|strict:true`);
-    if (!evaluations) {
-      evaluations = this.evaluationCache.get(`${hand}|${boardCards.join(',')}|strict:false`);
+    const prefix = `${hand}|${boardCards.join(',')}|strict:`;
+    // Use the strict mode of the evaluation that produced this instance; fall back to trying both
+    if (this.lastStrict !== null && this.lastStrict !== undefined) {
+      return this.evaluationCache.get(prefix + this.lastStrict) || null;
     }
-    return evaluations || null;
+    return this.evaluationCache.get(prefix + 'true') || this.evaluationCache.get(prefix + 'false') || null;
   }
 
   _parseSingleCard(card) {
@@ -891,7 +916,7 @@ export class RangeManager {
   }
 
   _normalizeHandStrength(handStrength) {
-    return CRITERIA_MAPPING[handStrength] || handStrength;
+    return this._toCriterionKey(handStrength);
   }
 
   _getHandStrengthKeys(handStrength, cachedCriteria) {
@@ -939,11 +964,7 @@ export class RangeManager {
     const allKeyCards = new Set();
     
     for (const hand of this.filteredHands) {
-      // Try both strict=true and strict=false cache keys since we don't know which was used
-      let evaluations = this.evaluationCache.get(`${hand}|${this.lastBoardCards.join(',')}|strict:true`);
-      if (!evaluations) {
-        evaluations = this.evaluationCache.get(`${hand}|${this.lastBoardCards.join(',')}|strict:false`);
-      }
+      const evaluations = this._getCachedOnly(hand, this.lastBoardCards);
       if (!evaluations) continue;
       
       for (const evalObj of evaluations) {
@@ -968,7 +989,7 @@ export class RangeManager {
     return Array.from(allKeyCards).sort();
   }
 
-  async _evaluateCombinations(hand, boardCards, combinations, normalizedCriteria, handCards, minHandCards, strict = true, boardRelative = null) {
+  async _evaluateCombinations(hand, boardCards, normalizedCriteria, handCards, minHandCards, strict = true, boardRelative = null) {
     if (!evaluateHandCache) {
       const module = await import('poker-extval');
       evaluateHandCache = module.evaluateHand;
@@ -994,9 +1015,8 @@ export class RangeManager {
   _evalObjMatchesWithHandCards(evalObj, criteria, normalizedHandCards, minHandCards, boardRelative = null) {
     const matchingCriteria = criteria.filter(c => this._criterionMatchWithBoardRelative(evalObj, c, boardRelative));
     if (matchingCriteria.length === 0) return false;
-    const boardRelativeKeys = ['isOverpair', 'isUnderPair', 'isMiddlingPair'];
     return matchingCriteria.some(c => {
-      if (boardRelative && boardRelativeKeys.includes(c) && boardRelative[c]) return minHandCards <= 2;
+      if (boardRelative && BOARD_RELATIVE_KEYS.has(c) && boardRelative[c]) return minHandCards <= 2;
       return this._handCardsInKeyCardsForCriterion(normalizedHandCards, evalObj, c) >= minHandCards;
     });
   }
@@ -1012,7 +1032,7 @@ export class RangeManager {
   _filterEvaluation(evaluation, criteria, matchAll) {
     // Normalize criteria - handle both string and array
     const criteriaArray = Array.isArray(criteria) ? criteria : [criteria];
-    const normalizedCriteria = criteriaArray.map(c => CRITERIA_MAPPING[c] || c);
+    const normalizedCriteria = criteriaArray.map(c => this._toCriterionKey(c));
     
     // Filter evaluation entries
     const filtered = {};
@@ -1124,9 +1144,9 @@ export class RangeManager {
   }
 
   _processPairSequence(seq) {
+    // seq.start is the lowest rank and seq.end the highest (sequences are consecutive)
     if (seq.start === seq.end) return seq.start + seq.start;
-    const detected = this._detectConsecutiveRanks([seq.start, seq.end]);
-    if (detected.goesToAce) return seq.end + seq.end + '+';
+    if (seq.end === 'A') return seq.start + seq.start + '+';
     return seq.end + seq.end + '-' + seq.start + seq.start;
   }
 
@@ -1162,18 +1182,10 @@ export class RangeManager {
     return [firstRank + seq.start + suffix + '-' + firstRank + seq.end + suffix];
   }
 
-  _shouldCombineToPlus(sequences, firstRank) {
-    if (sequences.length === 1) return false;
-    const lastSeq = sequences[sequences.length - 1];
-    return lastSeq.start === lastSeq.end && lastSeq.start === 'Q' && firstRank === 'K';
-  }
-
   _processGroup(group, suffix) {
     const secondRanks = [...new Set(group)].map(h => h[1]);
     const sequences = this._findConsecutiveSequences(secondRanks);
     const firstRank = group[0][0];
-    if (sequences.length === 1) return this._processSequence(sequences[0], firstRank, suffix);
-    if (this._shouldCombineToPlus(sequences, firstRank)) return [firstRank + sequences[0].start + suffix + '+'];
     return sequences.flatMap(seq => this._processSequence(seq, firstRank, suffix));
   }
 
