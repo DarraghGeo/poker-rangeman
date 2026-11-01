@@ -1,5 +1,6 @@
 const VALID_RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
 const VALID_SUITS = ['s', 'h', 'd', 'c'];
+const RANK_VALUES = { A: 14, K: 13, Q: 12, J: 11, T: 10, 9: 9, 8: 8, 7: 7, 6: 6, 5: 5, 4: 4, 3: 3, 2: 2 };
 
 let evaluateHandCache = null;
 
@@ -29,6 +30,13 @@ const CRITERIA_MAPPING = {
 const CRITERIA_LOOKUP = new Map(Object.entries(CRITERIA_MAPPING));
 const VALID_CRITERIA = new Set(Object.values(CRITERIA_MAPPING));
 const BOARD_RELATIVE_KEYS = new Set(['isOverpair', 'isUnderPair', 'isMiddlingPair']);
+
+const buildNonPairPatterns = suffix => ({
+  plus: new RegExp(`^([AKQJT2-9])([AKQJT2-9])${suffix}\\+$`),
+  range: new RegExp(`^([AKQJT2-9])([AKQJT2-9])${suffix}-([AKQJT2-9])([AKQJT2-9])${suffix}$`),
+  single: new RegExp(`^([AKQJT2-9])([AKQJT2-9])${suffix}$`)
+});
+const NON_PAIR_PATTERNS = { s: buildNonPairPatterns('s'), o: buildNonPairPatterns('o') };
 
 export class RangeManager {
   constructor(input, deadCards = []) {
@@ -151,12 +159,7 @@ export class RangeManager {
   // ============================================================================
 
   _getRankValue(rank) {
-    if (rank === 'A') return 14;
-    if (rank === 'K') return 13;
-    if (rank === 'Q') return 12;
-    if (rank === 'J') return 11;
-    if (rank === 'T') return 10;
-    return parseInt(rank, 10);
+    return RANK_VALUES[rank] ?? NaN;
   }
 
   _compareRanks(rank1, rank2) {
@@ -224,9 +227,11 @@ export class RangeManager {
   }
 
   _getBoardRelativePairType(handCards, boardCards) {
-    if (!this._isPocketPair(handCards)) return null;
-    const boardInfo = this._getBoardRankInfo(boardCards);
-    if (!boardInfo) return null;
+    return this._getBoardRelativePairTypeFromInfo(handCards, this._getBoardRankInfo(boardCards));
+  }
+
+  _getBoardRelativePairTypeFromInfo(handCards, boardInfo) {
+    if (!boardInfo || !this._isPocketPair(handCards)) return null;
     return this._buildBoardRelativePairResult(this._getPocketPairRank(handCards), boardInfo);
   }
 
@@ -313,48 +318,16 @@ export class RangeManager {
     return [parts[0][0], parts[1][0]];
   }
 
-  _extractSuitedPlus(range) {
-      const match = range.match(/^([AKQJT2-9])([AKQJT2-9])s\+$/);
-    return match ? { rank1: match[1], rank2: match[2], isPlus: true } : null;
-    }
-
-  _extractSuitedRange(range) {
-      const match = range.match(/^([AKQJT2-9])([AKQJT2-9])s-([AKQJT2-9])([AKQJT2-9])s$/);
-    return match ? { rank1: match[1], rank2: match[2], endRank1: match[3], endRank2: match[4] } : null;
-    }
-
-  _extractSuitedSingle(range) {
-    const match = range.match(/^([AKQJT2-9])([AKQJT2-9])s$/);
-    return match ? { rank1: match[1], rank2: match[2], isPlus: false } : null;
-  }
-
-  _extractSuitedRanks(range) {
+  // Extracts ranks from suited/offsuit notation: 'AKs', 'A2s+', 'A2s-A5s' (suffix is 's' or 'o')
+  _extractNonPairRanks(range, suffix) {
     if (!range) return null;
-    if (range.endsWith('+')) return this._extractSuitedPlus(range);
-    if (range.includes('-')) return this._extractSuitedRange(range);
-    return this._extractSuitedSingle(range);
-  }
-
-  _extractOffsuitPlus(range) {
-      const match = range.match(/^([AKQJT2-9])([AKQJT2-9])o\+$/);
-    return match ? { rank1: match[1], rank2: match[2], isPlus: true } : null;
-    }
-
-  _extractOffsuitRange(range) {
-      const match = range.match(/^([AKQJT2-9])([AKQJT2-9])o-([AKQJT2-9])([AKQJT2-9])o$/);
-    return match ? { rank1: match[1], rank2: match[2], endRank1: match[3], endRank2: match[4] } : null;
-    }
-
-  _extractOffsuitSingle(range) {
-    const match = range.match(/^([AKQJT2-9])([AKQJT2-9])o$/);
+    const patterns = NON_PAIR_PATTERNS[suffix];
+    let match = range.match(patterns.plus);
+    if (match) return { rank1: match[1], rank2: match[2], isPlus: true };
+    match = range.match(patterns.range);
+    if (match) return { rank1: match[1], rank2: match[2], endRank1: match[3], endRank2: match[4] };
+    match = range.match(patterns.single);
     return match ? { rank1: match[1], rank2: match[2], isPlus: false } : null;
-  }
-
-  _extractOffsuitRanks(range) {
-    if (!range) return null;
-    if (range.endsWith('+')) return this._extractOffsuitPlus(range);
-    if (range.includes('-')) return this._extractOffsuitRange(range);
-    return this._extractOffsuitSingle(range);
   }
 
   _extractCard1Wildcard(card1, result) {
@@ -439,20 +412,6 @@ export class RangeManager {
     return this._generateOffsuitCombos(rank1, rank2, this._getAllSuits());
   }
 
-  _generateSuitedCombination(rank1, suit1, rank2, suit2) {
-    const s1 = suit1.toLowerCase();
-    const s2 = suit2.toLowerCase();
-    if (s1 !== s2) throw new Error('Suits must match for suited combination');
-    return this._normalizeHand(rank1 + s1 + rank2 + s2);
-  }
-
-  _generateOffsuitCombination(rank1, suit1, rank2, suit2) {
-    const s1 = suit1.toLowerCase();
-    const s2 = suit2.toLowerCase();
-    if (s1 === s2) throw new Error('Suits must differ for offsuit combination');
-    return this._normalizeHand(rank1 + s1 + rank2 + s2);
-  }
-
   _getCard1Suits(info) {
     return info.card1SuitWildcard ? VALID_SUITS.filter(s => s !== info.card1ExcludeSuit) : [info.card1Suit];
   }
@@ -529,64 +488,34 @@ export class RangeManager {
     return this._generatePairRange(start, end);
   }
 
-  _parseSuitedPlus(info) {
-    // Find the rank that is one rank below rank1 (the first rank)
-    const targetRank = this._getRankBelow(info.rank1);
-    if (!targetRank) {
-      // If rank1 is '2', there's no rank below it, so return empty
-      return [];
+  _parseNonPairRange(range, suffix) {
+    const label = suffix === 's' ? 'suited' : 'offsuit';
+    const generate = suffix === 's'
+      ? (r1, r2) => this._generateSuitedRange(r1, r2)
+      : (r1, r2) => this._generateOffsuitRange(r1, r2);
+    const info = this._extractNonPairRanks(range, suffix);
+    if (!info) throw new Error(`Invalid ${label} range: ${range}`);
+    let ranks;
+    if (info.isPlus) {
+      // '+' runs the second rank up to one rank below the first rank
+      const targetRank = this._getRankBelow(info.rank1);
+      if (!targetRank) return [];
+      ranks = this._getAllRanksBetween(info.rank2, targetRank).filter(r => r !== info.rank1);
+    } else if (info.endRank2) {
+      if (info.rank1 !== info.endRank1) throw new Error(`Invalid ${label} range: ${range}`);
+      ranks = this._getAllRanksBetween(info.rank2, info.endRank2);
+    } else {
+      ranks = [info.rank2];
     }
-    // Get all ranks from rank2 up to (and including) the target rank
-    const ranks = this._getAllRanksBetween(info.rank2, targetRank).filter(r => r !== info.rank1);
-    return ranks.flatMap(rank => this._generateSuitedRange(info.rank1, rank));
-  }
-
-  _parseSuitedRangeBetween(info, range) {
-    if (info.rank1 !== info.endRank1) throw new Error(`Invalid suited range: ${range}`);
-    const ranks = this._getAllRanksBetween(info.rank2, info.endRank2);
-    return ranks.flatMap(rank => this._generateSuitedRange(info.rank1, rank));
-  }
-
-  _parseSuitedSingle(info) {
-    return this._generateSuitedRange(info.rank1, info.rank2);
+    return ranks.flatMap(rank => generate(info.rank1, rank));
   }
 
   _parseSuitedRange(range) {
-    const info = this._extractSuitedRanks(range);
-    if (!info) throw new Error(`Invalid suited range: ${range}`);
-    if (info.isPlus) return this._parseSuitedPlus(info);
-    if (info.endRank2) return this._parseSuitedRangeBetween(info, range);
-    return this._parseSuitedSingle(info);
-  }
-
-  _parseOffsuitPlus(info) {
-    // Find the rank that is one rank below rank1 (the first rank)
-    const targetRank = this._getRankBelow(info.rank1);
-    if (!targetRank) {
-      // If rank1 is '2', there's no rank below it, so return empty
-      return [];
-    }
-    // Get all ranks from rank2 up to (and including) the target rank
-    const ranks = this._getAllRanksBetween(info.rank2, targetRank).filter(r => r !== info.rank1);
-    return ranks.flatMap(rank => this._generateOffsuitRange(info.rank1, rank));
-  }
-
-  _parseOffsuitRangeBetween(info, range) {
-    if (info.rank1 !== info.endRank1) throw new Error(`Invalid offsuit range: ${range}`);
-    const ranks = this._getAllRanksBetween(info.rank2, info.endRank2);
-    return ranks.flatMap(rank => this._generateOffsuitRange(info.rank1, rank));
-  }
-
-  _parseOffsuitSingle(info) {
-    return this._generateOffsuitRange(info.rank1, info.rank2);
+    return this._parseNonPairRange(range, 's');
   }
 
   _parseOffsuitRange(range) {
-    const info = this._extractOffsuitRanks(range);
-    if (!info) throw new Error(`Invalid offsuit range: ${range}`);
-    if (info.isPlus) return this._parseOffsuitPlus(info);
-    if (info.endRank2) return this._parseOffsuitRangeBetween(info, range);
-    return this._parseOffsuitSingle(info);
+    return this._parseNonPairRange(range, 'o');
   }
 
   _parseRankXNotation(segment) {
@@ -642,14 +571,13 @@ export class RangeManager {
     const newInstance = Object.create(Object.getPrototypeOf(this));
     Object.assign(newInstance, this);
     newInstance.filteredHands = this._filterDeadCards(filteredHands);
-    newInstance.evaluationCache = new Map(this.evaluationCache);
-    newInstance.lastHandStrength = this.lastHandStrength;
+    // evaluationCache is shared by reference: entries are deterministic per (hand, board, strict),
+    // so derived instances can safely reuse and extend each other's evaluations
     return newInstance;
   }
 
   _normalizeInputToHands(input) {
-    if (typeof input === 'string') return this._parseString(input);
-    if (Array.isArray(input)) return this._parseArray(input);
+    if (typeof input === 'string' || Array.isArray(input)) return this._parse(input);
     throw new Error('Input must be a string (range notation) or array of hands');
   }
 
@@ -659,16 +587,26 @@ export class RangeManager {
 
   handContainsDeadCard(hand, deadCards) {
     if (!deadCards || deadCards.length === 0) return false;
-    const expandedDeadCards = this._parseCardArray(deadCards);
-    const [card1, card2] = this._extractCardsFromHand(hand);
-    const normalizedCard1 = card1[0].toUpperCase() + card1[1].toLowerCase();
-    const normalizedCard2 = card2[0].toUpperCase() + card2[1].toLowerCase();
-    return expandedDeadCards.includes(normalizedCard1) || expandedDeadCards.includes(normalizedCard2);
+    return this._handHasCardIn(hand, this._toCardSet(deadCards));
+  }
+
+  // Expands wildcards once so per-hand checks are O(1) Set lookups
+  _toCardSet(cards) {
+    return new Set(this._parseCardArray(cards));
+  }
+
+  _handHasCardIn(hand, cardSet) {
+    return cardSet.has(this._normalizeCard(hand.substring(0, 2))) || cardSet.has(this._normalizeCard(hand.substring(2, 4)));
+  }
+
+  _withoutCards(hands, cards) {
+    if (!cards || cards.length === 0) return hands;
+    const cardSet = this._toCardSet(cards);
+    return hands.filter(hand => !this._handHasCardIn(hand, cardSet));
   }
 
   _filterDeadCards(hands) {
-    if (!this.deadCards || this.deadCards.length === 0) return hands;
-    return hands.filter(hand => !this.handContainsDeadCard(hand, this.deadCards));
+    return this._withoutCards(hands, this.deadCards);
   }
 
   handHasSuit(hand, suit) {
@@ -687,9 +625,7 @@ export class RangeManager {
 
   exclude(input) {
     if (Array.isArray(input) && (input.length === 0 || this._isValidCard(input[0]))) {
-      const expandedCards = this._parseCardArray(input);
-      const filtered = this.filteredHands.filter(hand => !this.handContainsDeadCard(hand, expandedCards));
-      return this._createFilteredInstance(filtered);
+      return this._createFilteredInstance(this._withoutCards(this.filteredHands, input));
     }
     const excludeHands = this._normalizeInputToHands(input);
     const excludeSet = new Set(excludeHands);
@@ -739,27 +675,41 @@ export class RangeManager {
     return [normalizedHand, board];
   }
 
-  async _evaluateHandWithBoard(hand, boardCards, strict = true) {
+  async _loadEvaluator() {
     if (!evaluateHandCache) {
       const module = await import('poker-extval');
       evaluateHandCache = module.evaluateHand;
     }
-    const handCards = this._extractCardsFromHand(hand);
-    const allCards = [...handCards, ...boardCards];
-    const uniqueCards = [...new Set(allCards)];
-    if (uniqueCards.length < 5) {
-      throw new Error(`Need at least 5 unique cards total (hand + board). Got ${uniqueCards.length} unique cards from hand [${handCards.join(', ')}] and board [${boardCards.join(', ')}]`);
-    }
-    return evaluateHandCache(uniqueCards, strict);
+    return evaluateHandCache;
   }
 
-  async _getCachedOrEvaluate(hand, boardCards, strict = true) {
-    const cacheKey = `${hand}|${boardCards.join(',')}|strict:${strict}`;
-    const cached = this.evaluationCache.get(cacheKey);
-    if (cached) return cached;
-    const evaluation = await this._evaluateHandWithBoard(hand, boardCards, strict);
-    const evaluations = Object.values(evaluation);
-    this.evaluationCache.set(cacheKey, evaluations);
+  // Synchronous: callers must `await this._loadEvaluator()` first. Hand and board must not overlap.
+  _evaluateSync(hand, boardCards, strict) {
+    const handCards = this._extractCardsFromHand(hand);
+    const cards = [...handCards, ...boardCards];
+    if (cards.length < 5) {
+      throw new Error(`Need at least 5 unique cards total (hand + board). Got ${cards.length} unique cards from hand [${handCards.join(', ')}] and board [${boardCards.join(', ')}]`);
+    }
+    return evaluateHandCache(cards, strict);
+  }
+
+  async _evaluateHandWithBoard(hand, boardCards, strict = true) {
+    await this._loadEvaluator();
+    return this._evaluateSync(hand, boardCards, strict);
+  }
+
+  _cacheKey(hand, boardKey, strict) {
+    return `${hand}|${boardKey}|strict:${strict}`;
+  }
+
+  // Synchronous cached evaluation; boardKey is boardCards.join(',') computed once per call
+  _getCachedOrEvaluate(hand, boardCards, boardKey, strict) {
+    const cacheKey = this._cacheKey(hand, boardKey, strict);
+    let evaluations = this.evaluationCache.get(cacheKey);
+    if (!evaluations) {
+      evaluations = Object.values(this._evaluateSync(hand, boardCards, strict));
+      this.evaluationCache.set(cacheKey, evaluations);
+    }
     return evaluations;
   }
 
@@ -776,20 +726,19 @@ export class RangeManager {
     );
   }
 
-  async _handMatchesCriteria(hand, normalizedCriteria, boardCards, strict = true) {
-    const handCards = this._extractCardsFromHand(hand);
-    if (handCards.some(card => boardCards.includes(card))) return false;
-    const evaluations = await this._getCachedOrEvaluate(hand, boardCards, strict);
-    const boardRelative = this._getBoardRelativePairType(handCards, boardCards);
-    return this._evaluationsMatchCriteria(evaluations, normalizedCriteria, boardRelative);
-  }
-
   async makesHand(criteria, boardCards = [], strict = true) {
     const { normalizedCriteria, board } = this._validateCriteriaAndBoard(criteria, boardCards);
-    const filtered = [];
-    for (const hand of this.filteredHands) {
-      if (await this._handMatchesCriteria(hand, normalizedCriteria, board, strict)) filtered.push(hand);
-    }
+    await this._loadEvaluator();
+    const boardSet = new Set(board);
+    const boardKey = board.join(',');
+    const boardInfo = this._getBoardRankInfo(board);
+    const filtered = this.filteredHands.filter(hand => {
+      const handCards = this._extractCardsFromHand(hand);
+      if (handCards.some(card => boardSet.has(card))) return false;
+      const evaluations = this._getCachedOrEvaluate(hand, board, boardKey, strict);
+      const boardRelative = this._getBoardRelativePairTypeFromInfo(handCards, boardInfo);
+      return this._evaluationsMatchCriteria(evaluations, normalizedCriteria, boardRelative);
+    });
     return this._createEvaluatedInstance(filtered, board, normalizedCriteria, strict);
   }
 
@@ -831,7 +780,7 @@ export class RangeManager {
   setDeadCards(deadCards) {
     const expanded = this._validateAndExpandDeadCards(deadCards);
     // Filter hands using the NEW dead cards before creating instance
-    const filtered = this.filteredHands.filter(hand => !this.handContainsDeadCard(hand, expanded));
+    const filtered = this._withoutCards(this.filteredHands, expanded);
     const newInstance = this._createFilteredInstance(filtered);
     newInstance.deadCards = expanded;
     return newInstance;
@@ -856,14 +805,20 @@ export class RangeManager {
 
   async _filterByCombinations(criteria, boardCards, minHandCards, strict = true) {
     const { normalizedCriteria, board } = this._validateCriteriaAndBoard(criteria, boardCards);
-    const filtered = [];
-    for (const hand of this.filteredHands) {
-      if (this.deadCards.length > 0 && this.handContainsDeadCard(hand, this.deadCards)) continue;
+    // Fewer than 5 cards in total cannot be evaluated: no hand can hit
+    if (board.length + 2 < 5) return this._createEvaluatedInstance([], board, normalizedCriteria, strict);
+    await this._loadEvaluator();
+    const boardSet = new Set(board);
+    const boardKey = board.join(',');
+    const boardInfo = this._getBoardRankInfo(board);
+    // filteredHands never contain dead cards: _createFilteredInstance and the constructor remove them
+    const filtered = this.filteredHands.filter(hand => {
       const handCards = this._extractCardsFromHand(hand);
-      if (handCards.some(card => board.includes(card))) continue;
-      const boardRelative = this._getBoardRelativePairType(handCards, board);
-      if (await this._evaluateCombinations(hand, board, normalizedCriteria, handCards, minHandCards, strict, boardRelative)) filtered.push(hand);
-    }
+      if (handCards.some(card => boardSet.has(card))) return false;
+      const evaluations = this._getCachedOrEvaluate(hand, board, boardKey, strict);
+      const boardRelative = this._getBoardRelativePairTypeFromInfo(handCards, boardInfo);
+      return this._evaluationsMatchWithHandCards(evaluations, normalizedCriteria, handCards, minHandCards, boardRelative);
+    });
     return this._createEvaluatedInstance(filtered, board, normalizedCriteria, strict);
   }
 
@@ -875,18 +830,15 @@ export class RangeManager {
     return await this._filterByCombinations(criteria, boardCards, 2, strict);
   }
 
-  _getBoardCards(boardCards) {
-    return boardCards || this.lastBoardCards;
-  }
-
   _getCachedOnly(hand, boardCards) {
     if (!boardCards) return null;
-    const prefix = `${hand}|${boardCards.join(',')}|strict:`;
+    const boardKey = boardCards.join(',');
     // Use the strict mode of the evaluation that produced this instance; fall back to trying both
     if (this.lastStrict !== null && this.lastStrict !== undefined) {
-      return this.evaluationCache.get(prefix + this.lastStrict) || null;
+      return this.evaluationCache.get(this._cacheKey(hand, boardKey, this.lastStrict)) || null;
     }
-    return this.evaluationCache.get(prefix + 'true') || this.evaluationCache.get(prefix + 'false') || null;
+    return this.evaluationCache.get(this._cacheKey(hand, boardKey, true))
+      || this.evaluationCache.get(this._cacheKey(hand, boardKey, false)) || null;
   }
 
   _parseSingleCard(card) {
@@ -989,22 +941,6 @@ export class RangeManager {
     return Array.from(allKeyCards).sort();
   }
 
-  async _evaluateCombinations(hand, boardCards, normalizedCriteria, handCards, minHandCards, strict = true, boardRelative = null) {
-    if (!evaluateHandCache) {
-      const module = await import('poker-extval');
-      evaluateHandCache = module.evaluateHand;
-    }
-    const cacheKey = `${hand}|${boardCards.join(',')}|strict:${strict}`;
-    const cachedEvaluations = this.evaluationCache.get(cacheKey);
-    if (cachedEvaluations) return this._evaluationsMatchWithHandCards(cachedEvaluations, normalizedCriteria, handCards, minHandCards, boardRelative);
-    const allCards = [...handCards, ...boardCards];
-    const uniqueCards = [...new Set(allCards)];
-    if (uniqueCards.length < 5) return false;
-    const evaluations = Object.values(evaluateHandCache(uniqueCards, strict));
-    this.evaluationCache.set(cacheKey, evaluations);
-    return this._evaluationsMatchWithHandCards(evaluations, normalizedCriteria, handCards, minHandCards, boardRelative);
-  }
-
   _evaluationsMatchWithHandCards(evaluations, criteria, handCards, minHandCards, boardRelative = null) {
     const criterionMatches = (evalObj, c) => this._criterionMatchWithBoardRelative(evalObj, c, boardRelative);
     if (minHandCards === 0) return evaluations.some(evalObj => criteria.some(c => criterionMatches(evalObj, c)));
@@ -1070,7 +1006,11 @@ export class RangeManager {
 
   contains(hand) {
     const normalized = this._normalizeHand(hand);
-    return this.filteredHands.includes(normalized);
+    if (this._handSetSource !== this.filteredHands) {
+      this._handSet = new Set(this.filteredHands);
+      this._handSetSource = this.filteredHands;
+    }
+    return this._handSet.has(normalized);
   }
 
   toString() {
@@ -1090,11 +1030,6 @@ export class RangeManager {
 
   _deduplicateHands(hands) {
     return [...new Set(hands)];
-  }
-
-  _mergeHands(handArrays) {
-    const merged = handArrays.flat();
-    return this._deduplicateHands(merged);
   }
 
   _categorizeHand(hand) {
@@ -1121,14 +1056,6 @@ export class RangeManager {
       categories[cat.type === 'pair' ? 'pairs' : cat.type === 'suited' ? 'suited' : 'offsuit'].push(cat.notation);
     });
     return this._buildNotationParts(categories);
-  }
-
-  _detectConsecutiveRanks(ranks) {
-    if (ranks.length < 2) return { isConsecutive: false };
-    const sortedRanks = [...new Set(ranks)].sort((a, b) => this._getRankValue(b) - this._getRankValue(a));
-    const expected = this._getAllRanksBetween(sortedRanks[0], sortedRanks[sortedRanks.length - 1]);
-    if (expected.length !== sortedRanks.length || !expected.every((r, i) => r === sortedRanks[i])) return { isConsecutive: false };
-    return { isConsecutive: true, startRank: sortedRanks[0], endRank: sortedRanks[sortedRanks.length - 1], goesToAce: sortedRanks[0] === 'A' };
   }
 
   _findConsecutiveSequences(ranks) {
@@ -1166,19 +1093,10 @@ export class RangeManager {
     return groups;
   }
 
-  _shouldUsePlusNotation(firstRank, highestSecondRank, rankDiff, detected) {
-    // Only use plus notation if highestSecondRank is exactly one rank below firstRank
-    // This matches the new parsing logic where + means "up to one rank below the first rank"
-    const rankBelow = this._getRankBelow(firstRank);
-    if (rankBelow === null) return false; // No rank below (e.g., if firstRank is '2')
-    return highestSecondRank === rankBelow && rankDiff === 1;
-  }
-
   _processSequence(seq, firstRank, suffix) {
     if (seq.start === seq.end) return [firstRank + seq.start + suffix];
-    const detected = this._detectConsecutiveRanks([seq.start, seq.end]);
-    const rankDiff = this._getRankValue(firstRank) - this._getRankValue(seq.end);
-    if (this._shouldUsePlusNotation(firstRank, seq.end, rankDiff, detected)) return [firstRank + seq.start + suffix + '+'];
+    // '+' means the second rank runs up to one rank below the first rank
+    if (seq.end === this._getRankBelow(firstRank)) return [firstRank + seq.start + suffix + '+'];
     return [firstRank + seq.start + suffix + '-' + firstRank + seq.end + suffix];
   }
 
