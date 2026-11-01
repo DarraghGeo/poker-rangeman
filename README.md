@@ -75,7 +75,7 @@ Creates a new RangeManager instance.
 
 **Parameters:**
 - `input` (string | string[]): Range notation string or array of hand strings
-- `deadCards` (string[], optional): Array of dead cards (e.g., `['Ah', 'Kd']`)
+- `deadCards` (string[], optional): Array of dead cards (e.g., `['Ah', 'Kd']`). Hands containing them are removed immediately. Supports wildcards: `'Ax'` (all Aces), `'Xh'` (all hearts)
 
 **Returns:** RangeManager instance
 
@@ -93,6 +93,7 @@ const rm3 = new RangeManager('22+,AKs,AKo', ['Ah', 'Kd']);
 
 **Throws:**
 - `Error`: If input is empty or invalid type
+- `Error`: If deadCards is not an array or contains an invalid card
 
 ---
 
@@ -573,8 +574,9 @@ const evaluation = await rm.getObject('AcKc', board);
 
 ### Wildcards
 
-- `AxKs` - Ace-X suited with King kicker (X excludes A and K)
-- `KxAh` - King-X offsuit with Ace kicker
+- `AxKh` - Any Ace offsuit with the King of hearts: `AsKh`, `AdKh`, `AcKh` (the `x` suit excludes the other card's suit)
+- `KxAh` - Any King offsuit with the Ace of hearts
+- `AhXs` - The Ace of hearts with any spade (`XsAh` is treated the same way)
 
 ### Rank X Notation
 
