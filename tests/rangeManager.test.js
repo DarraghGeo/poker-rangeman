@@ -2987,13 +2987,20 @@ describe('range vs range analysis', () => {
       expect(report.hero.shape.contiguity).toBe(1);
       // A tie goes to the first in order: polarized, linear, condensed
       expect(report.hero.shape.dominant).toBe('polarized');
-      expect(report.hero.capped).toBe(0);
+      // Hero's AA sets are the top end of both ranges and of the board; villain's KK sets are top end on the board only
+      expect(report.hero.capped).toEqual({ relative: 0, absolute: 0 });
+      expect(report.villain.capped).toEqual({ relative: 1, absolute: 0 });
       expect(report.hero.shape).toMatchObject({ top: 0.2, middle: expect.any(Number), bottom: 0.4 });
       // Villain T .6 / M .4 / B 0: fully linear
       expect(report.villain.shape).toMatchObject({ polarized: 0, linear: 1, condensed: 0, dominant: 'linear' });
-      expect(report.villain.capped).toBe(0);
       expect(report.villain.shape).not.toHaveProperty('capped');
-      expect(report.handClasses.isThreeOfAKind).toEqual({ hero: 0.2, villain: 0.2, heroCount: 3, villainCount: 3 });
+      expect(report.flags.isThreeOfAKind).toEqual({ hero: 0.2, villain: 0.2, heroCount: 3, villainCount: 3 });
+      // Each combo in one class: AA and KK are sets; TT, 88 and QQ sit between the K and the 7; 33 between the 4 and the 2
+      expect(report.handClasses.set).toEqual({ hero: 0.2, villain: 0.2, heroCount: 3, villainCount: 3 });
+      expect(report.handClasses.pocketPair23).toMatchObject({ heroCount: 6, villainCount: 12 });
+      expect(report.handClasses.pocketPair45).toMatchObject({ heroCount: 6, villainCount: 0 });
+      const heroTotal = Object.values(report.handClasses).reduce((sum, row) => sum + row.hero, 0);
+      expect(heroTotal).toBeCloseTo(1, 10);
       expect(report.reference.bigBlind.strong).toBe(0.07);
       expect(report.reference.source).toMatch(/Modern Poker Theory/);
     });
@@ -3002,20 +3009,30 @@ describe('range vs range analysis', () => {
       // TT beats 88 and loses to QQ: 50%, all Good
       const condensed = (await (await new RangeManager('TT').against('88,QQ', river)).compare()).hero;
       expect(condensed.shape).toMatchObject({ polarized: 0, linear: 0, condensed: 1, dominant: 'condensed' });
-      expect(condensed.capped).toBe(1);
+      expect(condensed.capped).toEqual({ relative: 1, absolute: 1 });
     });
 
     it('lowers condensed in proportion to air rather than zeroing it', async () => {
       // TT (Good, 6 combos) + 33 (Trash, 6 combos) vs 88,QQ: M .5, B .5, no top
       const mixed = (await (await new RangeManager('TT,33').against('88,QQ', river)).compare()).hero;
       expect(mixed.shape.condensed).toBeCloseTo(0.5, 10);
-      expect(mixed.capped).toBe(1);
+      expect(mixed.shape.dominant).toBe('condensed'); // exactly the 0.5 minimum
+      expect(mixed.capped).toEqual({ relative: 1, absolute: 1 });
     });
 
     it('scores 0 on every shape for pure air, with dominant null', async () => {
       const air = (await (await new RangeManager('33').against('88,QQ', river)).compare()).hero;
       expect(air.shape).toMatchObject({ polarized: 0, linear: 0, condensed: 0, dominant: null });
-      expect(air.capped).toBe(1);
+      expect(air.capped).toEqual({ relative: 1, absolute: 1 });
+    });
+
+    it('names no dominant shape below minDominant', async () => {
+      // TT (Good) + 66,33 (Trash) vs 88,QQ: condensed = M = 1/3, under the 0.5 default
+      const weak = (await (await new RangeManager('TT,66,33').against('88,QQ', river)).compare()).hero;
+      expect(weak.shape.condensed).toBeCloseTo(1 / 3, 10);
+      expect(weak.shape.dominant).toBeNull();
+      const lenient = (await (await new RangeManager('TT,66,33').against('88,QQ', river, { shape: { minDominant: 0.3 } })).compare()).hero;
+      expect(lenient.shape.dominant).toBe('condensed');
     });
 
     it('measures contiguity against the range at against(): gaps lower linear', async () => {
@@ -3034,7 +3051,7 @@ describe('range vs range analysis', () => {
       const strict = await hero.against(villain, river, { shape: { enough: 0.5 } });
       const side = (await strict.buckets()).hero;
       expect(side.shape.polarized).toBeCloseTo(0.4 * 0.8 * 0.5, 10);
-      expect(side.capped).toBeCloseTo(0.6, 10);
+      expect(side.capped).toEqual({ relative: 0, absolute: 0 }); // capping uses topEnd, not enough
       await expect(hero.against(villain, river, { shape: { enough: 0 } })).rejects.toThrow('above 0');
     });
 
@@ -3132,11 +3149,15 @@ describe('README range vs range example, as written', () => {
     expect(report.hero.shape.polarized).toBeCloseTo(0.1505, 4);
     expect(report.hero.shape.condensed).toBe(0);
     expect(report.hero.shape.dominant).toBe('linear');
-    expect(report.hero.capped).toBe(0);
-    expect(report.handClasses.isTopPair.hero).toBeCloseTo(0.345, 3);
-    expect(report.handClasses.isTopPair.villain).toBeCloseTo(0.241, 3);
-    expect(report.handClasses.isTopPair.heroCount).toBe(51);
-    expect(report.handClasses.isTopPair.villainCount).toBe(42);
+    expect(report.hero.capped).toEqual({ relative: 0, absolute: 0 });
+    expect(report.flags.isTopPair.hero).toBeCloseTo(0.345, 3);
+    expect(report.flags.isTopPair.villain).toBeCloseTo(0.241, 3);
+    expect(report.flags.isTopPair.heroCount).toBe(51);
+    expect(report.flags.isTopPair.villainCount).toBe(42);
+    expect(report.handClasses.air).toMatchObject({ heroCount: 12, villainCount: 32 });
+    expect(report.handClasses.air.hero).toBeCloseTo(0.081, 3);
+    expect(report.handClasses.air.villain).toBeCloseTo(0.184, 3);
+    expect(report.villain.capped.relative).toBeCloseTo(0.129, 3);
   });
 
   it('bucket chain', async () => {
@@ -3164,5 +3185,73 @@ describe('README range vs range example, as written', () => {
     const bluffs = await spot.bluffCandidates({ pot: 6, bet: 4 });
     expect(bluffs.size()).toBe(24);
     expect(spot.bucket('strong').size()).toBe(60);
+  });
+});
+
+describe('hand classes and capping, checked against Modern Poker Theory', () => {
+  // Ch. 1 "Post-flop Range Breakdown": a HJ range (all pairs, 30 suited hands, 9 offsuit hands) against
+  // hero's A♦3♦ on A♣J♥9♥. The book counts every class by hand.
+  const hijack = new RangeManager(
+    '22+,A2s+,KQs,KJs,KTs,K9s,K8s,QJs,QTs,Q9s,Q8s,JTs,J9s,J8s,T9s,T8s,98s,97s,87s,76s,AKo,AQo,AJo,ATo,KQo,KJo,KTo,QJo,QTo',
+    ['Ad', '3d']
+  );
+  const flop = ['Ac', 'Jh', '9h'];
+
+  it("reproduces the book's breakdown exactly (225 combos)", async () => {
+    const { total, classes } = await hijack.handClasses(flop, { highCards: false });
+    const counts = Object.fromEntries(Object.entries(classes).filter(([, c]) => c.count).map(([name, c]) => [name, c.count]));
+    expect(total).toBe(225);
+    expect(counts).toEqual({
+      set: 7, twoPair: 10, topPair: 38, pocketPair12: 12, secondPair: 30, pocketPair23: 6, bottomPair: 15,
+      underpair: 39, flushDraw: 8, oesd: 18, gutshot: 36, air: 6
+    });
+    expect(classes.air.combos.sort()).toEqual(['7c6c', '7d6d', '7s6s', 'Kc8c', 'Kd8d', 'Ks8s']);
+    expect(Object.values(classes).reduce((sum, c) => sum + c.share, 0)).toBeCloseTo(1, 10);
+  });
+
+  it('splits ace-high and king-high out of air by default (as in Ch. 12)', async () => {
+    const { classes } = await hijack.handClasses(flop);
+    expect(classes.kingHigh.combos.sort()).toEqual(['Kc8c', 'Kd8d', 'Ks8s']);
+    expect(classes.air.count).toBe(3);
+  });
+
+  it('counts made hands only when they use a hole card', async () => {
+    // AK on 8-8-3 holds a pair, but it is the board's: ace-high
+    const { classes } = await new RangeManager('AKo').handClasses(['8h', '8d', '3c']);
+    expect(classes.aceHigh.count).toBe(12);
+    expect(classes.trips.count).toBe(0);
+  });
+
+  describe('capping', () => {
+    const button = '22+,A2s+,K6s+,Q8s+,J8s+,T8s+,97s+,86s+,75s+,65s,54s,A8o+,KTo+,QTo+,JTo';
+    const bigBlind = '22-99,A2s-AJs,K2s+,Q5s+,J7s+,T7s+,96s+,85s+,74s+,64s+,53s+,43s,A2o-AJo,K9o+,Q9o+,J9o+,T9o,98o,87o';
+    const capped = async (range, villain, board) => (await (await new RangeManager(range).against(villain, board)).buckets()).hero.capped;
+
+    it("matches the book's A♥J♦T♠ example: BB without KQ, sets and AJ/AT is capped, the button is not", async () => {
+      const bb = new RangeManager(bigBlind).exclude('AA,KK,QQ,JJ,TT,KQ,AJ,AT').toArray();
+      expect((await capped(bb, button, ['Ah', 'Jd', 'Ts'])).relative).toBe(1);
+      expect((await capped(button, bb, ['Ah', 'Jd', 'Ts'])).relative).toBe(0);
+    });
+
+    it("matches the book's 5♥4♦3♠ example: the BB has the straights, so it is not capped", async () => {
+      expect(await capped(bigBlind, button, ['5h', '4d', '3s'])).toEqual({ relative: 0, absolute: 0 });
+    });
+
+    it("absolute capping measures the board's nuts, whoever holds them", async () => {
+      // On K-Q-T, AJ is the nut straight; small pairs hold none of the board's top 5%
+      expect((await capped('AJs', '22-55', ['Kh', 'Qd', 'Ts'])).absolute).toBe(0);
+      expect((await capped('22-55', 'AJs', ['Kh', 'Qd', 'Ts'])).absolute).toBe(1);
+    });
+
+    it('is graded: less than a fair share of the top end is partly capped', async () => {
+      // Top end on K-Q-T: the 16 AJ nut straights. Hero holds 4 of them (25%) with 28 of the 43 combos (65%)
+      const result = await capped('AJs,22-55', 'AJo,QQ', ['Kh', 'Qd', 'Ts']);
+      expect(result.relative).toBeCloseTo(1 - (4 / 16) / (28 / 43), 10);
+      expect(result.absolute).toBe(0);
+    });
+
+    it('is null preflop', async () => {
+      expect(await capped('AA', 'KK', [])).toEqual({ relative: null, absolute: null });
+    });
   });
 });

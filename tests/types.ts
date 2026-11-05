@@ -2,7 +2,7 @@
 import { RangeManager, RangeQuery } from 'poker-rangeman';
 import type {
   EquityResult, RankedHand, Breakdown, VillainRange, EvaluationResult, Hand,
-  ComparisonReport, CompareToReport, BettingMath, Shape
+  ComparisonReport, CompareToReport, BettingMath, Shape, HandClassesResult
 } from 'poker-rangeman';
 
 async function check(): Promise<void> {
@@ -45,7 +45,14 @@ async function check(): Promise<void> {
   const polarized: number | undefined = report.hero.shape?.polarized;
   const shape: Shape | null = report.villain.shape;
   const dominant: Shape['dominant'] | undefined = report.hero.shape?.dominant;
-  const capped: number | null = report.hero.capped;
+  const capped: number | null = report.hero.capped.relative;
+  const absolute: number | null = report.villain.capped.absolute;
+  const air: number | undefined = report.handClasses?.air.hero;
+  const topPairFlag: number | undefined = report.flags?.isTopPair?.villain;
+  const classes: HandClassesResult = await rm.handClasses(board, { highCards: false });
+  const setShare: number = classes.classes.set.share;
+  const pendingClasses: Promise<HandClassesResult> = rm.against('QQ+', board).handClasses(board);
+  await rm.against('QQ+', board, { shape: { minDominant: 0.4, topEnd: '5%' } });
   await rm.against('QQ+', board, { shape: { enough: '15%' } });
   const strongShare: number = (await spot.buckets()).villain.buckets.strong.share;
   const vsReference: CompareToReport = await spot.compareTo('TT+,AK');
@@ -69,7 +76,7 @@ async function check(): Promise<void> {
   const size: number = bottom.size();
   void [keyCards, middling, uses, total, byHand, above, between, ranked, pairs, unblocked, notation, size,
     asPromise, chainedRange, pendingSize, pendingEquity, stored, storedTotal,
-    goodSpades, nut, polarized, shape, dominant, capped, strongShare, distance, math, defending, bluffs, bands, custom, pendingReport];
+    goodSpades, nut, polarized, shape, dominant, capped, absolute, air, topPairFlag, setShare, pendingClasses, strongShare, distance, math, defending, bluffs, bands, custom, pendingReport];
 }
 
 void check;

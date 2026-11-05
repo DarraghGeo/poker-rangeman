@@ -711,8 +711,9 @@ report.villain.buckets.strong.share; // 0.069 (good 0.241, weak 0.092, trash 0.5
 report.rangeAdvantage;            // 0.200: hero equity minus villain equity
 report.nutAdvantage;              // 0.336: hero's strong share minus villain's
 report.hero.shape;                // { polarized: 0.15, linear: 0.84, condensed: 0, dominant: 'linear', ... }
-report.hero.capped;               // 0: the opener has its strong hands
-report.handClasses.isTopPair;     // { hero: 0.345, villain: 0.241, heroCount: 51, villainCount: 42 }
+report.hero.capped;               // { relative: 0, absolute: 0 }: the opener has its share of the nuts
+report.handClasses.air;           // { hero: 0.081, villain: 0.184, heroCount: 12, villainCount: 32 }
+report.flags.isTopPair;           // { hero: 0.345, villain: 0.241, heroCount: 51, villainCount: 42 }
 
 // Filters chain as usual
 await opener.against(defender, flop).bucket('good').hasSuit('h').toNotation(); // 'KK-88'
@@ -738,14 +739,15 @@ The analysis only covers hands that can be dealt. Run `against()` again after ch
 
 - `rangeAdvantage`: your equity minus villain's.
 - `nutAdvantage`: your top-band share minus villain's. The book measures nut advantage by the share of Strong hands.
-- `handClasses`: the share of each range holding each flag (made hands, pair positions, draws, overcards), most common first. It needs a board; it is `null` preflop.
+- `handClasses`: each range split into hand classes, every combo in exactly one, so each side adds up to 1: sets, top pair, flush draws, air and so on (see [`handClasses()`](#handclassesboardcards-options)). `null` preflop.
+- `flags`: the share of each range holding each poker-extval flag (made hands, pair positions, draws, overcards). A combo can hold several, so these overlap; most common first. `null` preflop.
 - `reference`: with the default bands, the book's averages over all 1,755 flops for a big blind defending against an in-position opener with 20-40bb ranges: BB strong 7% / good 25% / weak 23% / trash about 45%, opener 22% / 43% / 29% / 6% (PDF p. 600). A point of comparison, not a target.
 
 #### Range shape
 
-*Modern Poker Theory* (Ch. 1, Range Morphology) names three main range shapes: **linear**, **polarized** and **condensed**. They compete, but most ranges are a mix of them. Separately, a range can be **capped** (missing its strongest hands) or uncapped; that describes the top of the range rather than its shape, so it can go with any of the three.
+*Modern Poker Theory* (Ch. 1, Range Morphology) names three main range shapes: **linear**, **polarized** and **condensed**. They compete, but most ranges are a mix of them. Separately, a range can be **capped** (missing its strongest hands) or uncapped; that describes the top of the range rather than its shape, so it can go with any of the three. It is reported next to `shape` (see [Capping](#capping)).
 
-`shape` scores the three shapes from 0 to 1, and `capped` (next to `shape` in each side's summary) scores the top. All four come from the range's equity against villain, split three ways by the bands: **T**, the share in the top band (Strong); **B**, the share in the bottom band (Trash); and **M**, the share in the bands between (Good and Weak). T + M + B = 1.
+`shape` scores the three shapes from 0 to 1. They come from the range's equity against villain, split three ways by the bands: **T**, the share in the top band (Strong); **B**, the share in the bottom band (Trash); and **M**, the share in the bands between (Good and Weak). T + M + B = 1.
 
 Two ideas define the scores:
 
@@ -757,23 +759,22 @@ Two ideas define the scores:
 | `shape.polarized` | enough(T) × enough(B) × B / (M + B) | Enough top and enough bottom, with nothing in the middle |
 | `shape.linear` | enough(T) × M / (M + B) × contiguity | Enough top, then medium hands rather than air, without gaps |
 | `shape.condensed` | M × (1 − enough(T)) | Medium hands without the top; air lowers it in proportion |
-| `capped` | 1 − enough(T) | How much of the top is missing |
 
-The three shape scores are independent and need not add up to 1: a range can be partly linear and partly condensed, and a range of pure air scores 0 on all three. `shape.dominant` names the highest (on a tie, the first of polarized, linear, condensed), or is `null` when all three are 0.
+The three shape scores are independent and need not add up to 1: a range can be partly linear and partly condensed, and a range of pure air scores 0 on all three. `shape.dominant` names the highest (on a tie, the first of polarized, linear, condensed) when it reaches 0.5, and is `null` otherwise: a range whose best score is low, such as one that is mostly air, has no dominant shape. Change the minimum with `shape: { minDominant: 0.4 }`.
 
 `shape.contiguity` is the share of the range's hands that are among the top N hands, by equity, of the range as it was at `against()`, where N is the range's own size. It checks the "without gaps" part of linear: a strong + weak range that skips the good hands is not a top slice, so its contiguity and linear score drop. For the range `against()` was called on (and for villain's range) it is 1, because gaps can only be seen against the hands that were available. `shape.top`, `shape.middle` and `shape.bottom` give T, M and B themselves.
 
 Some examples, on A-7-6 rainbow with the ranges above:
 
-| Range | T / M / B | polarized | linear | condensed | dominant | capped |
+| Range | T / M / B | polarized | linear | condensed | dominant | capped (relative / absolute) |
 | --- | --- | --- | --- | --- | --- | --- |
-| Opener, whole range | .41 / .50 / .09 | 0.15 | 0.84 | 0 | linear | 0 |
-| Opener, strong + trash | .81 / 0 / .19 | 1 | 0 | 0 | polarized | 0 |
-| Opener, strong + good | .63 / .38 / 0 | 0 | 1 | 0 | linear | 0 |
-| Opener, strong + weak (skips good) | .61 / .39 / 0 | 0 | 0.63 | 0 | linear | 0 |
-| Opener, good + weak | 0 / 1 / 0 | 0 | 0 | 1 | condensed | 1 |
-| Opener, good + trash | 0 / .72 / .28 | 0 | 0 | 0.72 | condensed | 1 |
-| Defender, whole range | .07 / .33 / .60 | 0.44 | 0.25 | 0.10 | polarized | 0.31 |
+| Opener, whole range | .41 / .50 / .09 | 0.15 | 0.84 | 0 | linear | 0 / 0 |
+| Opener, strong + trash | .81 / 0 / .19 | 1 | 0 | 0 | polarized | 0 / 0 |
+| Opener, strong + good | .63 / .38 / 0 | 0 | 1 | 0 | linear | 0 / 0 |
+| Opener, strong + weak (skips good) | .61 / .39 / 0 | 0 | 0.63 | 0 | linear | 0 / 0 |
+| Opener, good + weak | 0 / 1 / 0 | 0 | 0 | 1 | condensed | 1 / 1 |
+| Opener, good + trash | 0 / .72 / .28 | 0 | 0 | 0.72 | condensed | 1 / 1 |
+| Defender, whole range | .07 / .33 / .60 | 0.44 | 0.25 | 0.10 | none | 0.13 / 0 |
 
 Limits worth knowing:
 
@@ -782,6 +783,43 @@ Limits worth knowing:
 - With few combos, single hands move the shares a lot; `combos` is reported next to the shape.
 - The book says both that "a condensed range is capped" and, in its next example, that a condensed range can hold very strong hands and not be capped. Here condensed falls as strong hands appear, and capped is scored on its own.
 - The book's "merged" describes betting the polarized and condensed parts together with one small size, a strategy rather than a range shape, so it has no score.
+
+#### Capping
+
+A range is capped when it is missing the strongest hands: in the book's example, the big blind on A♥J♦T♠ "lacks all nut hands such as straights (KQ), sets (AA, JJ, TT), and most two pairs". That is about made hands on the board, not equity, so capping ranks every combo by its made hand (straight flush down to high card) and looks at the **top end**: the strongest 5% of combos, ties at the cut-off included. `capped` has two scores, each from 0 (uncapped) to 1 (capped):
+
+| Score | Top end | Formula |
+| --- | --- | --- |
+| `capped.relative` | The strongest 5% of the combos in **both ranges** | 1 − min(1, the range's share of that top end ÷ its share of all their combos) |
+| `capped.absolute` | The strongest 5% of **every combo** that can be dealt on the board | 1 − min(1, the range's share in that top end ÷ the share of all combos in it) |
+
+A range that holds at least its fair share of the top end scores 0; one that holds none scores 1; holding half its fair share scores 0.5. Relative capping says which of the two ranges holds the top hands between them. Absolute capping says whether a range reaches the board's actual nuts: when neither range can hold them, both are capped absolutely, while relative capping still shows who has more of the strongest hands. Change the top end with `shape: { topEnd: 0.1 }`; capping is `null` preflop, with no board to rank on.
+
+With the 5% default, capping matches the book's examples: the big blind without KQ, sets and AJ/AT on A♥J♦T♠ is capped (relative 1) and the button is not (0); on 5♥4♦3♠ the big blind holds the straights and is not capped (0). A 10% or 20% top end reaches down into one pair and no longer matches them.
+
+#### `handClasses(boardCards, options?)`
+
+Splits the range into hand classes on the board, putting each combo in exactly one class so the shares add up to 1. The classes and their order follow *Modern Poker Theory* (Ch. 1, "Post-flop Range Breakdown", and Ch. 12): a combo goes in the first class it fits, made hands before draws, flush draws before straight draws.
+
+| Group | Classes |
+| --- | --- |
+| Made hands | `straightFlush`, `quads`, `fullHouse`, `flush`, `straight`, `set` (a pocket pair), `trips` (one hole card), `twoPair` |
+| Pairs | `overpair`, `topPair`, `pocketPair12` (a pocket pair between the top and second board ranks), `secondPair`, `pocketPair23`, `thirdPair`, `pocketPair34`, `fourthPair`, `pocketPair45`, `bottomPair`, `underpair` |
+| Draws | `flushDraw` (including straight flush draws and combo draws), `oesd`, `gutshot` |
+| No pair, no draw | `aceHigh`, `kingHigh`, `air` |
+
+Pair positions count the board's distinct ranks from the top, and the lowest is always `bottomPair`; on a three-rank flop `secondPair` is the middle pair. A made hand counts only when it uses a hole card: AK on 8-8-3 is ace-high, not a pair. Backdoor draws stay in their no-pair class (they are in `flags`).
+
+**Returns:** `Promise<{ total, classes }>`, with every class as `{ count, share, combos }`. `options`: `{ highCards, street }`; `highCards: false` counts ace-high and king-high as air, as the book's Chapter 1 breakdown does.
+
+```javascript
+// The book's example: a hijack opening range against hero's A♦3♦ on A♣J♥9♥
+const hijack = new RangeManager('22+,A2s+,KQs,KJs,KTs,K9s,K8s,QJs,QTs,Q9s,Q8s,JTs,J9s,J8s,T9s,T8s,98s,97s,87s,76s,AKo,AQo,AJo,ATo,KQo,KJo,KTo,QJo,QTo', ['Ad', '3d']);
+const { total, classes } = await hijack.handClasses(['Ac', 'Jh', '9h'], { highCards: false });
+// total 225: set 7, twoPair 10, topPair 38, pocketPair12 12, secondPair 30, pocketPair23 6,
+// bottomPair 15, underpair 39, flushDraw 8, oesd 18, gutshot 36, air 6, the book's own counts
+classes.air.combos;  // ['Kc8c', 'Kd8d', 'Ks8s', '7c6c', '7d6d', '7s6s']
+```
 
 #### `compareTo(reference)`
 

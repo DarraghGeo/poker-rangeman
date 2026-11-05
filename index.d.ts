@@ -106,8 +106,14 @@ export type BandsOption = 'acevedo' | 'quartiles' | Array<{ name: string; min: S
 
 export interface AgainstOptions extends EquityOptions {
   bands?: BandsOption;
-  /** enough: the share at which an end of the range counts as fully present in the shape scores (default 0.1). */
-  shape?: { enough?: Share };
+  shape?: {
+    /** The share at which an end of the range counts as fully present in the shape scores. Default 0.1. */
+    enough?: Share;
+    /** The score a shape needs to be named dominant. Default 0.5. */
+    minDominant?: Share;
+    /** The strongest share of combos that counts as the top end for capping. Default 0.05. */
+    topEnd?: Share;
+  };
 }
 
 /** The villain, board and bands set by against() / getEquity(). */
@@ -119,6 +125,8 @@ export interface Matchup {
   key: string;
   bands: Band[];
   shapeEnough: number;
+  minDominant: number;
+  topEnd: number;
   /** The range at against() time, which later filters choose from. */
   parentHands: Hand[];
 }
@@ -158,8 +166,44 @@ export interface SideSummary {
   buckets: Record<string, BucketStats>;
   /** null when no hand can be dealt. */
   shape: Shape | null;
-  /** How much of the top is missing, 1 - enough(T): describes the top, separate from the shape. */
-  capped: number | null;
+  /** How much of the top end the range is missing, 0 to 1 (null preflop). Describes the top, separate from the shape. */
+  capped: Capped;
+}
+
+/**
+ * Capping from made hands on the board. relative: the top end is the strongest 5% (shape.topEnd) of both ranges'
+ * combos, against the range's share of all their combos. absolute: the top end is the strongest 5% of every combo
+ * that can be dealt on the board, against a random range. 0 = holds at least its fair share, 1 = holds none.
+ */
+export interface Capped {
+  relative: number | null;
+  absolute: number | null;
+}
+
+/** Hand classes, each combo in exactly one, in Modern Poker Theory's order. */
+export type HandClass =
+  | 'straightFlush' | 'quads' | 'fullHouse' | 'flush' | 'straight' | 'set' | 'trips' | 'twoPair'
+  | 'overpair' | 'topPair' | 'pocketPair12' | 'secondPair' | 'pocketPair23' | 'thirdPair' | 'pocketPair34'
+  | 'fourthPair' | 'pocketPair45' | 'bottomPair' | 'underpair'
+  | 'flushDraw' | 'oesd' | 'gutshot' | 'aceHigh' | 'kingHigh' | 'air';
+
+export interface HandClassesResult {
+  /** Combos that can be dealt on the board. */
+  total: number;
+  /** Every class, shares adding up to 1. */
+  classes: Record<HandClass, { count: number; share: number; combos: Hand[] }>;
+}
+
+export interface HandClassesOptions extends StreetOptions {
+  /** Default true. false counts ace-high and king-high as air (the book's Ch. 1 breakdown). */
+  highCards?: boolean;
+}
+
+export interface SideBySide {
+  hero: number;
+  villain: number;
+  heroCount: number;
+  villainCount: number;
 }
 
 export interface BucketsReport {
@@ -180,8 +224,10 @@ export interface ComparisonReport extends BucketsReport {
   rangeAdvantage: number | null;
   /** Hero's top-band share minus villain's. */
   nutAdvantage: number;
-  /** Share of each side holding each flag (null preflop), most common first. */
-  handClasses: Record<string, { hero: number; villain: number; heroCount: number; villainCount: number }> | null;
+  /** Each combo in exactly one class, so each side's shares add up to 1 (null preflop). */
+  handClasses: Record<HandClass, SideBySide> | null;
+  /** Share of each side holding each poker-extval flag; a combo can hold several (null preflop). Most common first. */
+  flags: Record<string, SideBySide> | null;
   /** Modern Poker Theory's flop averages, with the default bands only. */
   reference: ReferenceAverages | null;
 }
@@ -264,7 +310,7 @@ type ChainedValueMethods = {
   [K in 'toArray' | 'getHands' | 'size' | 'contains' | 'toNotation' | 'getKeyCards' | 'normalizeNotation'
     | 'handContainsDeadCard' | 'handHasSuit' | 'handSuitedOf' | 'evaluateHand' | 'getObject'
     | 'equity' | 'equityByHand' | 'rankHands' | 'breakdown' | 'blockers'
-    | 'bandsByHand' | 'buckets' | 'compare' | 'compareTo' | 'bettingMath']:
+    | 'bandsByHand' | 'buckets' | 'compare' | 'compareTo' | 'bettingMath' | 'handClasses']:
     (...args: Parameters<RangeManager[K]>) => Promise<Awaited<ReturnType<RangeManager[K]>>>;
 };
 
@@ -365,6 +411,8 @@ export class RangeManager {
   strongest(portion: Share, boardCards: Card[], options?: StreetOptions): RangeQuery;
   weakest(portion: Share, boardCards: Card[], options?: StreetOptions): RangeQuery;
   breakdown(boardCards: Card[], options?: StreetOptions): Promise<Breakdown>;
+  /** Each combo in exactly one hand class on the board; shares add up to 1. */
+  handClasses(boardCards: Card[], options?: HandClassesOptions): Promise<HandClassesResult>;
   blockers(boardCards: Card[], heroCards?: Hand | [Card, Card] | null, options?: StreetOptions): Promise<VillainRange>;
 
   // Queries
