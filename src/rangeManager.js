@@ -1186,6 +1186,8 @@ export class RangeManager {
     const topEnd = this._parseShare(options.shape?.topEnd ?? 0.05, 'shape.topEnd');
     if (topEnd === 0) throw new Error('shape.topEnd must be above 0');
     const minDominant = this._parseShare(options.shape?.minDominant ?? 0.5, 'shape.minDominant');
+    const nutsMinEquity = options.nuts?.minEquity === undefined || options.nuts?.minEquity === null
+      ? null : this._parseShare(options.nuts.minEquity, 'nuts.minEquity');
     const prepared = this._prepareEquity(villain, boardCards, options);
     const handEquity = {};
     for (const hand of this.filteredHands) {
@@ -1204,6 +1206,7 @@ export class RangeManager {
       shapeEnough,
       topEnd,
       minDominant,
+      nutsMinEquity,
       // The range at against() time: the hands later filters choose from, for shape contiguity
       parentHands: [...this.filteredHands]
     };
@@ -1217,7 +1220,8 @@ export class RangeManager {
    * options: { bands, deadCards, iterations, shape: { enough, minDominant, topEnd } }: enough is the share at
    * which an end of the range counts as fully present for the shape scores (default 0.1); minDominant the
    * score a shape needs to be named dominant (default 0.5); topEnd the strongest share of combos that counts
-   * as the top end for capping (default 0.05).
+   * as the top end for capping and effective nuts (default 0.05); nuts.minEquity, when set, makes effective
+   * nuts the hands with at least that equity against the other range instead of the top end.
    */
   async against(villain, boardCards = [], options = {}) {
     if (villain === undefined) throw new Error('against needs a villain range');
@@ -1569,9 +1573,22 @@ export class RangeManager {
     const hero = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, parentHands, shapeEnough, minDominant);
     const villain = this._sideSummary(villainEquity, villainHands, bands, null, shapeEnough, minDominant);
     await this._loadEvaluator();
-    hero.capped = this._cappedFor(this.filteredHands, villainHands, board, deadCards, topEnd);
-    villain.capped = this._cappedFor(villainHands, this.filteredHands, board, deadCards, topEnd);
+    const heroTop = this._topEndFor(this.filteredHands, villainHands, board, deadCards, topEnd);
+    const villainTop = this._topEndFor(villainHands, this.filteredHands, board, deadCards, topEnd);
+    hero.capped = heroTop.capped;
+    villain.capped = villainTop.capped;
+    const { nutsMinEquity } = this.matchup;
+    hero.nuts = nutsMinEquity === null ? heroTop.nuts : this._nutsByEquity(this.handEquity, this.filteredHands, nutsMinEquity);
+    villain.nuts = nutsMinEquity === null ? villainTop.nuts : this._nutsByEquity(villainEquity, villainHands, nutsMinEquity);
     return { bands, hero, villain };
+  }
+
+  // Effective nuts by equity: hands with at least minEquity against the other range
+  _nutsByEquity(equityByHand, hands, minEquity) {
+    const live = hands.filter(hand => equityByHand[hand] && equityByHand[hand].equity !== null);
+    if (live.length === 0) return { count: 0, share: null };
+    const count = live.filter(hand => equityByHand[hand].equity >= minEquity).length;
+    return { count, share: count / live.length };
   }
 
   /**
@@ -1583,11 +1600,18 @@ export class RangeManager {
    * Ties at the cut-off count as top end. null preflop (no board to rank on) or with no live combos.
    */
   _cappedFor(hands, otherHands, board, deadCards, topEnd) {
-    if (board.length < 3) return { relative: null, absolute: null };
+    return this._topEndFor(hands, otherHands, board, deadCards, topEnd).capped;
+  }
+
+  // Capping plus effective nuts: the range's combos in the relative top end (strongest topEnd share of both
+  // ranges by made hand), as { count, share } of its live combos. null preflop.
+  _topEndFor(hands, otherHands, board, deadCards, topEnd) {
+    const none = { capped: { relative: null, absolute: null }, nuts: { count: 0, share: null } };
+    if (board.length < 3) return none;
     const blocked = new Set([...board, ...deadCards]);
     const live = list => list.filter(hand => !this._extractCardsFromHand(hand).some(c => blocked.has(c)));
     const mine = live(hands);
-    if (mine.length === 0) return { relative: null, absolute: null };
+    if (mine.length === 0) return none;
     const rankOf = hand => this._rankSync(hand, board).rank;
     const ratioToCap = ratio => Math.max(0, 1 - ratio);
 
@@ -1597,7 +1621,8 @@ export class RangeManager {
       .sort((a, b) => this._compareRankArrays(b.rank, a.rank));
     const relCutoff = all[Math.max(1, Math.ceil(topEnd * all.length - 1e-9)) - 1].rank;
     const relTop = all.filter(x => this._compareRankArrays(x.rank, relCutoff) >= 0);
-    const relative = ratioToCap((relTop.filter(x => x.mine).length / relTop.length) / (mine.length / all.length));
+    const nutCount = relTop.filter(x => x.mine).length;
+    const relative = ratioToCap((nutCount / relTop.length) / (mine.length / all.length));
 
     // Absolute: every combo that can be dealt on this board
     const absKey = `abs-top|${board.join(',')}|${[...deadCards].sort().join(',')}|${topEnd}`;
@@ -1616,7 +1641,7 @@ export class RangeManager {
     }
     const mineInTop = mine.filter(hand => this._compareRankArrays(rankOf(hand), abs.cutoff) >= 0).length / mine.length;
     const absolute = ratioToCap(mineInTop / abs.share);
-    return { relative, absolute };
+    return { capped: { relative, absolute }, nuts: { count: nutCount, share: nutCount / mine.length } };
   }
 
   /**
@@ -1687,8 +1712,10 @@ export class RangeManager {
   }
 
   /**
-   * Range vs range report: both sides' equity, buckets and shape; range advantage (equity difference);
-   * nut advantage (difference in top-band share, as Modern Poker Theory measures it with Strong hands);
+   * Range vs range report: both sides' equity, buckets, shape, capping and effective nuts; advantage, each
+   * hero minus villain: range (equity, Modern Poker Theory's "range vs range equity advantage"), nut (share of
+   * effective nuts, the book's "effective nut hands make up a larger portion of his range"), polarization
+   * (shape.polarized), and the share of each equity band and hand class (positive = hero has more of it);
    * hand classes side by side, exclusive (handClasses, adding up to 1) and overlapping flags (flags), flop,
    * turn or river only; capped (relative and absolute) per side; and the book's flop averages as a reference
    * when the default bands are used.
@@ -1697,14 +1724,18 @@ export class RangeManager {
     const matchup = this._requireMatchup();
     const { bands, board } = matchup;
     const { hero, villain } = await this.buckets();
-    const topBand = bands[0].name;
     const report = {
       board,
       bands,
       hero,
       villain,
-      rangeAdvantage: hero.equity !== null && villain.equity !== null ? hero.equity - villain.equity : null,
-      nutAdvantage: hero.buckets[topBand].share - villain.buckets[topBand].share,
+      advantage: {
+        range: hero.equity !== null && villain.equity !== null ? hero.equity - villain.equity : null,
+        nut: hero.nuts.share !== null && villain.nuts.share !== null ? hero.nuts.share - villain.nuts.share : null,
+        polarization: hero.shape && villain.shape ? hero.shape.polarized - villain.shape.polarized : null,
+        bands: Object.fromEntries(bands.map(band => [band.name, hero.buckets[band.name].share - villain.buckets[band.name].share])),
+        classes: null
+      },
       handClasses: null,
       flags: null,
       reference: bands === BAND_PRESETS.acevedo ? ACEVEDO_FLOP_AVERAGES : null
@@ -1718,6 +1749,9 @@ export class RangeManager {
         heroCount: heroExclusive.classes[name].count,
         villainCount: villainExclusive.classes[name].count
       }]));
+      report.advantage.classes = Object.fromEntries(HAND_CLASSES.map(name => [
+        name, heroExclusive.classes[name].share - villainExclusive.classes[name].share
+      ]));
       const heroClasses = await this.breakdown(board);
       const villainClasses = await this._villainRange().breakdown(board);
       const flags = new Set([...Object.keys(heroClasses.flags), ...Object.keys(villainClasses.flags)]);

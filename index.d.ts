@@ -111,9 +111,11 @@ export interface AgainstOptions extends EquityOptions {
     enough?: Share;
     /** The score a shape needs to be named dominant. Default 0.5. */
     minDominant?: Share;
-    /** The strongest share of combos that counts as the top end for capping. Default 0.05. */
+    /** The strongest share of combos that counts as the top end for capping and effective nuts. Default 0.05. */
     topEnd?: Share;
   };
+  /** minEquity: count hands with at least this equity against the other range as effective nuts, instead of the top end. */
+  nuts?: { minEquity?: Share };
 }
 
 /** The villain, board and bands set by against() / getEquity(). */
@@ -127,6 +129,7 @@ export interface Matchup {
   shapeEnough: number;
   minDominant: number;
   topEnd: number;
+  nutsMinEquity: number | null;
   /** The range at against() time, which later filters choose from. */
   parentHands: Hand[];
 }
@@ -168,6 +171,8 @@ export interface SideSummary {
   shape: Shape | null;
   /** How much of the top end the range is missing, 0 to 1 (null preflop). Describes the top, separate from the shape. */
   capped: Capped;
+  /** Effective nuts: the range's combos in the top end of both ranges (or with nuts.minEquity equity). share null preflop by made hand. */
+  nuts: { count: number; share: number | null };
 }
 
 /**
@@ -220,16 +225,27 @@ export interface ReferenceAverages {
 
 export interface ComparisonReport extends BucketsReport {
   board: Card[];
-  /** Hero equity minus villain equity. */
-  rangeAdvantage: number | null;
-  /** Hero's top-band share minus villain's. */
-  nutAdvantage: number;
+  /** Each hero minus villain. */
+  advantage: Advantage;
   /** Each combo in exactly one class, so each side's shares add up to 1 (null preflop). */
   handClasses: Record<HandClass, SideBySide> | null;
   /** Share of each side holding each poker-extval flag; a combo can hold several (null preflop). Most common first. */
   flags: Record<string, SideBySide> | null;
   /** Modern Poker Theory's flop averages, with the default bands only. */
   reference: ReferenceAverages | null;
+}
+
+export interface Advantage {
+  /** Equity: Modern Poker Theory's "range vs range equity advantage". */
+  range: number | null;
+  /** Share of effective nuts: "the effective nut hands make up a larger portion of his range". null preflop by made hand. */
+  nut: number | null;
+  /** shape.polarized, hero minus villain. */
+  polarization: number | null;
+  /** Share of each equity band; positive = hero has more of it (not necessarily better, e.g. trash). */
+  bands: Record<string, number>;
+  /** Share of each hand class, e.g. air; positive = hero has more of it. null preflop. */
+  classes: Record<HandClass, number> | null;
 }
 
 export interface CompareToReport {

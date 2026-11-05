@@ -2978,8 +2978,19 @@ describe('range vs range analysis', () => {
   describe('compare()', () => {
     it('reports range and nut advantage, shape, hand classes and the reference', async () => {
       const report = await spot.compare();
-      expect(report.rangeAdvantage).toBeCloseTo(81 / 225 - 144 / 225, 10);
-      expect(report.nutAdvantage).toBeCloseTo(0.2 - 0.6, 10);
+      expect(report.advantage.range).toBeCloseTo(81 / 225 - 144 / 225, 10);
+      // Effective nuts: the strongest 5% of both ranges by made hand, here hero's AA sets (3 of 15 combos)
+      expect(report.hero.nuts).toEqual({ count: 3, share: 0.2 });
+      expect(report.villain.nuts).toEqual({ count: 0, share: 0 });
+      expect(report.advantage.nut).toBeCloseTo(0.2, 10);
+      expect(report.advantage.polarization).toBeCloseTo(0.5, 10);
+      // Per band and per class: hero's share minus villain's
+      expect(report.advantage.bands.strong).toBeCloseTo(0.2 - 0.6, 10);
+      expect(report.advantage.bands.trash).toBeCloseTo(0.4, 10);
+      expect(report.advantage.bands.good).toBe(0);
+      expect(report.advantage.classes.pocketPair23).toBeCloseTo(0.4 - 0.8, 10);
+      expect(report.advantage.classes.pocketPair45).toBeCloseTo(0.4, 10);
+      expect(report.advantage.classes.air).toBe(0);
       // Hero T .2 / M .4 / B .4: half polarized (the rest is half air), half linear
       expect(report.hero.shape.polarized).toBeCloseTo(0.5, 10);
       expect(report.hero.shape.linear).toBeCloseTo(0.5, 10);
@@ -3024,6 +3035,22 @@ describe('range vs range analysis', () => {
       const air = (await (await new RangeManager('33').against('88,QQ', river)).compare()).hero;
       expect(air.shape).toMatchObject({ polarized: 0, linear: 0, condensed: 0, dominant: null });
       expect(air.capped).toEqual({ relative: 1, absolute: 1 });
+    });
+
+    it('can define effective nuts by equity instead of the made-hand top end', async () => {
+      // With nuts.minEquity 0.8, villain's QQ and KK (80% and up against hero) count as effective nuts
+      const report = await (await hero.against(villain, river, { nuts: { minEquity: 0.8 } })).compare();
+      expect(report.hero.nuts).toEqual({ count: 3, share: 0.2 });
+      expect(report.villain.nuts).toEqual({ count: 9, share: 0.6 });
+      expect(report.advantage.nut).toBeCloseTo(-0.4, 10);
+    });
+
+    it('has no nut advantage preflop by made hand, but has one by equity', async () => {
+      const byHand = await (await new RangeManager('AA').against('KK', [])).compare();
+      expect(byHand.advantage.nut).toBeNull();
+      expect(byHand.advantage.classes).toBeNull();
+      const byEquity = await (await new RangeManager('AA').against('KK', [], { nuts: { minEquity: 0.75 } })).compare();
+      expect(byEquity.advantage.nut).toBe(1);
     });
 
     it('names no dominant shape below minDominant', async () => {
@@ -3142,8 +3169,14 @@ describe('README range vs range example, as written', () => {
     expect(report.villain.buckets.good.share).toBeCloseTo(0.241, 3);
     expect(report.villain.buckets.weak.share).toBeCloseTo(0.092, 3);
     expect(report.villain.buckets.trash.share).toBeCloseTo(0.598, 3);
-    expect(report.rangeAdvantage).toBeCloseTo(0.200, 3);
-    expect(report.nutAdvantage).toBeCloseTo(0.336, 3);
+    expect(report.advantage.range).toBeCloseTo(0.200, 3);
+    expect(report.advantage.nut).toBeCloseTo(0.015, 3);
+    expect(report.advantage.bands.strong).toBeCloseTo(0.336, 3);
+    expect(report.advantage.bands.trash).toBeCloseTo(-0.503, 3);
+    expect(report.advantage.classes.air).toBeCloseTo(-0.103, 3);
+    expect(report.advantage.polarization).toBeCloseTo(-0.292, 3);
+    expect(report.hero.nuts.count).toBe(9);
+    expect(report.villain.nuts.count).toBe(8);
     // T .405 / M .500 / B .095: mostly linear, a little polarized
     expect(report.hero.shape.linear).toBeCloseTo(0.841, 3);
     expect(report.hero.shape.polarized).toBeCloseTo(0.1505, 4);

@@ -708,8 +708,10 @@ const report = await spot.compare();
 report.hero.equity;               // 0.600
 report.hero.buckets.strong.share; // 0.405  (good 0.243, weak 0.257, trash 0.095)
 report.villain.buckets.strong.share; // 0.069 (good 0.241, weak 0.092, trash 0.598)
-report.rangeAdvantage;            // 0.200: hero equity minus villain equity
-report.nutAdvantage;              // 0.336: hero's strong share minus villain's
+report.advantage.range;           // 0.200: hero equity minus villain equity
+report.advantage.nut;             // 0.015: effective nuts, 6.1% of hero's range vs 4.6% of villain's
+report.advantage.bands.strong;    // 0.336: hero has far more Strong hands...
+report.advantage.bands.trash;     // -0.503: ...and far less trash
 report.hero.shape;                // { polarized: 0.15, linear: 0.84, condensed: 0, dominant: 'linear', ... }
 report.hero.capped;               // { relative: 0, absolute: 0 }: the opener has its share of the nuts
 report.handClasses.air;           // { hero: 0.081, villain: 0.184, heroCount: 12, villainCount: 32 }
@@ -737,8 +739,7 @@ The analysis only covers hands that can be dealt. Run `against()` again after ch
 
 `compare()` adds to that:
 
-- `rangeAdvantage`: your equity minus villain's.
-- `nutAdvantage`: your top-band share minus villain's. The book measures nut advantage by the share of Strong hands.
+- `advantage`: range, nut and polarization advantage, and one per equity band and hand class; see [Advantages](#advantages).
 - `handClasses`: each range split into hand classes, every combo in exactly one, so each side adds up to 1: sets, top pair, flush draws, air and so on (see [`handClasses()`](#handclassesboardcards-options)). `null` preflop.
 - `flags`: the share of each range holding each poker-extval flag (made hands, pair positions, draws, overcards). A combo can hold several, so these overlap; most common first. `null` preflop.
 - `reference`: with the default bands, the book's averages over all 1,755 flops for a big blind defending against an in-position opener with 20-40bb ranges: BB strong 7% / good 25% / weak 23% / trash about 45%, opener 22% / 43% / 29% / 6% (PDF p. 600). A point of comparison, not a target.
@@ -783,6 +784,24 @@ Limits worth knowing:
 - With few combos, single hands move the shares a lot; `combos` is reported next to the shape.
 - The book says both that "a condensed range is capped" and, in its next example, that a condensed range can hold very strong hands and not be capped. Here condensed falls as strong hands appear, and capped is scored on its own.
 - The book's "merged" describes betting the polarized and condensed parts together with one small size, a strategy rather than a range shape, so it has no score.
+
+#### Advantages
+
+`compare().advantage` gives each advantage as hero minus villain, so a positive number favours (or, for weak hands, describes) hero:
+
+| Advantage | Measure | Modern Poker Theory |
+| --- | --- | --- |
+| `range` | Equity: hero's minus villain's | "Having the range vs range equity advantage can help the weaker hands in your range realize their equity" (Ch. 1). Its example: IP's 62% to the BB's 38% on A76r |
+| `nut` | Share of the range that is effective nuts | "A player has the nut advantage if the effective nut hands make up a larger portion of his range than the Villain's range" (Glossary) |
+| `polarization` | `shape.polarized`, hero's minus villain's | Its toy games raise bet sizes "as Hero's range gains the polarization advantage" (Ch. 10); the measure is derived, not given by the book |
+| `bands.<band>` | Share of each equity band (`strong`, `good`, `weak`, `trash`) | The equity bucket comparison of Ch. 10, e.g. "the BB has 8% strong hands and IP has a staggering 31%" on A76r |
+| `classes.<class>` | Share of each [hand class](#handclassesboardcards-options), e.g. `classes.air` | The range breakdowns of Ch. 1 and Ch. 12 |
+
+For bands and classes the number is a difference in share, not a judgement: an air advantage of 0.2 means hero holds 20 percentage points more air than villain, which means more bluff candidates and fewer hands that can call.
+
+**Effective nuts.** The book defines them as "a poker hand that is not the actual nuts but is strong enough that it should be played as if it were the nuts. For example, 7♣7♥ is the effective nuts on 8♥7♦2♦", with no numeric threshold. Here they are the [top end](#capping) of both ranges: the strongest 5% of their combos by made hand, the same hands relative capping looks at, so a fully capped range has no effective nuts. Each side reports them as `nuts: { count, share }`. To use an equity cut-off instead, pass `nuts: { minEquity: 0.9 }` to `against()`: effective nuts are then the hands with at least that equity against the other range, which also works preflop.
+
+This is narrower than the strong band. On A76r the opener has a large strong-band advantage (any ace is about 85% against the defender's range) but almost no nut advantage, because both ranges hold sets.
 
 #### Capping
 

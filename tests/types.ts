@@ -41,7 +41,11 @@ async function check(): Promise<void> {
   const spot: RangeManager = await rm.against('QQ+,AK', board, { bands: 'quartiles', iterations: 1000 });
   const goodSpades: RangeManager = await rm.against('QQ+', board).bucket('good', 'weak').hasSuit('s');
   const report: ComparisonReport = await spot.compare();
-  const nut: number = report.nutAdvantage;
+  const nut: number | null = report.advantage.nut;
+  const airAdvantage: number | undefined = report.advantage.classes?.air;
+  const strongAdvantage: number | undefined = report.advantage.bands.strong;
+  const nutShare: number | null = report.hero.nuts.share;
+  await rm.against('QQ+', board, { nuts: { minEquity: 0.9 } });
   const polarized: number | undefined = report.hero.shape?.polarized;
   const shape: Shape | null = report.villain.shape;
   const dominant: Shape['dominant'] | undefined = report.hero.shape?.dominant;
@@ -76,7 +80,7 @@ async function check(): Promise<void> {
   const size: number = bottom.size();
   void [keyCards, middling, uses, total, byHand, above, between, ranked, pairs, unblocked, notation, size,
     asPromise, chainedRange, pendingSize, pendingEquity, stored, storedTotal,
-    goodSpades, nut, polarized, shape, dominant, capped, absolute, air, topPairFlag, setShare, pendingClasses, strongShare, distance, math, defending, bluffs, bands, custom, pendingReport];
+    goodSpades, nut, airAdvantage, strongAdvantage, nutShare, polarized, shape, dominant, capped, absolute, air, topPairFlag, setShare, pendingClasses, strongShare, distance, math, defending, bluffs, bands, custom, pendingReport];
 }
 
 void check;
