@@ -2691,6 +2691,22 @@ describe('RangeManager with poker-extval 5', () => {
       expect(ranked).toHaveLength(12);
     });
 
+    it('rankHands() values order hands exactly as the rank arrays do', async () => {
+      const turn = ['Kh', '9s', '4d', '4c'];
+      const ranked = await new RangeManager('22+,A2s+,K9s+,QTs+,JTs,ATo+,KJo+').rankHands(turn);
+      const compare = (a, b) => {
+        for (let i = 0; i < Math.max(a.length, b.length); i++) {
+          const diff = (a[i] ?? -1) - (b[i] ?? -1);
+          if (diff !== 0) return diff;
+        }
+        return 0;
+      };
+      for (let i = 1; i < ranked.length; i++) {
+        expect(Math.sign(ranked[i - 1].value - ranked[i].value)).toBe(Math.sign(compare(ranked[i - 1].rank, ranked[i].rank)));
+      }
+      expect(ranked[0].category).toBe('isFourOfAKind'); // 44 on a 44 board
+    });
+
     it('strongest() and weakest() take a share of the range', async () => {
       const rm = new RangeManager('KK,AA,22');
       expect((await rm.strongest('20%', flop)).toNotation()).toBe('KK');

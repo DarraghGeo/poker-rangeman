@@ -647,7 +647,7 @@ These need a board of 3 to 5 cards and take `options` `{ street }`. Hands that s
 
 Every hand in the range, strongest first, by made hand (draws do not count).
 
-**Returns:** `Promise<Array<{ hand, category, strength, rank }>>`: `category` is the made hand flag (e.g. `'isFlush'`), `strength` 10 (royal flush) down to 1 (high card), and `rank` an array that compares element by element (higher wins).
+**Returns:** `Promise<Array<{ hand, category, strength, rank, value, weight }>>`: `category` is the made hand flag (e.g. `'isFlush'`), `strength` 10 (royal flush) down to 1 (high card), `rank` an array that compares element by element (higher wins), and `value` the same order as one integer from poker-bitvaljs's evaluator (higher wins, equal values tie). Hands are sorted, and `strongest()`, `weakest()` and capping rank them, by `value`.
 
 #### `strongest(portion, boardCards, options?)` / `weakest(portion, boardCards, options?)`
 

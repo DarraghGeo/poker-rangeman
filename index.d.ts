@@ -97,6 +97,8 @@ export interface RankedHand {
   strength: number;
   /** [strength, ...tiebreak ranks]; compare element by element, the higher array wins. */
   rank: number[];
+  /** The same order as one integer (poker-bitvaljs's evaluateSuits): higher beats lower, equal values tie. */
+  value: number;
   /** The hand's combo weight (1 unless weighted). */
   weight: number;
 }
