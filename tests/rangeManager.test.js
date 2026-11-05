@@ -2995,7 +2995,9 @@ describe('range vs range analysis', () => {
 
     it('leaves out the reference with custom bands and hand classes preflop', async () => {
       expect((await hero.against(villain, river, { bands: 'quartiles' }).compare()).reference).toBeNull();
-      const preflop = await new RangeManager('AA').against('KK', [], { iterations: 200 }).compare();
+      // Preflop equity is a Monte Carlo estimate: AA is about 82% against KK, so with the default 10,000
+      // samples per matchup every AA combo stays well clear of the 75% Strong cut-off
+      const preflop = await new RangeManager('AA').against('KK', []).compare();
       expect(preflop.handClasses).toBeNull();
       expect(preflop.hero.buckets.strong.share).toBe(1);
     });
