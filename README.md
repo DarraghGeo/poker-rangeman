@@ -709,7 +709,7 @@ report.hero.equity;               // 0.600
 report.hero.buckets.strong.share; // 0.405  (good 0.243, weak 0.257, trash 0.095)
 report.villain.buckets.strong.share; // 0.069 (good 0.241, weak 0.092, trash 0.598)
 report.advantage.range;           // 0.200: hero equity minus villain equity
-report.advantage.nut;             // 0.015: effective nuts, 6.1% of hero's range vs 4.6% of villain's
+report.advantage.nut;             // 0.026: effective nuts (90%+ equity), 6.1% of hero's range vs 3.4% of villain's
 report.advantage.bands.strong;    // 0.336: hero has far more Strong hands...
 report.advantage.bands.trash;     // -0.503: ...and far less trash
 report.hero.shape;                // { polarized: 0.15, linear: 0.84, condensed: 0, dominant: 'linear', ... }
@@ -799,9 +799,9 @@ Limits worth knowing:
 
 For bands and classes the number is a difference in share, not a judgement: an air advantage of 0.2 means hero holds 20 percentage points more air than villain, which means more bluff candidates and fewer hands that can call.
 
-**Effective nuts.** The book defines them as "a poker hand that is not the actual nuts but is strong enough that it should be played as if it were the nuts. For example, 7♣7♥ is the effective nuts on 8♥7♦2♦", with no numeric threshold. Here they are the [top end](#capping) of both ranges: the strongest 5% of their combos by made hand, the same hands relative capping looks at, so a fully capped range has no effective nuts. Each side reports them as `nuts: { count, share }`. To use an equity cut-off instead, pass `nuts: { minEquity: 0.9 }` to `against()`: effective nuts are then the hands with at least that equity against the other range, which also works preflop.
+**Effective nuts** are the hands with **at least 90% equity against the other range**. The book defines them as "a poker hand that is not the actual nuts but is strong enough that it should be played as if it were the nuts. For example, 7♣7♥ is the effective nuts on 8♥7♦2♦", with no numeric threshold. Each side reports them as `nuts: { count, share }`; change the threshold with `against(villain, board, { nuts: { minEquity: 0.85 } })`. Because they are measured by equity, they reflect vulnerability (a set on a wet board can fall short) and work preflop too. They are separate from [capping](#capping), which looks at made hands.
 
-This is narrower than the strong band. On A76r the opener has a large strong-band advantage (any ace is about 85% against the defender's range) but almost no nut advantage, because both ranges hold sets.
+This is narrower than the strong band (75%+). On A76r the opener has a large strong-band advantage (any ace is about 85% against the defender's range) but little nut advantage: its effective nuts are its sets (AA, 77, 66, 6.1% of the range) against the defender's 77 and 66 sets (3.4%).
 
 #### Capping
 

@@ -2979,7 +2979,8 @@ describe('range vs range analysis', () => {
     it('reports range and nut advantage, shape, hand classes and the reference', async () => {
       const report = await spot.compare();
       expect(report.advantage.range).toBeCloseTo(81 / 225 - 144 / 225, 10);
-      // Effective nuts: the strongest 5% of both ranges by made hand, here hero's AA sets (3 of 15 combos)
+      // Effective nuts: 90%+ equity against the other range, here hero's AA sets (3 of 15 combos, 100%);
+      // villain's QQ and KK have 80%
       expect(report.hero.nuts).toEqual({ count: 3, share: 0.2 });
       expect(report.villain.nuts).toEqual({ count: 0, share: 0 });
       expect(report.advantage.nut).toBeCloseTo(0.2, 10);
@@ -3037,20 +3038,21 @@ describe('range vs range analysis', () => {
       expect(air.capped).toEqual({ relative: 1, absolute: 1 });
     });
 
-    it('can define effective nuts by equity instead of the made-hand top end', async () => {
-      // With nuts.minEquity 0.8, villain's QQ and KK (80% and up against hero) count as effective nuts
+    it('sets the effective nuts equity with nuts.minEquity', async () => {
+      // With nuts.minEquity 0.8, villain's QQ and KK (80% against hero) count as effective nuts
       const report = await (await hero.against(villain, river, { nuts: { minEquity: 0.8 } })).compare();
       expect(report.hero.nuts).toEqual({ count: 3, share: 0.2 });
       expect(report.villain.nuts).toEqual({ count: 9, share: 0.6 });
       expect(report.advantage.nut).toBeCloseTo(-0.4, 10);
     });
 
-    it('has no nut advantage preflop by made hand, but has one by equity', async () => {
-      const byHand = await (await new RangeManager('AA').against('KK', [])).compare();
-      expect(byHand.advantage.nut).toBeNull();
-      expect(byHand.advantage.classes).toBeNull();
-      const byEquity = await (await new RangeManager('AA').against('KK', [], { nuts: { minEquity: 0.75 } })).compare();
-      expect(byEquity.advantage.nut).toBe(1);
+    it('measures effective nuts preflop too', async () => {
+      // AA is about 82% against KK: not effective nuts at 90%, effective nuts at 75%
+      const strict = await (await new RangeManager('AA').against('KK', [])).compare();
+      expect(strict.advantage.nut).toBe(0);
+      expect(strict.advantage.classes).toBeNull();
+      const lenient = await (await new RangeManager('AA').against('KK', [], { nuts: { minEquity: 0.75 } })).compare();
+      expect(lenient.advantage.nut).toBe(1);
     });
 
     it('names no dominant shape below minDominant', async () => {
@@ -3170,13 +3172,14 @@ describe('README range vs range example, as written', () => {
     expect(report.villain.buckets.weak.share).toBeCloseTo(0.092, 3);
     expect(report.villain.buckets.trash.share).toBeCloseTo(0.598, 3);
     expect(report.advantage.range).toBeCloseTo(0.200, 3);
-    expect(report.advantage.nut).toBeCloseTo(0.015, 3);
+    expect(report.advantage.nut).toBeCloseTo(0.026, 3);
     expect(report.advantage.bands.strong).toBeCloseTo(0.336, 3);
     expect(report.advantage.bands.trash).toBeCloseTo(-0.503, 3);
     expect(report.advantage.classes.air).toBeCloseTo(-0.103, 3);
     expect(report.advantage.polarization).toBeCloseTo(-0.292, 3);
+    // 90%+ equity: the opener's AA, 77 and 66 sets; the defender's 77 and 66 sets
     expect(report.hero.nuts.count).toBe(9);
-    expect(report.villain.nuts.count).toBe(8);
+    expect(report.villain.nuts.count).toBe(6);
     // T .405 / M .500 / B .095: mostly linear, a little polarized
     expect(report.hero.shape.linear).toBeCloseTo(0.841, 3);
     expect(report.hero.shape.polarized).toBeCloseTo(0.1505, 4);

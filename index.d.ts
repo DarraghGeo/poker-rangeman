@@ -111,10 +111,10 @@ export interface AgainstOptions extends EquityOptions {
     enough?: Share;
     /** The score a shape needs to be named dominant. Default 0.5. */
     minDominant?: Share;
-    /** The strongest share of combos that counts as the top end for capping and effective nuts. Default 0.05. */
+    /** The strongest share of combos that counts as the top end for capping. Default 0.05. */
     topEnd?: Share;
   };
-  /** minEquity: count hands with at least this equity against the other range as effective nuts, instead of the top end. */
+  /** minEquity: the equity against the other range a hand needs to count as effective nuts. Default 0.9. */
   nuts?: { minEquity?: Share };
 }
 
@@ -129,7 +129,7 @@ export interface Matchup {
   shapeEnough: number;
   minDominant: number;
   topEnd: number;
-  nutsMinEquity: number | null;
+  nutsMinEquity: number;
   /** The range at against() time, which later filters choose from. */
   parentHands: Hand[];
 }
@@ -171,7 +171,7 @@ export interface SideSummary {
   shape: Shape | null;
   /** How much of the top end the range is missing, 0 to 1 (null preflop). Describes the top, separate from the shape. */
   capped: Capped;
-  /** Effective nuts: the range's combos in the top end of both ranges (or with nuts.minEquity equity). share null preflop by made hand. */
+  /** Effective nuts: the range's combos with at least nuts.minEquity (default 90%) equity against the other range. */
   nuts: { count: number; share: number | null };
 }
 
@@ -238,7 +238,7 @@ export interface ComparisonReport extends BucketsReport {
 export interface Advantage {
   /** Equity: Modern Poker Theory's "range vs range equity advantage". */
   range: number | null;
-  /** Share of effective nuts: "the effective nut hands make up a larger portion of his range". null preflop by made hand. */
+  /** Share of effective nuts (90%+ equity): "the effective nut hands make up a larger portion of his range". */
   nut: number | null;
   /** shape.polarized, hero minus villain. */
   polarization: number | null;
