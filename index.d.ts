@@ -95,6 +95,122 @@ export interface RankedHand {
   rank: number[];
 }
 
+/** An equity band: hands with at least `min` equity against villain (and below the next band up). */
+export interface Band {
+  name: string;
+  min: number;
+}
+
+/** 'acevedo' (default: Strong >= 75%, Good >= 50%, Weak >= 33%, Trash), 'quartiles', or custom bands. */
+export type BandsOption = 'acevedo' | 'quartiles' | Array<{ name: string; min: Share }>;
+
+export interface AgainstOptions extends EquityOptions {
+  bands?: BandsOption;
+}
+
+/** The villain, board and bands set by against() / getEquity(). */
+export interface Matchup {
+  villainHands: Hand[];
+  board: Card[];
+  deadCards: Card[];
+  iterations: number;
+  key: string;
+  bands: Band[];
+}
+
+export interface BucketStats {
+  count: number;
+  /** Share of the side's live combos (those that can be dealt). */
+  share: number;
+  combos: Hand[];
+}
+
+/** Heuristic shape from bucket shares; see README "Range vs range analysis". */
+export interface Shape {
+  label: 'polarized' | 'linear' | 'condensed' | 'mixed';
+  capped: boolean;
+  /** Top + bottom band share minus the middle bands, from -1 to 1. */
+  polarization: number;
+}
+
+export interface SideSummary {
+  combos: number;
+  equity: number | null;
+  buckets: Record<string, BucketStats>;
+  shape: Shape;
+}
+
+export interface BucketsReport {
+  bands: Band[];
+  hero: SideSummary;
+  villain: SideSummary;
+}
+
+export interface ReferenceAverages {
+  source: string;
+  bigBlind: Record<'strong' | 'good' | 'weak' | 'trash', number>;
+  inPosition: Record<'strong' | 'good' | 'weak' | 'trash', number>;
+}
+
+export interface ComparisonReport extends BucketsReport {
+  board: Card[];
+  /** Hero equity minus villain equity. */
+  rangeAdvantage: number | null;
+  /** Hero's top-band share minus villain's. */
+  nutAdvantage: number;
+  /** Share of each side holding each flag (null preflop), most common first. */
+  handClasses: Record<string, { hero: number; villain: number; heroCount: number; villainCount: number }> | null;
+  /** Modern Poker Theory's flop averages, with the default bands only. */
+  reference: ReferenceAverages | null;
+}
+
+export interface CompareToReport {
+  combos: { range: number; reference: number };
+  common: Hand[];
+  /** In the reference only. */
+  missing: Hand[];
+  /** In this range only. */
+  extra: Hand[];
+  notation: { common: string; missing: string; extra: string };
+  /** common / union, 0 to 1. */
+  overlap: number;
+  /** The following need against() first, otherwise null. */
+  equity: { range: number | null; reference: number | null } | null;
+  buckets: { range: SideSummary; reference: SideSummary } | null;
+  /** Earth mover's distance between the two equity distributions: 0 = same shape. */
+  distance: number | null;
+}
+
+export interface BetOptions {
+  pot: number;
+  bet: number;
+}
+
+export interface BettingMath {
+  /** bet / (pot + bet): how often a bluff must work. */
+  alpha: number;
+  /** pot / (pot + bet). */
+  mdf: number;
+  /** bet / (pot + 2 bet): equity a call needs. */
+  potOdds: number;
+  /** Bluff share of a balanced river betting range (equals potOdds). */
+  bluffShare: number;
+  /** Value combos per bluff: (pot + bet) / bet. */
+  valueToBluff: number;
+}
+
+export interface DefendOptions extends BetOptions {
+  /** 'equity' (default): equity x realization >= pot odds. 'mdf': the strongest MDF share. */
+  by?: 'equity' | 'mdf';
+  /** Default 1. Modern Poker Theory: about 0.9 out of position, 1.1 in position. */
+  realization?: number;
+}
+
+export interface BluffOptions extends BetOptions {
+  /** Band(s) counted as value. Default: the top band. */
+  value?: string | string[];
+}
+
 export interface StreetOptions {
   street?: Street | null;
 }
@@ -116,7 +232,8 @@ export interface EvaluationQuery {
 /** Methods that return a range; on a RangeQuery they queue another step and return a RangeQuery. */
 type ChainedRangeMethods = {
   [K in 'exclude' | 'include' | 'intersect' | 'hasSuit' | 'suitedOf' | 'setDeadCards' | 'hasKicker' | 'hasKeyCard'
-    | 'makesHand' | 'hitsHand' | 'hitsHandBoth' | 'getEquity' | 'strongest' | 'weakest']:
+    | 'makesHand' | 'hitsHand' | 'hitsHandBoth' | 'getEquity' | 'strongest' | 'weakest'
+    | 'against' | 'bucket' | 'defend' | 'bluffCandidates']:
     (...args: Parameters<RangeManager[K]>) => RangeQuery;
 };
 
@@ -124,7 +241,8 @@ type ChainedRangeMethods = {
 type ChainedValueMethods = {
   [K in 'toArray' | 'getHands' | 'size' | 'contains' | 'toNotation' | 'getKeyCards' | 'normalizeNotation'
     | 'handContainsDeadCard' | 'handHasSuit' | 'handSuitedOf' | 'evaluateHand' | 'getObject'
-    | 'equity' | 'equityByHand' | 'rankHands' | 'breakdown' | 'blockers']:
+    | 'equity' | 'equityByHand' | 'rankHands' | 'breakdown' | 'blockers'
+    | 'bandsByHand' | 'buckets' | 'compare' | 'compareTo' | 'bettingMath']:
     (...args: Parameters<RangeManager[K]>) => Promise<Awaited<ReturnType<RangeManager[K]>>>;
 };
 
@@ -157,8 +275,10 @@ export class RangeManager {
   lastHandStrength: Flag[] | null;
   lastStrict: boolean | null;
   lastStreet: Street | null;
-  /** Per-hand equity stored by getEquity(), or null. */
+  /** Per-hand equity stored by getEquity() / against(), or null. */
   handEquity: Record<Hand, EquityResult> | null;
+  /** The villain, board and bands set by against() / getEquity(), or null. */
+  matchup: Matchup | null;
 
   normalizeNotation(notation: string): string;
 
@@ -185,7 +305,7 @@ export class RangeManager {
 
   // Equity (board: [] preflop, or 3-5 cards)
   /** Runs equity once per hand and stores it on the returned range for the equity filters. */
-  getEquity(villain: Villain, boardCards?: Card[], options?: EquityOptions): RangeQuery;
+  getEquity(villain: Villain, boardCards?: Card[], options?: AgainstOptions): RangeQuery;
   /** With no arguments, totals the equity stored by getEquity(). */
   equity(villain?: Villain, boardCards?: Card[], options?: EquityOptions): Promise<EquityResult>;
   /** With no arguments, the equity stored by getEquity(). */
@@ -198,6 +318,25 @@ export class RangeManager {
   equityBelow(max: Share, villain: Villain, boardCards?: Card[], options?: EquityOptions): RangeQuery;
   equityBetween(min: Share, max: Share): RangeManager;
   equityBetween(min: Share, max: Share, villain: Villain, boardCards?: Card[], options?: EquityOptions): RangeQuery;
+
+  // Range vs range analysis
+  /** Sets villain and board (and equity bands), runs hero's equity once. Same as getEquity(). */
+  against(villain: Villain, boardCards?: Card[], options?: AgainstOptions): RangeQuery;
+  /** Each hand's band against villain (null when it cannot be dealt). */
+  bandsByHand(): Record<Hand, string | null>;
+  /** Hands in the named band(s). */
+  bucket(...names: Array<string | string[]>): RangeManager;
+  /** Band shares, equity and shape for both sides. */
+  buckets(): Promise<BucketsReport>;
+  /** Full range vs range report. */
+  compare(): Promise<ComparisonReport>;
+  /** Compare with a reference range; equity, buckets and distance after against(). */
+  compareTo(reference: RangeInput | RangeManager): Promise<CompareToReport>;
+  bettingMath(options: BetOptions): BettingMath;
+  /** As the defender facing villain's bet: the hands that continue. */
+  defend(options: DefendOptions): RangeManager;
+  /** As the bettor: bluffs to pair with the value hands at this bet size. */
+  bluffCandidates(options: BluffOptions): RangeQuery;
 
   // Strength, breakdown and blockers (board: 3-5 cards)
   rankHands(boardCards: Card[], options?: StreetOptions): Promise<RankedHand[]>;

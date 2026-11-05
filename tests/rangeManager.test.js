@@ -2895,3 +2895,224 @@ describe('chaining async steps', () => {
     });
   });
 });
+
+// ============================================================================
+// RANGE VS RANGE ANALYSIS
+// ============================================================================
+
+describe('range vs range analysis', () => {
+  // On this river every equity is exact. Hero AA (3 combos, set of aces) beats everything; TT beats 88 and
+  // loses to QQ and KK (6 of 15 villain combos: 40%); 33 loses to everything. Villain 88 beats 33 (40%);
+  // QQ and KK beat TT and 33 (80%). No combos share cards, so all 225 matchups count.
+  const river = ['As', 'Kd', '7c', '4h', '2s'];
+  const hero = new RangeManager('AA,TT,33');
+  const villain = '88,QQ,KK';
+  let spot;
+  beforeAll(async () => { spot = await hero.against(villain, river); });
+
+  describe('against()', () => {
+    it('stores the matchup and hero equity, like getEquity()', async () => {
+      expect(spot.matchup.board).toEqual(river);
+      expect(spot.matchup.bands.map(b => b.name)).toEqual(['strong', 'good', 'weak', 'trash']);
+      expect(spot.handEquity.AcAd.equity).toBe(1);
+      expect(spot.handEquity.TcTd.equity).toBeCloseTo(0.4, 10);
+      expect((await hero.getEquity(villain, river)).matchup.villainHands).toEqual(spot.matchup.villainHands);
+    });
+
+    it('uses the Modern Poker Theory bands by default: 75 / 50 / 33', () => {
+      expect(spot.matchup.bands).toEqual([
+        { name: 'strong', min: 0.75 }, { name: 'good', min: 0.5 }, { name: 'weak', min: 0.33 }, { name: 'trash', min: 0 }
+      ]);
+    });
+
+    it('accepts the quartiles preset and custom bands', async () => {
+      expect((await hero.against(villain, river, { bands: 'quartiles' })).matchup.bands[2]).toEqual({ name: 'weak', min: 0.25 });
+      const custom = await hero.against(villain, river, { bands: [{ name: 'rest', min: 0 }, { name: 'value', min: '70%' }] });
+      expect(custom.matchup.bands).toEqual([{ name: 'value', min: 0.7 }, { name: 'rest', min: 0 }]);
+      expect(custom.bucket('value').toNotation()).toBe('AA');
+    });
+
+    it('rejects invalid bands', async () => {
+      await expect(hero.against(villain, river, { bands: 'gto' })).rejects.toThrow('Unknown bands preset');
+      await expect(hero.against(villain, river, { bands: [{ name: 'a', min: 0.5 }] })).rejects.toThrow('start at 0');
+      await expect(hero.against(villain, river, { bands: [{ name: 'a', min: 0 }, { name: 'a', min: 0.5 }] })).rejects.toThrow('unique');
+      await expect(hero.against()).rejects.toThrow('villain');
+    });
+
+    it('is cleared by setDeadCards()', () => {
+      expect(() => spot.setDeadCards(['9c']).bucket('weak')).toThrow('against(villain, board)');
+    });
+  });
+
+  describe('bands and buckets', () => {
+    it('bandsByHand() labels each hand', () => {
+      const bands = spot.bandsByHand();
+      expect(bands.AcAd).toBe('strong');
+      expect(bands.TcTd).toBe('weak');
+      expect(bands['3c3d']).toBe('trash');
+    });
+
+    it('bucket() filters by band and chains', async () => {
+      expect(spot.bucket('weak').toNotation()).toBe('TT');
+      expect(spot.bucket('strong', 'trash').toNotation()).toBe('AA,33');
+      expect(spot.bucket(['strong']).size()).toBe(3);
+      expect(await hero.against(villain, river).bucket('weak').hasSuit('s').size()).toBe(3);
+      expect(() => spot.bucket('best')).toThrow('Unknown band');
+      expect(() => spot.bucket()).toThrow('at least one');
+      expect(() => hero.bucket('weak')).toThrow('against(villain, board)');
+    });
+
+    it('buckets() gives both sides, with equities that add up to 100%', async () => {
+      const { hero: h, villain: v } = await spot.buckets();
+      expect(h.combos).toBe(15);
+      expect(h.buckets.strong.share).toBeCloseTo(0.2, 10);
+      expect(h.buckets.weak.share).toBeCloseTo(0.4, 10);
+      expect(h.buckets.trash.share).toBeCloseTo(0.4, 10);
+      expect(v.buckets.strong.share).toBeCloseTo(0.6, 10);
+      expect(v.buckets.weak.combos).toHaveLength(6);
+      expect(h.equity).toBeCloseTo(81 / 225, 10);
+      expect(h.equity + v.equity).toBeCloseTo(1, 10);
+    });
+  });
+
+  describe('compare()', () => {
+    it('reports range and nut advantage, shape, hand classes and the reference', async () => {
+      const report = await spot.compare();
+      expect(report.rangeAdvantage).toBeCloseTo(81 / 225 - 144 / 225, 10);
+      expect(report.nutAdvantage).toBeCloseTo(0.2 - 0.6, 10);
+      expect(report.hero.shape).toEqual({ label: 'polarized', capped: false, polarization: expect.any(Number) });
+      expect(report.hero.shape.polarization).toBeCloseTo(0.2, 10);
+      expect(report.villain.shape.label).toBe('linear');
+      expect(report.handClasses.isThreeOfAKind).toEqual({ hero: 0.2, villain: 0.2, heroCount: 3, villainCount: 3 });
+      expect(report.reference.bigBlind.strong).toBe(0.07);
+      expect(report.reference.source).toMatch(/Modern Poker Theory/);
+    });
+
+    it('labels condensed and capped ranges', async () => {
+      const condensed = await new RangeManager('TT').against('88,QQ', river);
+      expect((await condensed.compare()).hero.shape).toMatchObject({ label: 'condensed', capped: true });
+    });
+
+    it('leaves out the reference with custom bands and hand classes preflop', async () => {
+      expect((await hero.against(villain, river, { bands: 'quartiles' }).compare()).reference).toBeNull();
+      const preflop = await new RangeManager('AA').against('KK', [], { iterations: 200 }).compare();
+      expect(preflop.handClasses).toBeNull();
+      expect(preflop.hero.buckets.strong.share).toBe(1);
+    });
+  });
+
+  describe('compareTo()', () => {
+    it('compares combos without a matchup', async () => {
+      const report = await hero.compareTo('AA,KK');
+      expect(report.common).toHaveLength(6);
+      expect(report.missing).toHaveLength(6);
+      expect(report.extra).toHaveLength(12);
+      expect(report.notation).toEqual({ common: 'AA', missing: 'KK', extra: 'TT,33' });
+      expect(report.overlap).toBeCloseTo(6 / 24, 10);
+      expect(report.distance).toBeNull();
+    });
+
+    it('compares equity, buckets and distance against the same villain after against()', async () => {
+      const same = await spot.compareTo(hero);
+      expect(same.distance).toBe(0);
+      const report = await spot.compareTo('AA');
+      expect(report.equity.reference).toBe(1);
+      expect(report.buckets.reference.buckets.strong.share).toBe(1);
+      // Hero: 20% at 1.0, 40% at 0.4, 40% at 0; reference: all at 1.0
+      expect(report.distance).toBeCloseTo(0.4 * 0.6 + 0.4 * 1, 10);
+    });
+  });
+
+  describe('betting math', () => {
+    it('bettingMath() gives alpha, MDF, pot odds and the value to bluff ratio', () => {
+      expect(spot.bettingMath({ pot: 10, bet: 10 })).toEqual({ alpha: 0.5, mdf: 0.5, potOdds: 1 / 3, bluffShare: 1 / 3, valueToBluff: 2 });
+      expect(() => spot.bettingMath({ pot: 10 })).toThrow('bet must be a positive number');
+    });
+
+    it('defend() keeps hands with enough equity, scaled by realization', () => {
+      expect(spot.defend({ pot: 10, bet: 5 }).toNotation()).toBe('AA,TT');
+      expect(spot.defend({ pot: 10, bet: 5, realization: 0.6 }).toNotation()).toBe('AA');
+      expect(() => spot.defend({ pot: 10, bet: 5, by: 'gto' })).toThrow('Unknown defend method');
+    });
+
+    it("defend({ by: 'mdf' }) keeps the strongest MDF share, ties included", () => {
+      // MDF at 1/4 pot is 80%: 12 of 15 combos, so the cutoff falls inside the 33s and keeps them all
+      expect(spot.defend({ pot: 10, bet: 2.5, by: 'mdf' }).size()).toBe(15);
+      // MDF at 4x pot is 20%: the 3 AA combos
+      expect(spot.defend({ pot: 10, bet: 40, by: 'mdf' }).toNotation()).toBe('AA');
+    });
+
+    it('bluffCandidates() picks value x alpha bluffs from the weakest hands, and chains', async () => {
+      const bluffs = await spot.bluffCandidates({ pot: 10, bet: 10 });
+      expect(bluffs.size()).toBe(2); // 3 strong combos x alpha 0.5, rounded
+      expect(bluffs.toArray().every(hand => hand.startsWith('3'))).toBe(true);
+      const withGood = await hero.against(villain, river).bluffCandidates({ pot: 10, bet: 10, value: ['strong', 'weak'] });
+      expect(withGood.size()).toBe(5);
+      await expect(spot.bluffCandidates({ pot: 10, bet: 10, value: 'best' })).rejects.toThrow('Unknown band');
+    });
+
+    it('bluffCandidates() prefers bluffs that block villain\'s continuing range', async () => {
+      // Villain continues with QQ; of the hero trash hands, Qx hands block it
+      const bettor = await new RangeManager('AA,Q3s,J3s').against('QQ,88', ['As', 'Kd', '7c', '4h', '2s']);
+      const bluffs = await bettor.bluffCandidates({ pot: 10, bet: 10 });
+      expect(bluffs.toArray().every(hand => hand.startsWith('Q'))).toBe(true);
+    });
+  });
+});
+
+describe('README range vs range example, as written', () => {
+  const opener = new RangeManager('66+,A9s+,KTs+,QTs+,JTs,T9s,ATo+,KJo+');
+  const defender = '22-88,A2s-A8s,K9s,Q9s+,J9s+,T8s+,97s+,87s,76s,A9o-AJo,KTo-KQo,QJo';
+  const flop = ['Ad', '7c', '6h'];
+  let spot;
+  beforeAll(async () => { spot = await opener.against(defender, flop); });
+
+  it('compare()', async () => {
+    const report = await spot.compare();
+    expect(report.hero.equity).toBeCloseTo(0.600, 3);
+    expect(report.hero.buckets.strong.share).toBeCloseTo(0.405, 3);
+    expect(report.hero.buckets.good.share).toBeCloseTo(0.243, 3);
+    expect(report.hero.buckets.weak.share).toBeCloseTo(0.257, 3);
+    expect(report.hero.buckets.trash.share).toBeCloseTo(0.095, 3);
+    expect(report.villain.buckets.strong.share).toBeCloseTo(0.069, 3);
+    expect(report.villain.buckets.good.share).toBeCloseTo(0.241, 3);
+    expect(report.villain.buckets.weak.share).toBeCloseTo(0.092, 3);
+    expect(report.villain.buckets.trash.share).toBeCloseTo(0.598, 3);
+    expect(report.rangeAdvantage).toBeCloseTo(0.200, 3);
+    expect(report.nutAdvantage).toBeCloseTo(0.336, 3);
+    expect(report.hero.shape.label).toBe('linear');
+    expect(report.hero.shape.capped).toBe(false);
+    expect(report.hero.shape.polarization).toBeCloseTo(0, 10);
+    expect(report.handClasses.isTopPair.hero).toBeCloseTo(0.345, 3);
+    expect(report.handClasses.isTopPair.villain).toBeCloseTo(0.241, 3);
+    expect(report.handClasses.isTopPair.heroCount).toBe(51);
+    expect(report.handClasses.isTopPair.villainCount).toBe(42);
+  });
+
+  it('bucket chain', async () => {
+    expect(await opener.against(defender, flop).bucket('good').hasSuit('h').toNotation()).toBe('KK-88');
+  });
+
+  it('compareTo()', async () => {
+    const vsChart = await spot.compareTo('77+,ATs+,KQs,AJo+');
+    expect(vsChart.overlap).toBeCloseTo(0.598, 3);
+    expect(vsChart.notation.extra).toBe('66,A9s,KTs-KJs,QTs+,JTs,T9s,ATo,KJo+');
+    expect(vsChart.notation.missing).toBe('');
+    expect(vsChart.equity.range).toBeCloseTo(0.600, 3);
+    expect(vsChart.equity.reference).toBeCloseTo(0.713, 3);
+    expect(vsChart.distance).toBeCloseTo(0.113, 3);
+  });
+
+  it('betting math', async () => {
+    expect(spot.bettingMath({ pot: 6, bet: 2 })).toEqual({ alpha: 0.25, mdf: 0.75, potOdds: 0.2, bluffShare: 0.2, valueToBluff: 4 });
+    const bb = await new RangeManager(defender).against(opener, flop);
+    expect(bb.size()).toBe(202);
+    expect((await bb.buckets()).hero.combos).toBe(174);
+    expect(bb.defend({ pot: 6, bet: 2 }).size()).toBe(129);
+    expect(bb.defend({ pot: 6, bet: 2, realization: 0.9 }).size()).toBe(114);
+    expect(bb.defend({ pot: 6, bet: 2, by: 'mdf' }).size()).toBe(132);
+    const bluffs = await spot.bluffCandidates({ pot: 6, bet: 4 });
+    expect(bluffs.size()).toBe(24);
+    expect(spot.bucket('strong').size()).toBe(60);
+  });
+});

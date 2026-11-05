@@ -45,6 +45,25 @@ const MADE_HANDS = new Set([
   'isStraight', 'isThreeOfAKind', 'isTwoPair', 'isPair', 'isHighCard'
 ]);
 const STREETS = new Set(['flop', 'turn', 'river']);
+// Equity buckets (hand vs range equity, highest band first; a hand belongs to the first band whose min it reaches).
+// 'acevedo' is Modern Poker Theory's Equity Buckets (Ch. 10, PDF p. 597): Strong >= 75%, Good >= 50%, Weak >= 33%.
+const BAND_PRESETS = {
+  acevedo: [
+    { name: 'strong', min: 0.75 }, { name: 'good', min: 0.5 }, { name: 'weak', min: 0.33 }, { name: 'trash', min: 0 }
+  ],
+  quartiles: [
+    { name: 'strong', min: 0.75 }, { name: 'good', min: 0.5 }, { name: 'weak', min: 0.25 }, { name: 'trash', min: 0 }
+  ]
+};
+
+// Modern Poker Theory's average equity buckets over all 1,755 flops, BB defending against an in-position
+// opener with 20-40bb MTT ranges (PDF p. 600). A point of comparison only: it describes those ranges.
+const ACEVEDO_FLOP_AVERAGES = {
+  source: 'Acevedo, Modern Poker Theory, Ch. 10 (PDF p. 600): average over all 1,755 flops, BB vs in-position opener, 20-40bb MTT ranges',
+  bigBlind: { strong: 0.07, good: 0.25, weak: 0.23, trash: 0.45 },
+  inPosition: { strong: 0.22, good: 0.43, weak: 0.29, trash: 0.06 }
+};
+
 // Draws a villain combo can hold, for blockers()
 const VILLAIN_DRAWS = [
   'isFlushDraw', 'isBackdoorFlushDraw', 'isOpenEndedStraightDraw', 'isInsideStraightDraw', 'isStraightDraw', 'isComboDraw'
@@ -72,6 +91,8 @@ export class RangeManager {
     this.equityCache = new Map();
     // Per-hand equity stored by getEquity(), read by the equity filters
     this.handEquity = null;
+    // Villain, board and equity bands set by against() / getEquity()
+    this.matchup = null;
 
     if (!input) throw new Error('Input is required');
     if (!Array.isArray(input) && typeof input !== 'string') {
@@ -833,8 +854,9 @@ export class RangeManager {
     const filtered = this._withoutCards(this.filteredHands, expanded);
     const newInstance = this._createFilteredInstance(filtered);
     newInstance.deadCards = expanded;
-    // Equity depends on dead cards: run getEquity() again
+    // Equity depends on dead cards: run getEquity() / against() again
     newInstance.handEquity = null;
+    newInstance.matchup = null;
     return newInstance;
   }
 
@@ -1147,10 +1169,34 @@ export class RangeManager {
    */
   async getEquity(villain, boardCards = [], options = {}) {
     if (villain === undefined) throw new Error('getEquity needs a villain range');
-    const handEquity = await this.equityByHand(villain, boardCards, options);
+    const bands = this._resolveBands(options.bands);
+    const prepared = this._prepareEquity(villain, boardCards, options);
+    const handEquity = {};
+    for (const hand of this.filteredHands) {
+      handEquity[hand] = await this._handEquity(hand, prepared);
+    }
     const instance = this._createFilteredInstance(this.filteredHands);
     instance.handEquity = handEquity;
+    // The matchup the stored equity belongs to, for the range vs range analysis methods
+    instance.matchup = {
+      villainHands: prepared.villainHands,
+      board: prepared.board,
+      deadCards: prepared.deadCards,
+      iterations: prepared.iterations,
+      key: prepared.key,
+      bands
+    };
     return instance;
+  }
+
+  /**
+   * Sets villain's range and the board for range vs range analysis: runs hero's equity once (as getEquity)
+   * and stores the matchup, so buckets, bucket filters, compare(), compareTo(), defend() and
+   * bluffCandidates() work without repeating villain and board. options: { bands, deadCards, iterations }.
+   */
+  async against(villain, boardCards = [], options = {}) {
+    if (villain === undefined) throw new Error('against needs a villain range');
+    return this.getEquity(villain, boardCards, options);
   }
 
   _requireStoredEquity() {
@@ -1342,6 +1388,312 @@ export class RangeManager {
   }
 
   // ============================================================================
+  // RANGE VS RANGE ANALYSIS (needs against() or getEquity() first)
+  // ============================================================================
+
+  // 'acevedo' (default), 'quartiles', or [{ name, min }, ...] with min from 0 to 1 (or '75%')
+  _resolveBands(bands) {
+    if (bands === undefined || bands === null) return BAND_PRESETS.acevedo;
+    if (typeof bands === 'string') {
+      if (!Object.hasOwn(BAND_PRESETS, bands)) throw new Error(`Unknown bands preset: ${bands}. Use ${Object.keys(BAND_PRESETS).join(' or ')}, or an array of { name, min }`);
+      return BAND_PRESETS[bands];
+    }
+    if (!Array.isArray(bands) || bands.length === 0) throw new Error('bands must be a preset name or a non-empty array of { name, min }');
+    const resolved = bands.map(band => {
+      if (!band || typeof band.name !== 'string' || band.name === '') throw new Error('Each band needs a name');
+      return { name: band.name, min: this._parseShare(band.min, `Band ${band.name} min`) };
+    }).sort((a, b) => b.min - a.min);
+    if (new Set(resolved.map(b => b.name)).size !== resolved.length) throw new Error('Band names must be unique');
+    if (resolved[resolved.length - 1].min !== 0) throw new Error('The lowest band must start at 0 so every hand has a band');
+    return resolved;
+  }
+
+  _requireMatchup() {
+    if (!this.matchup) throw new Error('No matchup yet: call against(villain, board) first');
+    return this.matchup;
+  }
+
+  _bandOf(equity, bands) {
+    return bands.find(band => equity >= band.min).name;
+  }
+
+  /** The equity band of each hand against villain, e.g. { AcAd: 'strong', ... } (null when it cannot be dealt). */
+  bandsByHand() {
+    const { bands } = this._requireMatchup();
+    const handEquity = this._requireStoredEquity();
+    return Object.fromEntries(this.filteredHands.map(hand => {
+      const equity = handEquity[hand].equity;
+      return [hand, equity === null ? null : this._bandOf(equity, bands)];
+    }));
+  }
+
+  /** Hands in the named equity band(s) against villain: bucket('good'), bucket('strong', 'good'). */
+  bucket(...names) {
+    const { bands } = this._requireMatchup();
+    const handEquity = this._requireStoredEquity();
+    const wanted = names.flat();
+    const known = new Set(bands.map(b => b.name));
+    const unknown = wanted.filter(name => !known.has(name));
+    if (wanted.length === 0) throw new Error('bucket needs at least one band name');
+    if (unknown.length > 0) throw new Error(`Unknown band: ${unknown.join(', ')}. Bands: ${[...known].join(', ')}`);
+    const wantedSet = new Set(wanted);
+    const filtered = this.filteredHands.filter(hand => {
+      const equity = handEquity[hand].equity;
+      return equity !== null && wantedSet.has(this._bandOf(equity, bands));
+    });
+    return this._createFilteredInstance(filtered);
+  }
+
+  // Villain's equity per hand against hero's current hands; cached per set of hero hands
+  async _villainEquityByHand() {
+    const { villainHands, board, deadCards, iterations, key } = this._requireMatchup();
+    const heroHands = this.filteredHands;
+    const cacheKey = `villain|${key}|${[...heroHands].sort().join(',')}`;
+    if (!this.equityCache.has(cacheKey)) {
+      const results = {};
+      for (const hand of villainHands) {
+        const cards = this._extractCardsFromHand(hand);
+        const blocked = cards.some(c => board.includes(c) || deadCards.includes(c));
+        results[hand] = blocked || heroHands.length === 0
+          ? { win: 0, tie: 0, lose: 0, equity: null }
+          : await this._computeEquity([hand], heroHands, board, deadCards, iterations);
+      }
+      this.equityCache.set(cacheKey, results);
+    }
+    return this.equityCache.get(cacheKey);
+  }
+
+  // { combos, equity, buckets: { name: { count, share, combos } }, shape } for one side
+  _sideSummary(equityByHand, hands, bands) {
+    const live = hands.filter(hand => equityByHand[hand] && equityByHand[hand].equity !== null);
+    const totals = { win: 0, tie: 0, lose: 0 };
+    const buckets = Object.fromEntries(bands.map(band => [band.name, { count: 0, share: 0, combos: [] }]));
+    for (const hand of live) {
+      const result = equityByHand[hand];
+      totals.win += result.win; totals.tie += result.tie; totals.lose += result.lose;
+      buckets[this._bandOf(result.equity, bands)].combos.push(hand);
+    }
+    for (const bucket of Object.values(buckets)) {
+      bucket.count = bucket.combos.length;
+      bucket.share = live.length ? bucket.count / live.length : 0;
+    }
+    const runouts = totals.win + totals.tie + totals.lose;
+    const summary = {
+      combos: live.length,
+      equity: runouts ? (totals.win + totals.tie / 2) / runouts : null,
+      buckets
+    };
+    summary.shape = this._shapeOf(summary, bands);
+    return summary;
+  }
+
+  /**
+   * A heuristic label for a range's shape from its bucket shares (top band, bottom band, the middle):
+   * - polarized: top >= 10%, bottom >= 20% and the extremes outweigh the middle
+   * - linear: top >= 10% and bottom < 10% (strong hands down, few weak ones)
+   * - condensed: top < 10% and the middle >= 50%
+   * - mixed: none of these
+   * capped: top < 5% (few or none of the strongest hands). polarization: extremes minus middle, -1 to 1.
+   */
+  _shapeOf(summary, bands) {
+    const shares = bands.map(band => summary.buckets[band.name].share);
+    const top = shares[0];
+    const bottom = shares[shares.length - 1];
+    const middle = shares.slice(1, -1).reduce((sum, share) => sum + share, 0);
+    let label = 'mixed';
+    if (top >= 0.1 && bottom >= 0.2 && top + bottom > middle) label = 'polarized';
+    else if (top >= 0.1 && bottom < 0.1) label = 'linear';
+    else if (top < 0.1 && middle >= 0.5) label = 'condensed';
+    return { label, capped: top < 0.05, polarization: top + bottom - middle };
+  }
+
+  /** Equity bucket shares for both sides: { bands, hero, villain }, each { combos, equity, buckets, shape }. */
+  async buckets() {
+    const { bands } = this._requireMatchup();
+    const villainEquity = await this._villainEquityByHand();
+    return {
+      bands,
+      hero: this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands),
+      villain: this._sideSummary(villainEquity, this.matchup.villainHands, bands)
+    };
+  }
+
+  /**
+   * Range vs range report: both sides' equity, buckets and shape; range advantage (equity difference);
+   * nut advantage (difference in top-band share, as Modern Poker Theory measures it with Strong hands);
+   * hand classes side by side (flop, turn or river only); and the book's flop averages as a reference
+   * when the default bands are used.
+   */
+  async compare() {
+    const matchup = this._requireMatchup();
+    const { bands, board } = matchup;
+    const { hero, villain } = await this.buckets();
+    const topBand = bands[0].name;
+    const report = {
+      board,
+      bands,
+      hero,
+      villain,
+      rangeAdvantage: hero.equity !== null && villain.equity !== null ? hero.equity - villain.equity : null,
+      nutAdvantage: hero.buckets[topBand].share - villain.buckets[topBand].share,
+      handClasses: null,
+      reference: bands === BAND_PRESETS.acevedo ? ACEVEDO_FLOP_AVERAGES : null
+    };
+    if (board.length >= 3) {
+      const heroClasses = await this.breakdown(board);
+      const villainClasses = await this._villainRange().breakdown(board);
+      const flags = new Set([...Object.keys(heroClasses.flags), ...Object.keys(villainClasses.flags)]);
+      const rows = [...flags].map(flag => [flag, {
+        hero: heroClasses.flags[flag]?.share ?? 0,
+        villain: villainClasses.flags[flag]?.share ?? 0,
+        heroCount: heroClasses.flags[flag]?.count ?? 0,
+        villainCount: villainClasses.flags[flag]?.count ?? 0
+      }]);
+      rows.sort((a, b) => Math.max(b[1].hero, b[1].villain) - Math.max(a[1].hero, a[1].villain));
+      report.handClasses = Object.fromEntries(rows);
+    }
+    return report;
+  }
+
+  _villainRange() {
+    const { villainHands, deadCards } = this._requireMatchup();
+    return new RangeManager(villainHands, deadCards);
+  }
+
+  // Area between two empirical equity CDFs on [0, 1]: 0 for identical distributions, up to 1
+  _earthMoversDistance(a, b) {
+    if (a.length === 0 || b.length === 0) return null;
+    const xs = [...a].sort((x, y) => x - y);
+    const ys = [...b].sort((x, y) => x - y);
+    const points = [...new Set([...xs, ...ys])].sort((x, y) => x - y);
+    let i = 0; let j = 0; let area = 0;
+    for (let k = 0; k < points.length - 1; k++) {
+      while (i < xs.length && xs[i] <= points[k]) i++;
+      while (j < ys.length && ys[j] <= points[k]) j++;
+      area += Math.abs(i / xs.length - j / ys.length) * (points[k + 1] - points[k]);
+    }
+    return area;
+  }
+
+  /**
+   * Compares this range with a reference range (notation, hands or a RangeManager): combos in common,
+   * missing (in the reference only) and extra (in this range only), and overlap (common / union). After
+   * against(), also both ranges' equity, buckets and shape against the same villain and board, and the
+   * earth mover's distance between their equity distributions (0 = identical shape).
+   */
+  async compareTo(reference) {
+    const referenceRange = reference instanceof RangeManager ? reference : new RangeManager(reference);
+    const mine = new Set(this.filteredHands);
+    const theirs = new Set(referenceRange.toArray());
+    const common = this.filteredHands.filter(hand => theirs.has(hand));
+    const missing = referenceRange.toArray().filter(hand => !mine.has(hand));
+    const extra = this.filteredHands.filter(hand => !theirs.has(hand));
+    const union = mine.size + theirs.size - common.length;
+    const notation = hands => (hands.length ? new RangeManager(hands).toNotation() : '');
+    const report = {
+      combos: { range: mine.size, reference: theirs.size },
+      common, missing, extra,
+      notation: { common: notation(common), missing: notation(missing), extra: notation(extra) },
+      overlap: union ? common.length / union : 1,
+      equity: null, buckets: null, distance: null
+    };
+    if (!this.matchup) return report;
+    const { villainHands, board, deadCards, iterations, bands } = this.matchup;
+    const referenceWithEquity = await referenceRange.against(villainHands, board, { deadCards, iterations, bands });
+    const rangeSummary = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands);
+    const referenceSummary = this._sideSummary(referenceWithEquity.handEquity, referenceWithEquity.filteredHands, bands);
+    const equities = (byHand, hands) => hands.map(hand => byHand[hand].equity).filter(e => e !== null);
+    report.equity = { range: rangeSummary.equity, reference: referenceSummary.equity };
+    report.buckets = { range: rangeSummary, reference: referenceSummary };
+    report.distance = this._earthMoversDistance(
+      equities(this.handEquity, this.filteredHands),
+      equities(referenceWithEquity.handEquity, referenceWithEquity.filteredHands)
+    );
+    return report;
+  }
+
+  _parseBet({ pot, bet } = {}) {
+    for (const [name, value] of [['pot', pot], ['bet', bet]]) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a positive number`);
+    }
+    return { pot, bet };
+  }
+
+  /**
+   * Bet-size math for a bet into a pot (Modern Poker Theory Ch. 2): alpha = bet / (pot + bet), how often a
+   * bluff must work; mdf = 1 - alpha; potOdds = bet / (pot + 2 bet), the equity a call needs (also the
+   * bluff share of a balanced river betting range); valueToBluff = (pot + bet) / bet value combos per bluff.
+   * On earlier streets MDF is only a rough guide: the book shows real defence well below it.
+   */
+  bettingMath(options) {
+    const { pot, bet } = this._parseBet(options);
+    const potOdds = bet / (pot + 2 * bet);
+    return { alpha: bet / (pot + bet), mdf: pot / (pot + bet), potOdds, bluffShare: potOdds, valueToBluff: (pot + bet) / bet };
+  }
+
+  /**
+   * As the defender facing villain's bet (villain = the betting range given to against()): the hands to
+   * continue with. by: 'equity' (default) keeps hands whose equity x realization is at least the pot odds;
+   * 'mdf' keeps the strongest MDF share of the range by equity (ties kept). Hands that cannot be dealt are
+   * dropped. realization (default 1) scales equity for how much of it the hand realizes: Modern Poker Theory
+   * gives about 0.9 out of position and 1.1 in position for symmetric ranges (it needs a solver to know).
+   */
+  defend(options = {}) {
+    const { pot, bet } = this._parseBet(options);
+    const by = options.by ?? 'equity';
+    if (by !== 'equity' && by !== 'mdf') throw new Error(`Unknown defend method: ${by}. Use 'equity' or 'mdf'`);
+    const realization = options.realization ?? 1;
+    if (typeof realization !== 'number' || !Number.isFinite(realization) || realization <= 0) {
+      throw new Error('realization must be a positive number');
+    }
+    const handEquity = this._requireStoredEquity();
+    this._requireMatchup();
+    const { potOdds, mdf } = this.bettingMath({ pot, bet });
+    const live = this.filteredHands.filter(hand => handEquity[hand].equity !== null);
+    if (by === 'equity') {
+      return this._createFilteredInstance(live.filter(hand => handEquity[hand].equity * realization >= potOdds));
+    }
+    const ranked = [...live].sort((a, b) => handEquity[b].equity - handEquity[a].equity);
+    const count = Math.ceil(mdf * ranked.length - 1e-9);
+    if (count === 0) return this._createFilteredInstance([]);
+    const cutoff = handEquity[ranked[count - 1]].equity;
+    return this._createFilteredInstance(live.filter(hand => handEquity[hand].equity >= cutoff));
+  }
+
+  /**
+   * As the bettor: bluffs to pair with the value hands (bands in options.value, default the top band) at this
+   * bet size. Count = value combos x alpha, so bluffs are bet / (pot + 2 bet) of the betting range. Picks the
+   * lowest-band hands first, preferring those that block more of villain's continuing range (villain hands
+   * with at least the pot odds against this range), then lower equity.
+   */
+  async bluffCandidates(options = {}) {
+    const { pot, bet } = this._parseBet(options);
+    const { bands } = this._requireMatchup();
+    const handEquity = this._requireStoredEquity();
+    const valueBands = new Set([options.value ?? bands[0].name].flat());
+    const unknown = [...valueBands].filter(name => !bands.some(b => b.name === name));
+    if (unknown.length > 0) throw new Error(`Unknown band: ${unknown.join(', ')}`);
+    const { alpha, potOdds } = this.bettingMath({ pot, bet });
+    const live = this.filteredHands.filter(hand => handEquity[hand].equity !== null);
+    const bandIndex = hand => bands.findIndex(b => b.name === this._bandOf(handEquity[hand].equity, bands));
+    const value = live.filter(hand => valueBands.has(bands[bandIndex(hand)].name));
+    const count = Math.round(value.length * alpha);
+    if (count === 0) return this._createFilteredInstance([]);
+    const villainEquity = await this._villainEquityByHand();
+    const continuing = this.matchup.villainHands.filter(hand => villainEquity[hand].equity !== null && villainEquity[hand].equity >= potOdds);
+    const blocks = hand => {
+      const cards = this._extractCardsFromHand(hand);
+      return continuing.filter(v => cards.some(c => v.includes(c))).length;
+    };
+    const candidates = live
+      .filter(hand => !valueBands.has(bands[bandIndex(hand)].name))
+      .map(hand => ({ hand, band: bandIndex(hand), blocked: blocks(hand), equity: handEquity[hand].equity }))
+      .sort((a, b) => b.band - a.band || b.blocked - a.blocked || a.equity - b.equity);
+    const chosen = new Set(candidates.slice(0, count).map(c => c.hand));
+    return this._createFilteredInstance(this.filteredHands.filter(hand => chosen.has(hand)));
+  }
+
+  // ============================================================================
   // QUERY METHODS
   // ============================================================================
 
@@ -1484,13 +1836,15 @@ export class RangeManager {
 
 // Async methods that return a range. They return a RangeQuery, so further filters can be chained
 // before a single await: await rm.makesHand(['Pair'], board).getEquity('QQ+', board).equityAbove('60%')
-const ASYNC_RANGE_METHODS = ['makesHand', 'hitsHand', 'hitsHandBoth', 'getEquity', 'strongest', 'weakest'];
+const ASYNC_RANGE_METHODS = [
+  'makesHand', 'hitsHand', 'hitsHandBoth', 'getEquity', 'against', 'strongest', 'weakest', 'bluffCandidates'
+];
 
 // Methods that return a range synchronously; on a RangeQuery they queue another step
 // (the equity filters are synchronous after getEquity, or return a RangeQuery given a villain)
 const SYNC_RANGE_METHODS = [
   'exclude', 'include', 'intersect', 'hasSuit', 'suitedOf', 'setDeadCards', 'hasKicker', 'hasKeyCard',
-  'equityAbove', 'equityBelow', 'equityBetween'
+  'equityAbove', 'equityBelow', 'equityBetween', 'bucket', 'defend'
 ];
 
 // Methods that return a value; on a RangeQuery they return a Promise of that value.
@@ -1498,7 +1852,8 @@ const SYNC_RANGE_METHODS = [
 const VALUE_METHODS = [
   'toArray', 'getHands', 'size', 'contains', 'toNotation', 'getKeyCards', 'normalizeNotation',
   'handContainsDeadCard', 'handHasSuit', 'handSuitedOf',
-  'evaluateHand', 'getObject', 'equity', 'equityByHand', 'rankHands', 'breakdown', 'blockers'
+  'evaluateHand', 'getObject', 'equity', 'equityByHand', 'rankHands', 'breakdown', 'blockers',
+  'bandsByHand', 'buckets', 'compare', 'compareTo', 'bettingMath'
 ];
 
 /**

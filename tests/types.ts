@@ -1,6 +1,9 @@
 // Type-checked by `npm run test:types`; not executed.
 import { RangeManager, RangeQuery } from 'poker-rangeman';
-import type { EquityResult, RankedHand, Breakdown, VillainRange, EvaluationResult, Hand } from 'poker-rangeman';
+import type {
+  EquityResult, RankedHand, Breakdown, VillainRange, EvaluationResult, Hand,
+  ComparisonReport, CompareToReport, BettingMath, Shape
+} from 'poker-rangeman';
 
 async function check(): Promise<void> {
   const rm = new RangeManager('TT+,AQs+,AK', ['Ah']);
@@ -34,6 +37,22 @@ async function check(): Promise<void> {
   const stored: Record<Hand, EquityResult> | null = syncFiltered.handEquity;
   const storedTotal: EquityResult = await syncFiltered.equity();
 
+  // Range vs range analysis
+  const spot: RangeManager = await rm.against('QQ+,AK', board, { bands: 'quartiles', iterations: 1000 });
+  const goodSpades: RangeManager = await rm.against('QQ+', board).bucket('good', 'weak').hasSuit('s');
+  const report: ComparisonReport = await spot.compare();
+  const nut: number = report.nutAdvantage;
+  const label: Shape['label'] = report.hero.shape.label;
+  const strongShare: number = (await spot.buckets()).villain.buckets.strong.share;
+  const vsReference: CompareToReport = await spot.compareTo('TT+,AK');
+  const distance: number | null = vsReference.distance;
+  const math: BettingMath = spot.bettingMath({ pot: 10, bet: 5 });
+  const defending: RangeManager = spot.defend({ pot: 10, bet: 5, by: 'mdf', realization: 0.9 });
+  const bluffs: RangeManager = await spot.bluffCandidates({ pot: 10, bet: 7.5, value: ['strong', 'good'] });
+  const bands: Record<Hand, string | null> = spot.bandsByHand();
+  const custom: RangeManager = await rm.against('QQ+', board, { bands: [{ name: 'value', min: '70%' }, { name: 'rest', min: 0 }] });
+  const pendingReport: Promise<ComparisonReport> = rm.against('QQ+', board).compare();
+
   const ranked: RankedHand[] = await rm.rankHands(board);
   const top: RangeManager = await rm.strongest('20%', board, { street: 'river' });
   const bottom: RangeManager = await rm.weakest(0.1, board);
@@ -45,7 +64,8 @@ async function check(): Promise<void> {
   const notation: string = top.toNotation();
   const size: number = bottom.size();
   void [keyCards, middling, uses, total, byHand, above, between, ranked, pairs, unblocked, notation, size,
-    asPromise, chainedRange, pendingSize, pendingEquity, stored, storedTotal];
+    asPromise, chainedRange, pendingSize, pendingEquity, stored, storedTotal,
+    goodSpades, nut, label, strongShare, distance, math, defending, bluffs, bands, custom, pendingReport];
 }
 
 void check;

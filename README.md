@@ -14,6 +14,7 @@ A JavaScript library for parsing, managing, filtering and analysing poker hand r
   - [Evaluation Methods](#evaluation-methods)
   - [Equity Methods](#equity-methods)
   - [Strength, Breakdown and Blockers](#strength-breakdown-and-blockers)
+  - [Range vs Range Analysis](#range-vs-range-analysis)
 - [Range Notation Guide](#range-notation-guide)
 - [Hand Strength Criteria](#hand-strength-criteria)
 - [Method Chaining Examples](#method-chaining-examples)
@@ -682,6 +683,111 @@ const { heroBlocks, allBlocks } = await villain.blockers(['Kh', '9h', '4h', '2c'
 heroBlocks.blocked.isFlush;  // ['AhQh']: your Ah blocks the nut flush
 allBlocks.unblocked;         // combos villain can actually hold
 ```
+
+---
+
+### Range vs Range Analysis
+
+Compare your range with an opponent's on a board: how the equity is shared out, which side has the range and nut advantage, how each range is shaped, how they hit the board, and which hands defend or bluff at a given bet size. The method follows Michael Acevedo's *Modern Poker Theory* (Ch. 10), which compares ranges with **equity buckets**: each hand's equity against the other range, grouped into bands.
+
+| Band | Hand vs range equity |
+| --- | --- |
+| `strong` | 75% or more |
+| `good` | 50% to under 75% |
+| `weak` | 33% to under 50% |
+| `trash` | under 33% |
+
+```javascript
+const opener = new RangeManager('66+,A9s+,KTs+,QTs+,JTs,T9s,ATo+,KJo+');
+const defender = '22-88,A2s-A8s,K9s,Q9s+,J9s+,T8s+,97s+,87s,76s,A9o-AJo,KTo-KQo,QJo';
+const flop = ['Ad', '7c', '6h'];
+
+const spot = await opener.against(defender, flop);  // set villain and board once
+const report = await spot.compare();
+
+report.hero.equity;               // 0.600
+report.hero.buckets.strong.share; // 0.405  (good 0.243, weak 0.257, trash 0.095)
+report.villain.buckets.strong.share; // 0.069 (good 0.241, weak 0.092, trash 0.598)
+report.rangeAdvantage;            // 0.200: hero equity minus villain equity
+report.nutAdvantage;              // 0.336: hero's strong share minus villain's
+report.hero.shape;                // { label: 'linear', capped: false, polarization: 0 }
+report.handClasses.isTopPair;     // { hero: 0.345, villain: 0.241, heroCount: 51, villainCount: 42 }
+
+// Filters chain as usual
+await opener.against(defender, flop).bucket('good').hasSuit('h').toNotation(); // 'KK-88'
+```
+
+#### `against(villain, boardCards?, options?)`
+
+Sets villain's range and the board, runs your range's equity once (the same as [`getEquity()`](#getequityvillain-boardcards-options)), and stores the matchup on the range it returns, so the methods below need no more arguments. Async and chainable.
+
+`options`: `{ bands, deadCards, iterations }`. `bands` is `'acevedo'` (the table above, the default), `'quartiles'` (75 / 50 / 25), or your own: `[{ name: 'value', min: '70%' }, { name: 'rest', min: 0 }]`. The lowest band must start at 0.
+
+The analysis only covers hands that can be dealt. Run `against()` again after changing villain or the board; `setDeadCards()` clears the matchup.
+
+#### `bucket(...names)` and `bandsByHand()`
+
+`bucket('good')` or `bucket('strong', 'good')` keeps the hands in those bands. `bandsByHand()` returns each hand's band, e.g. `{ AcAd: 'strong', ... }`.
+
+#### `buckets()` and `compare()`
+
+`buckets()` returns `{ bands, hero, villain }`. Each side is `{ combos, equity, buckets, shape }`, and each bucket is `{ count, share, combos }`. Villain's side is villain's equity against your current hands, calculated when first needed and cached.
+
+`compare()` adds to that:
+
+- `rangeAdvantage`: your equity minus villain's.
+- `nutAdvantage`: your top-band share minus villain's. The book measures nut advantage by the share of Strong hands.
+- `handClasses`: the share of each range holding each flag (made hands, pair positions, draws, overcards), most common first. It needs a board; it is `null` preflop.
+- `reference`: with the default bands, the book's averages over all 1,755 flops for a big blind defending against an in-position opener with 20-40bb ranges: BB strong 7% / good 25% / weak 23% / trash about 45%, opener 22% / 43% / 29% / 6% (PDF p. 600). A point of comparison, not a target.
+
+`shape` is a heuristic label from the bucket shares:
+
+| Label | Rule |
+| --- | --- |
+| `polarized` | top band at least 10%, bottom band at least 20%, and the two outweigh the middle |
+| `linear` | top band at least 10%, bottom band under 10% |
+| `condensed` | top band under 10%, middle bands at least 50% |
+| `mixed` | none of these |
+
+`capped` is true when the top band is under 5%, and `polarization` is the top and bottom shares minus the middle (-1 to 1). The book notes that real ranges mix these shapes, which is why the bucket shares themselves are the main output.
+
+#### `compareTo(reference)`
+
+Compares your range with a reference range (notation, hands or a `RangeManager`), such as a chart you are studying:
+
+```javascript
+const vsChart = await spot.compareTo('77+,ATs+,KQs,AJo+');
+vsChart.overlap;           // 0.598: combos in common / combos in either
+vsChart.notation.extra;    // '66,A9s,KTs-KJs,QTs+,JTs,T9s,ATo,KJo+' (yours only)
+vsChart.notation.missing;  // '' (the chart's only)
+vsChart.equity;            // { range: 0.600, reference: 0.713 } against the same villain and board
+vsChart.distance;          // 0.113
+```
+
+`common`, `missing` and `extra` list the combos. After `against()`, it also compares both ranges against the same villain and board: `equity`, `buckets` (each a side summary), and `distance`, the earth mover's distance between the two equity distributions. 0 means the same shape; it is the average amount of equity that would have to move to turn one distribution into the other. Without `against()`, only the combos are compared.
+
+#### Betting math: `bettingMath()`, `defend()`, `bluffCandidates()`
+
+```javascript
+spot.bettingMath({ pot: 6, bet: 2 });
+// { alpha: 0.25, mdf: 0.75, potOdds: 0.2, bluffShare: 0.2, valueToBluff: 4 }
+
+// As the defender facing a 1/3-pot bet from the opener's range (202 combos, 174 can be dealt)
+const bb = await new RangeManager(defender).against(opener, flop);
+bb.defend({ pot: 6, bet: 2 }).size();                     // 129: equity >= pot odds
+bb.defend({ pot: 6, bet: 2, realization: 0.9 }).size();   // 114: out of position
+bb.defend({ pot: 6, bet: 2, by: 'mdf' }).size();          // 132: the strongest 75%
+
+// As the bettor: bluffs to go with the strong hands at a 2/3-pot bet
+const bluffs = await spot.bluffCandidates({ pot: 6, bet: 4 });
+bluffs.size();             // 24 (60 strong combos x alpha 0.4)
+```
+
+- `bettingMath({ pot, bet })`: `alpha` = bet / (pot + bet), how often a bluff must work; `mdf` = 1 - alpha; `potOdds` = bet / (pot + 2 × bet), the equity a call needs, which is also the bluff share of a balanced river bet (`bluffShare`); `valueToBluff` = value combos per bluff.
+- `defend({ pot, bet, by?, realization? })`: your continuing range against villain's bet (villain being the betting range you gave `against()`). By default it keeps hands whose equity × `realization` reaches the pot odds; `by: 'mdf'` keeps the strongest MDF share instead. The book warns that MDF is only a rough guide before the river: on A-Q-3 against a 1/3-pot bet, MDF says defend 75%, but the solver defends 42%, because the defender's weakest hands don't have the equity to call. `realization` scales equity for how much of it a hand realizes; the book gives about 0.9 out of position and 1.1 in position for symmetric ranges. Realization itself needs a solver.
+- `bluffCandidates({ pot, bet, value? })`: as the bettor, bluffs to pair with your value hands (the bands in `value`, default the top band). The count is value combos × alpha, so bluffs make up the pot-odds share of the betting range. It takes the lowest-band hands first, preferring those that block more of villain's continuing range (villain hands with at least the pot odds), then lower equity. Async and chainable.
+
+**Performance:** `against()` runs one equity calculation per hand in your range; the first `buckets()` or `compare()` runs one per hand in villain's range. The example above takes about 1.5 s. Two full ranges of about 600 combos each on the flop take about 7 s for `against()` and 7 s more for `compare()`.
 
 ---
 
