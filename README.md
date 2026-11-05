@@ -14,6 +14,8 @@ A JavaScript library for parsing, managing, filtering and analysing poker hand r
   - [Evaluation Methods](#evaluation-methods)
   - [Equity Methods](#equity-methods)
   - [Strength, Breakdown and Blockers](#strength-breakdown-and-blockers)
+  - [Range vs Range Analysis](#range-vs-range-analysis)
+  - [Combo Weights](#combo-weights)
 - [Range Notation Guide](#range-notation-guide)
 - [Hand Strength Criteria](#hand-strength-criteria)
 - [Method Chaining Examples](#method-chaining-examples)
@@ -79,7 +81,7 @@ console.log(combined.contains('5h2s'));     // true
 Creates a new RangeManager instance.
 
 **Parameters:**
-- `input` (string | string[]): Range notation string or array of hand strings
+- `input` (string | array | object): Range notation, an array of hands or notation, or an object of weights. Any part can carry a weight: see [Combo Weights](#combo-weights)
 - `deadCards` (string[], optional): Array of dead cards (e.g., `['Ah', 'Kd']`). Hands containing them are removed immediately. Supports wildcards: `'Ax'` (all Aces), `'Xh'` (all hearts)
 
 **Returns:** RangeManager instance
@@ -236,7 +238,7 @@ filtered3.size();        // 2
 Adds hands to the range. Accepts range notation string or array of hands.
 
 **Parameters:**
-- `input` (string | string[]): Range notation string or array of hand strings
+- `input` (string | array | object | RangeManager): Range notation, hands or weights (see [Combo Weights](#combo-weights))
 
 **Returns:** `RangeManager` - New instance with included hands added
 
@@ -259,7 +261,7 @@ expanded2.size();        // 6
 Returns only hands that exist in both the current range and the input range.
 
 **Parameters:**
-- `input` (string | string[]): Range notation string or array of hand strings
+- `input` (string | array | object | RangeManager): Range notation, hands or weights (see [Combo Weights](#combo-weights))
 
 **Returns:** `RangeManager` - New instance with intersecting hands only
 
@@ -645,7 +647,7 @@ These need a board of 3 to 5 cards and take `options` `{ street }`. Hands that s
 
 Every hand in the range, strongest first, by made hand (draws do not count).
 
-**Returns:** `Promise<Array<{ hand, category, strength, rank }>>`: `category` is the made hand flag (e.g. `'isFlush'`), `strength` 10 (royal flush) down to 1 (high card), and `rank` an array that compares element by element (higher wins).
+**Returns:** `Promise<Array<{ hand, category, strength, rank, value, weight }>>`: `category` is the made hand flag (e.g. `'isFlush'`), `strength` 10 (royal flush) down to 1 (high card), `rank` an array that compares element by element (higher wins), and `value` the same order as one integer from poker-bitvaljs's evaluator (higher wins, equal values tie). Hands are sorted, and `strongest()`, `weakest()` and capping rank them, by `value`.
 
 #### `strongest(portion, boardCards, options?)` / `weakest(portion, boardCards, options?)`
 
@@ -681,6 +683,273 @@ const villain = new RangeManager('AQs,AA,QQ');
 const { heroBlocks, allBlocks } = await villain.blockers(['Kh', '9h', '4h', '2c'], 'AhJs');
 heroBlocks.blocked.isFlush;  // ['AhQh']: your Ah blocks the nut flush
 allBlocks.unblocked;         // combos villain can actually hold
+```
+
+---
+
+### Range vs Range Analysis
+
+Compare your range with an opponent's on a board: how the equity is shared out, which side has the range and nut advantage, how each range is shaped, how they hit the board, and which hands defend or bluff at a given bet size. The method follows Michael Acevedo's *Modern Poker Theory* (Ch. 10), which compares ranges with **equity buckets**: each hand's equity against the other range, grouped into bands.
+
+| Band | Hand vs range equity |
+| --- | --- |
+| `strong` | 75% or more |
+| `good` | 50% to under 75% |
+| `weak` | 33% to under 50% |
+| `trash` | under 33% |
+
+```javascript
+const opener = new RangeManager('66+,A9s+,KTs+,QTs+,JTs,T9s,ATo+,KJo+');
+const defender = '22-88,A2s-A8s,K9s,Q9s+,J9s+,T8s+,97s+,87s,76s,A9o-AJo,KTo-KQo,QJo';
+const flop = ['Ad', '7c', '6h'];
+
+const spot = await opener.against(defender, flop);  // set villain and board once
+const report = await spot.compare();
+
+report.hero.equity;               // 0.600
+report.hero.buckets.strong.share; // 0.405  (good 0.243, weak 0.257, trash 0.095)
+report.villain.buckets.strong.share; // 0.069 (good 0.241, weak 0.092, trash 0.598)
+report.advantage.range;           // 0.200: hero equity minus villain equity
+report.advantage.nut;             // 0.026: effective nuts (90%+ equity), 6.1% of hero's range vs 3.4% of villain's
+report.advantage.bands.strong;    // 0.336: hero has far more Strong hands...
+report.advantage.bands.trash;     // -0.503: ...and far less trash
+report.hero.shape;                // { polarized: 0.21, linear: 0.76, condensed: 0, dominant: 'linear', ... }
+report.hero.capped;               // { relative: 0, absolute: 0 }: the opener has its share of the nuts
+report.handClasses.air;           // { hero: 0.081, villain: 0.184, heroCount: 12, villainCount: 32 }
+report.flags.isTopPair;           // { hero: 0.345, villain: 0.241, heroCount: 51, villainCount: 42 }
+
+// Filters chain as usual
+await opener.against(defender, flop).bucket('good').hasSuit('h').toNotation(); // 'KK-88'
+```
+
+#### `against(villain, boardCards?, options?)`
+
+Sets villain's range and the board, runs your range's equity once (the same as [`getEquity()`](#getequityvillain-boardcards-options)), and stores the matchup on the range it returns, so the methods below need no more arguments. Async and chainable.
+
+`options`: `{ bands, deadCards, iterations }`. `bands` is `'acevedo'` (the table above, the default), `'quartiles'` (75 / 50 / 25), or your own: `[{ name: 'value', min: '70%' }, { name: 'rest', min: 0 }]`. The lowest band must start at 0.
+
+The analysis only covers hands that can be dealt. Run `against()` again after changing villain or the board; `setDeadCards()` clears the matchup.
+
+#### `bucket(...names)` and `bandsByHand()`
+
+`bucket('good')` or `bucket('strong', 'good')` keeps the hands in those bands. `bandsByHand()` returns each hand's band, e.g. `{ AcAd: 'strong', ... }`.
+
+#### `buckets()` and `compare()`
+
+`buckets()` returns `{ bands, hero, villain }`. Each side is `{ combos, equity, buckets, shape }`, and each bucket is `{ count, share, combos }`. Villain's side is villain's equity against your current hands, calculated when first needed and cached.
+
+`compare()` adds to that:
+
+- `advantage`: range, nut and polarization advantage, and one per equity band and hand class; see [Advantages](#advantages).
+- `handClasses`: each range split into hand classes, every combo in exactly one, so each side adds up to 1: sets, top pair, flush draws, air and so on (see [`handClasses()`](#handclassesboardcards-options)). `null` preflop.
+- `flags`: the share of each range holding each poker-extval flag (made hands, pair positions, draws, overcards). A combo can hold several, so these overlap; most common first. `null` preflop.
+- `reference`: with the default bands, the book's averages over all 1,755 flops for a big blind defending against an in-position opener with 20-40bb ranges: BB strong 7% / good 25% / weak 23% / trash about 45%, opener 22% / 43% / 29% / 6% (PDF p. 600). A point of comparison, not a target.
+
+#### Range shape
+
+*Modern Poker Theory* (Ch. 1, Range Morphology) names three main range shapes: **linear**, **polarized** and **condensed**. They compete, but most ranges are a mix of them. Separately, a range can be **capped** (missing its strongest hands) or uncapped; that describes the top of the range rather than its shape, so it can go with any of the three. It is reported next to `shape` (see [Capping](#capping)).
+
+`shape` scores the three shapes from 0 to 1. They come from the range's equity against villain, split three ways by the bands: **T**, the share in the top band (Strong); **B**, the share in the bottom band (Trash); and **M**, the share in the bands between (Good and Weak). T + M + B = 1.
+
+The shapes are about which part of the range is **hollow**, so each share is compared with an even spread across equity, the straight diagonal on an equity chart. A part's **density** is its share divided by its band's width: with the default bands the top is 25 points wide (75–100%), the middle 42 (33–75%) and the bottom 33 (0–33%), so an even spread has T, M and B of about 25%, 42% and 33% and every density 1. A part is hollow when it is thinner than its neighbours: `hollow(part, than) = 1 − part / than`, from 0 (as dense) to 1 (empty).
+
+| Score | Formula | The book's definition |
+| --- | --- | --- |
+| `shape.polarized` | Var(e) / (μ(1 − μ)) over each hand's equity e (see below) | "High equity value hands and low equity bluffing hands", perfectly polarized with "no hands in between" |
+| `shape.linear` | enough(T) × hollow(bottom, middle) × contiguity | "The highest equity hands without gaps in between" |
+| `shape.condensed` | hollow(thicker end, middle) | "It has the top and bottom hands removed and is comprised of middle equity hands" |
+
+**Polarized** uses each hand's equity against villain, not the bands. With μ the range's average hand equity,
+the variance of hand equities can't exceed μ(1 − μ) (the [Bhatia–Davis inequality](https://en.wikipedia.org/wiki/Bhatia%E2%80%93Davis_inequality)),
+and it reaches that only when every hand has exactly 0% or 100%: the book's perfectly polarized range of "nuts
+and bluffs", against this opponent. So `polarized = Var(e) / (μ(1 − μ))` runs from 0, every hand the same
+equity (pure bluff-catchers), to 1, nuts and air only. It doesn't depend on the average: a range can be
+polarized at 30% equity or at 70%. A split between 76% and 30% hands is only partly polarized; one between
+100% and 0% is fully. `shape.equity` gives the mean and standard deviation behind it. Combos count by weight.
+
+**Enough.** An end counts fully once it holds a minimum share of the range, and partly below that: `enough(x) = min(1, x / e)`, with `e` = 10% by default. Set it with `against(villain, board, { shape: { enough: 0.15 } })`.
+
+A range spread evenly across equity scores 0 on linear and condensed (it has no hollow part) and 1/3 on polarized. `shape.density` gives the three densities, and `shape.top`, `shape.middle` and `shape.bottom` the shares themselves.
+
+The three scores are independent and need not add up to 1: a range can be partly linear and partly condensed. `shape.dominant` names the highest (on a tie, the first of polarized, linear, condensed) when it reaches 0.5, and is `null` otherwise: an evenly spread range, or one that is mostly air, has no dominant shape. Change the minimum with `shape: { minDominant: 0.4 }`.
+
+`shape.contiguity` is the share of the range's hands that are among the top N hands, by equity, of the range as it was at `against()`, where N is the range's own size. It checks the "without gaps" part of linear: a strong + weak range that skips the good hands is not a top slice, so its contiguity and linear score drop. For the range `against()` was called on (and for villain's range) it is 1, because gaps can only be seen against the hands that were available.
+
+Some examples, on A-7-6 rainbow with the ranges above:
+
+| Range | T / M / B | polarized | linear | condensed | dominant | capped (relative / absolute) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Opener, whole range | .41 / .50 / .09 | 0.21 | 0.76 | 0 | linear | 0 / 0 |
+| Opener, strong + trash | .81 / 0 / .19 | 0.27 | 0 | 0 | none | 0 / 0 |
+| Opener, strong + good | .63 / .38 / 0 | 0.09 | 1 | 0 | linear | 0 / 0 |
+| Opener, strong + weak (skips good) | .61 / .39 / 0 | 0.24 | 0.63 | 0 | linear | 0 / 0 |
+| Opener, good + weak | 0 / 1 / 0 | 0.05 | 0 | 1 | condensed | 1 / 1 |
+| Opener, good + trash | 0 / .72 / .28 | 0.09 | 0 | 0.51 | condensed | 1 / 1 |
+| Defender, whole range | .07 / .33 / .60 | 0.24 | 0 | 0 | none | 0.13 / 0 |
+
+Strong + trash has no middle hands but is only 0.27 polarized: its value hands average about 85% equity and
+its trash about 20%, far from the nuts-or-air of a perfectly polarized range. On a flop few ranges get close;
+polarization rises on later streets, where hands are nearer 0% or 100%.
+
+Limits worth knowing:
+
+- The band edges are hard cut-offs, as in the book's buckets: a hand at 74% equity is middle and one at 76% is top. Ranges with many hands near an edge can move noticeably.
+- Gaps are only detected against the range at `against()`.
+- With few combos, single hands move the shares a lot; `combos` is reported next to the shape.
+- The book says both that "a condensed range is capped" and, in its next example, that a condensed range can hold very strong hands and not be capped. Here condensed falls as strong hands appear, and capped is scored on its own.
+- The book's "merged" describes betting the polarized and condensed parts together with one small size, a strategy rather than a range shape, so it has no score.
+
+#### Advantages
+
+`compare().advantage` gives each advantage as hero minus villain, so a positive number favours (or, for weak hands, describes) hero:
+
+| Advantage | Measure | Modern Poker Theory |
+| --- | --- | --- |
+| `range` | Equity: hero's minus villain's | "Having the range vs range equity advantage can help the weaker hands in your range realize their equity" (Ch. 1). Its example: IP's 62% to the BB's 38% on A76r |
+| `nut` | Share of the range that is effective nuts | "A player has the nut advantage if the effective nut hands make up a larger portion of his range than the Villain's range" (Glossary) |
+| `polarization` | `shape.polarized`, hero's minus villain's | Its toy games raise bet sizes "as Hero's range gains the polarization advantage" (Ch. 10); the measure is derived, not given by the book |
+| `bands.<band>` | Share of each equity band (`strong`, `good`, `weak`, `trash`) | The equity bucket comparison of Ch. 10, e.g. "the BB has 8% strong hands and IP has a staggering 31%" on A76r |
+| `classes.<class>` | Share of each [hand class](#handclassesboardcards-options), e.g. `classes.air` | The range breakdowns of Ch. 1 and Ch. 12 |
+
+For bands and classes the number is a difference in share, not a judgement: an air advantage of 0.2 means hero holds 20 percentage points more air than villain, which means more bluff candidates and fewer hands that can call.
+
+**Effective nuts** are the hands with **at least 90% equity against the other range**. The book defines them as "a poker hand that is not the actual nuts but is strong enough that it should be played as if it were the nuts. For example, 7♣7♥ is the effective nuts on 8♥7♦2♦", with no numeric threshold. Each side reports them as `nuts: { count, share }`; change the threshold with `against(villain, board, { nuts: { minEquity: 0.85 } })`. Because they are measured by equity, they reflect vulnerability (a set on a wet board can fall short) and work preflop too. They are separate from [capping](#capping), which looks at made hands.
+
+This is narrower than the strong band (75%+). On A76r the opener has a large strong-band advantage (any ace is about 85% against the defender's range) but little nut advantage: its effective nuts are its sets (AA, 77, 66, 6.1% of the range) against the defender's 77 and 66 sets (3.4%).
+
+#### Capping
+
+A range is capped when it is missing the strongest hands: in the book's example, the big blind on A♥J♦T♠ "lacks all nut hands such as straights (KQ), sets (AA, JJ, TT), and most two pairs". That is about made hands on the board, not equity, so capping ranks every combo by its made hand (straight flush down to high card) and looks at the **top end**: the strongest 5% of combos, ties at the cut-off included. `capped` has two scores, each from 0 (uncapped) to 1 (capped):
+
+| Score | Top end | Formula |
+| --- | --- | --- |
+| `capped.relative` | The strongest 5% of the combos in **both ranges** | 1 − min(1, the range's share of that top end ÷ its share of all their combos) |
+| `capped.absolute` | The strongest 5% of **every combo** that can be dealt on the board | 1 − min(1, the range's share in that top end ÷ the share of all combos in it) |
+
+A range that holds at least its fair share of the top end scores 0; one that holds none scores 1; holding half its fair share scores 0.5. Relative capping says which of the two ranges holds the top hands between them. Absolute capping says whether a range reaches the board's actual nuts: when neither range can hold them, both are capped absolutely, while relative capping still shows who has more of the strongest hands. Change the top end with `shape: { topEnd: 0.1 }`; capping is `null` preflop, with no board to rank on.
+
+With the 5% default, capping matches the book's examples: the big blind without KQ, sets and AJ/AT on A♥J♦T♠ is capped (relative 1) and the button is not (0); on 5♥4♦3♠ the big blind holds the straights and is not capped (0). A 10% or 20% top end reaches down into one pair and no longer matches them.
+
+#### `handClasses(boardCards, options?)`
+
+Splits the range into hand classes on the board, putting each combo in exactly one class so the shares add up to 1. The classes and their order follow *Modern Poker Theory* (Ch. 1, "Post-flop Range Breakdown", and Ch. 12): a combo goes in the first class it fits, made hands before draws, flush draws before straight draws.
+
+| Group | Classes |
+| --- | --- |
+| Made hands | `straightFlush`, `quads`, `fullHouse`, `flush`, `straight`, `set` (a pocket pair), `trips` (one hole card), `twoPair` |
+| Pairs | `overpair`, `topPair`, `pocketPair12` (a pocket pair between the top and second board ranks), `secondPair`, `pocketPair23`, `thirdPair`, `pocketPair34`, `fourthPair`, `pocketPair45`, `bottomPair`, `underpair` |
+| Draws | `flushDraw` (including straight flush draws and combo draws), `oesd`, `gutshot` |
+| No pair, no draw | `aceHigh`, `kingHigh`, `air` |
+
+Pair positions count the board's distinct ranks from the top, and the lowest is always `bottomPair`; on a three-rank flop `secondPair` is the middle pair. A made hand counts only when it uses a hole card: AK on 8-8-3 is ace-high, not a pair. Backdoor draws stay in their no-pair class (they are in `flags`).
+
+**Returns:** `Promise<{ total, classes }>`, with every class as `{ count, share, combos }`. `options`: `{ highCards, street }`; `highCards: false` counts ace-high and king-high as air, as the book's Chapter 1 breakdown does.
+
+```javascript
+// The book's example: a hijack opening range against hero's A♦3♦ on A♣J♥9♥
+const hijack = new RangeManager('22+,A2s+,KQs,KJs,KTs,K9s,K8s,QJs,QTs,Q9s,Q8s,JTs,J9s,J8s,T9s,T8s,98s,97s,87s,76s,AKo,AQo,AJo,ATo,KQo,KJo,KTo,QJo,QTo', ['Ad', '3d']);
+const { total, classes } = await hijack.handClasses(['Ac', 'Jh', '9h'], { highCards: false });
+// total 225: set 7, twoPair 10, topPair 38, pocketPair12 12, secondPair 30, pocketPair23 6,
+// bottomPair 15, underpair 39, flushDraw 8, oesd 18, gutshot 36, air 6, the book's own counts
+classes.air.combos;  // ['Kc8c', 'Kd8d', 'Ks8s', '7c6c', '7d6d', '7s6s']
+```
+
+#### `compareTo(reference)`
+
+Compares your range with a reference range (notation, hands or a `RangeManager`), such as a chart you are studying:
+
+```javascript
+const vsChart = await spot.compareTo('77+,ATs+,KQs,AJo+');
+vsChart.overlap;           // 0.598: combos in common / combos in either
+vsChart.notation.extra;    // '66,A9s,KTs-KJs,QTs+,JTs,T9s,ATo,KJo+' (yours only)
+vsChart.notation.missing;  // '' (the chart's only)
+vsChart.equity;            // { range: 0.600, reference: 0.713 } against the same villain and board
+vsChart.distance;          // 0.113
+```
+
+`common`, `missing` and `extra` list the combos. After `against()`, it also compares both ranges against the same villain and board: `equity`, `buckets` (each a side summary), and `distance`, the earth mover's distance between the two equity distributions. 0 means the same shape; it is the average amount of equity that would have to move to turn one distribution into the other. Without `against()`, only the combos are compared.
+
+#### Betting math: `bettingMath()`, `defend()`, `bluffCandidates()`
+
+```javascript
+spot.bettingMath({ pot: 6, bet: 2 });
+// { alpha: 0.25, mdf: 0.75, potOdds: 0.2, bluffShare: 0.2, valueToBluff: 4 }
+
+// As the defender facing a 1/3-pot bet from the opener's range (202 combos, 174 can be dealt)
+const bb = await new RangeManager(defender).against(opener, flop);
+bb.defend({ pot: 6, bet: 2 }).size();                     // 129: equity >= pot odds
+bb.defend({ pot: 6, bet: 2, realization: 0.9 }).size();   // 114: out of position
+bb.defend({ pot: 6, bet: 2, by: 'mdf' }).size();          // 132: the strongest 75%
+
+// As the bettor: bluffs to go with the strong hands at a 2/3-pot bet
+const bluffs = await spot.bluffCandidates({ pot: 6, bet: 4 });
+bluffs.size();             // 24 (60 strong combos x alpha 0.4)
+```
+
+- `bettingMath({ pot, bet })`: `alpha` = bet / (pot + bet), how often a bluff must work; `mdf` = 1 - alpha; `potOdds` = bet / (pot + 2 × bet), the equity a call needs, which is also the bluff share of a balanced river bet (`bluffShare`); `valueToBluff` = value combos per bluff.
+- `defend({ pot, bet, by?, realization? })`: your continuing range against villain's bet (villain being the betting range you gave `against()`). By default it keeps hands whose equity × `realization` reaches the pot odds; `by: 'mdf'` keeps the strongest MDF share instead. The book warns that MDF is only a rough guide before the river: on A-Q-3 against a 1/3-pot bet, MDF says defend 75%, but the solver defends 42%, because the defender's weakest hands don't have the equity to call. `realization` scales equity for how much of it a hand realizes; the book gives about 0.9 out of position and 1.1 in position for symmetric ranges. Realization itself needs a solver.
+- `bluffCandidates({ pot, bet, value? })`: as the bettor, bluffs to pair with your value hands (the bands in `value`, default the top band). The count is value combos × alpha, so bluffs make up the pot-odds share of the betting range. It takes the lowest-band hands first, preferring those that block more of villain's continuing range (villain hands with at least the pot odds), then lower equity. Async and chainable.
+
+**Performance:** `against()` runs one equity calculation per hand in your range; the first `buckets()` or `compare()` runs one per hand in villain's range. The example above takes about 1.5 s. Two full ranges of about 600 combos each on the flop take about 7 s for `against()` and 7 s more for `compare()`.
+
+---
+
+### Combo Weights
+
+Every combo has a weight from 0 to 1: how often it is in the range. Unweighted combos weigh 1, so an unweighted range
+behaves exactly as before.
+
+**Formats** (later entries override earlier ones; weight 0 removes a combo):
+
+```javascript
+new RangeManager('AA,KK:0.5,AKs:0.25,AhKh:1');        // colon weights on any notation
+new RangeManager(['KsKc:0.5', 'KhKd', ['AhKh', 0.25], { hand: 'AsKs', weight: 0.25 }]); // arrays of exact hands
+new RangeManager({ KsKc: 0.5, AhKh: 0.25 });          // an object of exact hands and weights
+```
+
+**Reading weights:**
+
+| Method | Returns |
+|---|---|
+| `weightOf(hand)` | The combo's weight, 0 if it isn't in the range |
+| `weights()` | `{ hand: weight }` for every combo |
+| `weightedSize()` | Sum of the weights (`size()` still counts combos) |
+| `isWeighted()` | `true` when any combo weighs less than 1 |
+| `handWeights` | Only the combos whose weight isn't 1 |
+
+**Changing weights** (each returns a new range):
+
+| Method | Effect |
+|---|---|
+| `scale(factor)` | Multiplies every weight (capped at 1); `scale(0.5)` halves the range's frequencies |
+| `setWeight(input, weight)` | Sets the weight of those combos in the range; 0 removes them |
+| `include(input)` | Adds combos; a combo in both keeps the larger weight |
+| `exclude(input)` | Removes that share of each combo: excluding `'AKs:0.25'` keeps 75% of AKs |
+| `intersect(input)` | Keeps combos in both, weights multiplied |
+
+`include`, `exclude` and `intersect` also take another RangeManager, weights included. `exclude` with a list of
+cards (`['Ah', 'Kx']`) still removes every combo holding one.
+
+```javascript
+const range = new RangeManager('AA,KK,AKs').setWeight('KK', 0.5).exclude('AKs:0.25');
+range.toNotation();     // 'AA,AKs:0.75,KK:0.5'
+range.weightedSize();   // 6 + 3 + 3 = 12
+```
+
+`toNotation()` writes weights back in colon form and round-trips: a hand class whose combos share a weight is written
+once (`'KK:0.5'`), one with mixed weights as exact combos.
+
+**Weighted analysis.** Equity, `against()`, buckets, shapes, capping, nuts, hand classes, `breakdown()`,
+`rankHands()`, `strongest()`/`weakest()`, `compareTo()`, `defend()` and `bluffCandidates()` all count by weight: a
+combo at 0.5 is half a combo. Both sides can be weighted. Results add a `weight` beside each `count`, and `share` is
+by weight.
+
+Weights go straight to poker-bitvaljs (1.8.0+), which counts each hero/villain matchup heroWeight × villainWeight
+times, so weighted equity is exact and costs the same as unweighted:
+
+```javascript
+const hero = new RangeManager('AA,KK:0.5,AKs:0.25');
+const spot = await hero.against('QQ+,AK:0.5', ['Kh', '9h', '4d']);
 ```
 
 ---

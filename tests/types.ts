@@ -1,6 +1,9 @@
 // Type-checked by `npm run test:types`; not executed.
 import { RangeManager, RangeQuery } from 'poker-rangeman';
-import type { EquityResult, RankedHand, Breakdown, VillainRange, EvaluationResult, Hand } from 'poker-rangeman';
+import type {
+  EquityResult, RankedHand, Breakdown, VillainRange, EvaluationResult, Hand,
+  ComparisonReport, CompareToReport, BettingMath, Shape, HandClassesResult
+} from 'poker-rangeman';
 
 async function check(): Promise<void> {
   const rm = new RangeManager('TT+,AQs+,AK', ['Ah']);
@@ -34,6 +37,37 @@ async function check(): Promise<void> {
   const stored: Record<Hand, EquityResult> | null = syncFiltered.handEquity;
   const storedTotal: EquityResult = await syncFiltered.equity();
 
+  // Range vs range analysis
+  const spot: RangeManager = await rm.against('QQ+,AK', board, { bands: 'quartiles', iterations: 1000 });
+  const goodSpades: RangeManager = await rm.against('QQ+', board).bucket('good', 'weak').hasSuit('s');
+  const report: ComparisonReport = await spot.compare();
+  const nut: number | null = report.advantage.nut;
+  const airAdvantage: number | undefined = report.advantage.classes?.air;
+  const strongAdvantage: number | undefined = report.advantage.bands.strong;
+  const nutShare: number | null = report.hero.nuts.share;
+  await rm.against('QQ+', board, { nuts: { minEquity: 0.9 } });
+  const polarized: number | undefined = report.hero.shape?.polarized;
+  const shape: Shape | null = report.villain.shape;
+  const dominant: Shape['dominant'] | undefined = report.hero.shape?.dominant;
+  const capped: number | null = report.hero.capped.relative;
+  const absolute: number | null = report.villain.capped.absolute;
+  const air: number | undefined = report.handClasses?.air.hero;
+  const topPairFlag: number | undefined = report.flags?.isTopPair?.villain;
+  const classes: HandClassesResult = await rm.handClasses(board, { highCards: false });
+  const setShare: number = classes.classes.set.share;
+  const pendingClasses: Promise<HandClassesResult> = rm.against('QQ+', board).handClasses(board);
+  await rm.against('QQ+', board, { shape: { minDominant: 0.4, topEnd: '5%' } });
+  await rm.against('QQ+', board, { shape: { enough: '15%' } });
+  const strongShare: number = (await spot.buckets()).villain.buckets.strong.share;
+  const vsReference: CompareToReport = await spot.compareTo('TT+,AK');
+  const distance: number | null = vsReference.distance;
+  const math: BettingMath = spot.bettingMath({ pot: 10, bet: 5 });
+  const defending: RangeManager = spot.defend({ pot: 10, bet: 5, by: 'mdf', realization: 0.9 });
+  const bluffs: RangeManager = await spot.bluffCandidates({ pot: 10, bet: 7.5, value: ['strong', 'good'] });
+  const bands: Record<Hand, string | null> = spot.bandsByHand();
+  const custom: RangeManager = await rm.against('QQ+', board, { bands: [{ name: 'value', min: '70%' }, { name: 'rest', min: 0 }] });
+  const pendingReport: Promise<ComparisonReport> = rm.against('QQ+', board).compare();
+
   const ranked: RankedHand[] = await rm.rankHands(board);
   const top: RangeManager = await rm.strongest('20%', board, { street: 'river' });
   const bottom: RangeManager = await rm.weakest(0.1, board);
@@ -42,10 +76,28 @@ async function check(): Promise<void> {
   const blockers: VillainRange = await rm.blockers(board, ['Ah', 'Js']);
   const unblocked: string[] = blockers.allBlocks.unblocked;
 
+  // Combo weights
+  const weighted = new RangeManager('AA,KK:0.5,AhKh:0.25');
+  new RangeManager(['AhKh', 'QsQh:0.5', ['JsJh', 0.4], { hand: 'AsKs', weight: 0.25 }]);
+  new RangeManager({ AhKh: 0.4, TT: 1 });
+  const halved: RangeManager = weighted.scale(0.5).setWeight('AA', 0.75).include({ QsQh: 0.3 }).exclude([['KsKd', 0.5]]);
+  const w: Record<Hand, number> = halved.weights();
+  const one: number = halved.weightOf('AsAd') + halved.weightedSize();
+  const isW: boolean = halved.isWeighted();
+  const stored2: Record<Hand, number> = halved.handWeights;
+  const pendingW: Promise<number> = rm.hitsHand(['Pair'], board).scale(0.5).weightedSize();
+  await weighted.against('QQ+:0.5', board);
+  const bucketWeight: number = (await spot.buckets()).hero.buckets.strong.weight;
+  const nutWeight: number = report.hero.nuts.weight;
+  const classWeight: number = classes.classes.air.weight;
+  const rankedWeight: number | undefined = (await weighted.rankHands(board))[0]?.weight;
+  void [w, one, isW, stored2, pendingW, bucketWeight, nutWeight, classWeight, rankedWeight];
+
   const notation: string = top.toNotation();
   const size: number = bottom.size();
   void [keyCards, middling, uses, total, byHand, above, between, ranked, pairs, unblocked, notation, size,
-    asPromise, chainedRange, pendingSize, pendingEquity, stored, storedTotal];
+    asPromise, chainedRange, pendingSize, pendingEquity, stored, storedTotal,
+    goodSpades, nut, airAdvantage, strongAdvantage, nutShare, polarized, shape, dominant, capped, absolute, air, topPairFlag, setShare, pendingClasses, strongShare, distance, math, defending, bluffs, bands, custom, pendingReport];
 }
 
 void check;
