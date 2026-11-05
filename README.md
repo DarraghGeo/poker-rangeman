@@ -1,6 +1,6 @@
 # Poker Range Manager
 
-A comprehensive JavaScript library for parsing, managing, and filtering poker hand ranges with support for dead cards, board cards, and hand strength evaluation.
+A JavaScript library for parsing, managing, filtering and analysing poker hand ranges: range notation, dead cards, how a range hits a board, equity against another range, hand strength rankings and blockers. Hand evaluation uses [poker-extval](https://github.com/DarraghGeo/poker-extval); equity uses [poker-bitvaljs](https://github.com/DarraghGeo/poker-bitvaljs).
 
 ## Table of Contents
 
@@ -10,11 +10,16 @@ A comprehensive JavaScript library for parsing, managing, and filtering poker ha
   - [Constructor](#constructor)
   - [Query Methods](#query-methods)
   - [Filtering Methods](#filtering-methods)
+  - [Evaluation Options](#evaluation-options)
   - [Evaluation Methods](#evaluation-methods)
+  - [Equity Methods](#equity-methods)
+  - [Strength, Breakdown and Blockers](#strength-breakdown-and-blockers)
 - [Range Notation Guide](#range-notation-guide)
 - [Hand Strength Criteria](#hand-strength-criteria)
 - [Method Chaining Examples](#method-chaining-examples)
 - [Examples](#examples)
+- [TypeScript](#typescript)
+- [Releasing](#releasing)
 
 ## Installation
 
@@ -22,7 +27,7 @@ A comprehensive JavaScript library for parsing, managing, and filtering poker ha
 npm install poker-rangeman
 ```
 
-The library uses ES modules and requires Node.js 14+. It's available on [npm](https://www.npmjs.com/package/poker-rangeman).
+The library uses ES modules and requires Node.js 20.19+ or 22.13+ (the versions poker-extval supports). It's available on [npm](https://www.npmjs.com/package/poker-rangeman).
 
 ## Quick Start
 
@@ -313,13 +318,14 @@ rm.size();                // Original unchanged
 **Throws:**
 - `Error`: If suit is invalid
 
-#### `makesHand(criteria, boardCards)`
+#### `makesHand(criteria, boardCards, options?)`
 
-Filters the range to only include hands that make the specified strength criteria on the given board. Requires at least 3 board cards.
+Filters the range to only include hands that make the specified strength criteria on the given board. Requires at least 3 board cards. Each hand is evaluated as the player's hole cards, so board-relative labels (top pair, over pair), draws and overcards describe that hand, not the board.
 
 **Parameters:**
 - `criteria` (string[]): Array of hand strength criteria (e.g., `['Pair', 'Straight']`)
 - `boardCards` (string[]): Array of board cards (must have at least 3 cards)
+- `options` (boolean | object, optional): `strict` boolean, or an [options object](#evaluation-options)
 
 **Returns:** `Promise<RangeManager>` - Promise resolving to new instance with matching hands
 
@@ -343,13 +349,14 @@ const strong = await rm.makesHand(['Pair', 'Straight', 'Flush'], board);
 
 **Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
 
-#### `hitsHand(criteria, boardCards)`
+#### `hitsHand(criteria, boardCards, options?)`
 
 Filters the range to only include hands where at least one hand card is used in making the specified criteria. Requires at least 3 board cards.
 
 **Parameters:**
 - `criteria` (string[]): Array of hand strength criteria
 - `boardCards` (string[]): Array of board cards (must have at least 3 cards)
+- `options` (boolean | object, optional): `strict` boolean, or an [options object](#evaluation-options)
 
 **Returns:** `Promise<RangeManager>` - Promise resolving to new instance with matching hands
 
@@ -364,13 +371,14 @@ const hands = await rm.hitsHand(['Pair'], board);
 
 **Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
 
-#### `hitsHandBoth(criteria, boardCards)`
+#### `hitsHandBoth(criteria, boardCards, options?)`
 
 Filters the range to only include hands where both hand cards are used in making the specified criteria. Requires at least 3 board cards.
 
 **Parameters:**
 - `criteria` (string[]): Array of hand strength criteria
 - `boardCards` (string[]): Array of board cards (must have at least 3 cards)
+- `options` (boolean | object, optional): `strict` boolean, or an [options object](#evaluation-options)
 
 **Returns:** `Promise<RangeManager>` - Promise resolving to new instance with matching hands
 
@@ -384,6 +392,28 @@ const hands = await rm.hitsHandBoth(['Pair'], board);
 ```
 
 **Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
+
+#### Evaluation Options
+
+`makesHand()`, `hitsHand()`, `hitsHandBoth()`, `evaluateHand()` and `getObject()` take either the `strict` boolean (as in earlier versions) or an options object:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `strict` | `true` | Only the strongest made hand when true; every 5-card combination when false |
+| `street` | inferred | `'flop'`, `'turn'` or `'river'`. Decides which draws can still complete (no backdoor draws on the turn, no draws on the river). Inferred from the card count when not given |
+| `excludeBoardPlays` | `false` | When true, a made hand that uses neither hole card does not count: AK on 8-8-3 "makes" a pair, but the pair is the board's |
+
+```javascript
+const rm = new RangeManager('AKo,A8s');
+const board = ['8h', '8d', '3c'];
+
+(await rm.makesHand(['Pair'], board)).toNotation();                               // 'AKo' (playing the board's pair)
+(await rm.makesHand(['Pair'], board, { excludeBoardPlays: true })).toNotation();  // ''
+(await rm.makesHand(['Three of a Kind'], board, { excludeBoardPlays: true })).toNotation(); // 'A8s'
+
+// Evaluate a 5-card board as the river: no draws
+await rm.makesHand(['Flush Draw'], ['Kh', '9h', '4h'], { street: 'river' });
+```
 
 #### `setDeadCards(deadCards)`
 
@@ -493,7 +523,7 @@ const withAnyAceKicker = hitHands.hasKicker(['Ax']); // Any Ace as kicker
 
 ### Evaluation Methods
 
-#### `evaluateHand(hand, boardCards)`
+#### `evaluateHand(hand, boardCards, options?)`
 
 Evaluates a single hand against board cards and returns a fluent API for checking hand strength. Returns a Promise that resolves to an object with `.is()` and `.isAll()` methods.
 
@@ -523,9 +553,9 @@ const isPair = evaluation.is('Pair');
 
 **Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
 
-#### `getObject(hand, boardCards)`
+#### `getObject(hand, boardCards, options?)`
 
-Returns the raw evaluation object from `poker-extval` for a single hand.
+Returns the evaluation object from `poker-extval` for a single hand, evaluated with the hand as hole cards. Besides every flag it includes `usesHoleCards` (whether the made hand uses a hole card), `keyCards` and `kickerCards`, and rangeman's `isMiddlingPair`.
 
 **Parameters:**
 - `hand` (string): Hand to evaluate (e.g., `'AcKc'`)
@@ -543,6 +573,103 @@ const evaluation = await rm.getObject('AcKc', board);
 ```
 
 **Note:** This method is asynchronous and requires the `poker-extval` library for hand evaluation.
+
+---
+
+### Equity Methods
+
+Equity runs out the board for every matchup between this range and villain's: exact on the flop and turn, and preflop a lookup table or Monte Carlo estimate. Hands that share a card with the board, the range's dead cards or `options.deadCards` are skipped.
+
+`villain` can be range notation (`'QQ+,AK'`), an array of hands, two cards (`['Ah', 'Kd']`) or another `RangeManager`. `boardCards` is `[]` (preflop) or 3 to 5 cards. `options` are `{ deadCards, iterations }`: extra dead cards (wildcards allowed) and Monte Carlo samples per matchup preflop (default 10000).
+
+Equity thresholds are a number from 0 to 1 (`0.8`) or a percentage string (`'80%'`).
+
+#### `equity(villain, boardCards?, options?)`
+
+The whole range's equity against villain.
+
+**Returns:** `Promise<{ win, tie, lose, equity }>`: runout counts from this range's side, and `equity = (win + tie / 2) / total` (`null` if no matchup is possible)
+
+```javascript
+const hero = new RangeManager('TT+,AQs+,AK');
+await hero.equity('QQ+,AK', ['Kh', '9h', '4d']);
+// { win: 233331, tie: 80460, lose: 541569, equity: 0.3198... }
+```
+
+#### `equityByHand(villain, boardCards?, options?)`
+
+Each hand's equity against villain.
+
+**Returns:** `Promise<{ [hand]: { win, tie, lose, equity } }>`. `equity` is `null` for a hand that cannot be dealt.
+
+Results are cached on the range and shared with every range derived from it, so chained equity filters on the same villain and board do not recompute.
+
+#### `equityAbove(min, villain, boardCards?, options?)`
+#### `equityBelow(max, villain, boardCards?, options?)`
+#### `equityBetween(min, max, villain, boardCards?, options?)`
+
+Keep the hands whose equity against villain is greater than `min`, less than `max`, or between `min` and `max` inclusive. Each returns a new `RangeManager`, so they chain with each other and with every other filter.
+
+```javascript
+const hero = new RangeManager('22+,A2s+,KTs+,QTs+,JTs,AJo+,KQo');
+const villain = 'TT+,AQs+,AK';
+const flop = ['Kh', '9h', '4d'];
+
+const value = await hero.equityAbove('80%', villain, flop);
+const medium = await hero.equityBetween('70%', '90%', villain, flop);
+const bluffCatchers = await (await hero.makesHand(['Pair'], flop)).equityBetween(0.4, 0.6, villain, flop);
+const giveUp = await hero.equityBelow(0.2, villain, flop);
+```
+
+**Performance:** per-hand equity runs one calculation per hand, so it grows with both ranges. The example above (198 hero combos against about 50 villain combos on the flop) takes about 0.2 s; turn and river boards are faster. Preflop uses Monte Carlo unless poker-bitvaljs has its preflop table loaded, so lower `iterations` for large ranges.
+
+---
+
+### Strength, Breakdown and Blockers
+
+These need a board of 3 to 5 cards and take `options` `{ street }`. Hands that share a card with the board are left out.
+
+#### `rankHands(boardCards, options?)`
+
+Every hand in the range, strongest first, by made hand (draws do not count).
+
+**Returns:** `Promise<Array<{ hand, category, strength, rank }>>`: `category` is the made hand flag (e.g. `'isFlush'`), `strength` 10 (royal flush) down to 1 (high card), and `rank` an array that compares element by element (higher wins).
+
+#### `strongest(portion, boardCards, options?)` / `weakest(portion, boardCards, options?)`
+
+The strongest or weakest share of the range on this board (`0.2` or `'20%'`). Hands tied with the last hand taken are kept too. Returns a new `RangeManager`.
+
+```javascript
+const rm = new RangeManager('22+,AK,AQ,KQ');
+const top = await rm.strongest('20%', ['Kh', '9h', '4d']);
+const bottom = await rm.weakest(0.3, ['Kh', '9h', '4d']);
+```
+
+#### `breakdown(boardCards, options?)`
+
+How the range hits the board: the number and share of combos holding each flag.
+
+**Returns:** `Promise<{ total, flags }>`: `flags` maps each flag held by at least one hand to `{ count, share, combos }`, most common first.
+
+```javascript
+const { total, flags } = await new RangeManager('TT+,AK,AQs').breakdown(['Kh', '9h', '4d']);
+flags.isPair.count;              // combos with exactly one pair
+flags.isTopPair.share;           // share of the range with top pair
+flags.isBackdoorFlushDraw.combos // the combos themselves
+```
+
+#### `blockers(boardCards, heroCards?, options?)`
+
+Treats this range as villain's and splits it by which known cards block it, as poker-extval's `classifyRange()` does. `heroCards` (`'AhJs'` or `['Ah', 'Js']`) is optional, but the board plus hero cards must be at least 5 cards.
+
+**Returns:** `Promise<{ boardBlocks, heroBlocks, allBlocks }>`, each `{ unblocked, blocked }`. `unblocked` lists the combos villain can still hold; `blocked` groups blocked combos under the made hand and draws villain would have held with them, or under `onBoard` when a board card blocks them.
+
+```javascript
+const villain = new RangeManager('AQs,AA,QQ');
+const { heroBlocks, allBlocks } = await villain.blockers(['Kh', '9h', '4h', '2c'], 'AhJs');
+heroBlocks.blocked.isFlush;  // ['AhQh']: your Ah blocks the nut flush
+allBlocks.unblocked;         // combos villain can actually hold
+```
 
 ---
 
@@ -571,6 +698,12 @@ const evaluation = await rm.getObject('AcKc', board);
   - For `A2o+`, the second rank goes from 2 to K (where K is one rank below A)
   - Examples: `QTo+` = QTo, QJo (T to J, where J is one rank below Q); `J8o+` = J8o, J9o, JTo (8 to T, where T is one rank below J)
 - `A3o-A6o` - Offsuit range from A3o to A6o (48 combinations)
+
+### Suited and Offsuit Together
+
+- `AK` - Ace-King suited and offsuit (16 combinations), the same as `AKs,AKo`
+- `AT+` - `ATs+,ATo+` (64 combinations)
+- `AK-AT` - `AKs-ATs,AKo-ATo`
 
 ### Wildcards
 
@@ -619,7 +752,7 @@ Use commas to separate different notation types:
 
 ## Hand Strength Criteria
 
-The following criteria can be used with the `makesHand()`, `hitsHand()`, and `hitsHandBoth()` methods. All criteria are directly supported by `poker-extval`:
+The following criteria can be used with the `makesHand()`, `hitsHand()`, and `hitsHandBoth()` methods. Each criterion is a display name (`'Top Pair'`) or the poker-extval flag it maps to (`'isTopPair'`). Unknown criteria throw an error.
 
 ### Made Hands
 - `'Pair'` - One pair
@@ -635,7 +768,7 @@ The following criteria can be used with the `makesHand()`, `hitsHand()`, and `hi
 
 ### Pair Categorization
 
-When a board is provided, pair types are **board-relative** (defined by the hand’s pair rank vs the board’s ranks):
+Pair types are **board-relative**: poker-extval judges them against the whole board, using the hand as hole cards. A label applies only when the made hand is that pair, so AA on K-K-4 is two pair and has no over pair label, and a pair made only of board cards gets no label.
 
 - **Pairs that use a board card:** `'Top Pair'` (pair the board’s highest card), `'Middle Pair'` (pair the board’s middle card), `'Bottom Pair'` (pair the board’s lowest card).
 - **Pocket pairs vs board:** `'Overpair'` (pocket pair above the board’s highest card), `'Underpair'` (pocket pair below the board’s lowest card), `'Middling Pair'` (pocket pair with rank strictly between the board’s highest and lowest, and that rank does not appear on the board; distinct from Middle Pair, which pairs a board card).
@@ -645,8 +778,8 @@ Criteria available for use with `makesHand()`, `hitsHand()`, and `hitsHandBoth()
 - `'Top Pair'` - Top pair (pair the board’s highest card)
 - `'Middle Pair'` - Middle pair (pair the board’s middle card)
 - `'Bottom Pair'` - Bottom pair (pair the board’s lowest card)
-- `'Overpair'` - Overpair (pocket pair above the board’s highest card)
-- `'Underpair'` - Underpair (pocket pair below the board’s lowest card)
+- `'Overpair'` (or `'Over Pair'`, flag `isOverPair`) - Overpair (pocket pair above the board’s highest card)
+- `'Underpair'` (or `'Under Pair'`) - Underpair (pocket pair below the board’s lowest card)
 - `'Middling Pair'` - Middling pair (pocket pair between board high and low, rank not on board)
 
 ### Two Pair Categorization
@@ -667,10 +800,24 @@ Criteria available for use with `makesHand()`, `hitsHand()`, and `hitsHandBoth()
 - `'Straight Draw'` - Straight draw
 - `'Combo Draw'` - Combo draw (both flush and straight draw)
 
+Draws must use a hole card: four hearts on the board are not a flush draw for a hand without a heart.
+
 ### Wheel Straight Support
 - `'Straight Wheel'` - Wheel straight (A-2-3-4-5)
 - `'Open Ended Straight Draw Wheel'` - Open-ended wheel straight draw
 - `'Inside Straight Draw Wheel'` - Inside wheel straight draw
+
+### Hole Cards Against the Board
+
+Each hole card is an overcard (above every board card), a middle card, an undercard (below every board card), or paired.
+
+- `'Overcard'` - At least one overcard
+- `'Two Overcards'` - Two overcards
+- `'Overcard And Middle Card'` - One of each
+- `'Overcard And Undercard'` - One of each
+- `'Two Middle Cards'` - Two middle cards
+- `'Middle And Undercard'` - One of each
+- `'Two Undercards'` - Two undercards
 
 ---
 
@@ -940,6 +1087,23 @@ console.log(filtered2.toNotation());   // Still abbreviated (e.g., "AKs" or indi
 ```
 
 ---
+
+## TypeScript
+
+Types ship with the package (`index.d.ts`) and cover every method, option and criterion:
+
+```typescript
+import { RangeManager, type Criterion, type EquityResult } from 'poker-rangeman';
+```
+
+## Releasing
+
+- **Tests** (`.github/workflows/test.yml`) run on every push and pull request, on the oldest supported and current Node versions, and type-check `index.d.ts`.
+- **Publishing** (`.github/workflows/publish.yml`) runs when a push to `main` changes `src/`, `index.d.ts` or `package.json`; docs or test changes alone do not publish. It runs the tests, then:
+  - if `package.json` holds a version newer than npm's latest (e.g. after `npm version minor --no-git-tag-version`), publishes that version;
+  - otherwise bumps the patch past npm's latest and commits the bump back to `main`.
+
+  It then tags the release `v<version>` and publishes with npm trusted publishing (no stored token, with provenance). It can also be started by hand from the Actions tab.
 
 ## License
 

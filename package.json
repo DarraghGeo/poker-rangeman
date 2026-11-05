@@ -1,21 +1,27 @@
 {
   "name": "poker-rangeman",
-  "version": "3.5.0",
-  "description": "A comprehensive JavaScript library for parsing, managing, and filtering poker hand ranges with support for dead cards, board cards, and hand strength evaluation",
+  "version": "3.6.0",
+  "description": "A JavaScript library for parsing, filtering and analysing poker hand ranges: notation, dead cards, board texture, hand strength, equity and blockers",
   "main": "src/rangeManager.js",
   "type": "module",
   "exports": {
-    ".": "./src/rangeManager.js"
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./src/rangeManager.js"
+    }
   },
   "files": [
     "src/",
+    "index.d.ts",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js && npm run test:types",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
-    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "test:jest": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:types": "tsc --noEmit --strict --target es2020 --module nodenext --moduleResolution nodenext tests/types.ts"
   },
   "keywords": [
     "poker",
@@ -25,7 +31,9 @@
     "texas-holdem",
     "poker-hands",
     "range-calculator",
-    "poker-analysis"
+    "poker-analysis",
+    "equity",
+    "blockers"
   ],
   "author": "Darragh Geoghegan",
   "license": "MIT",
@@ -34,16 +42,19 @@
     "url": "https://github.com/DarraghGeo/poker-rangeman.git"
   },
   "dependencies": {
-    "poker-extval": "^5.0.1"
+    "poker-bitvaljs": "^1.7.0",
+    "poker-extval": "^5.0.2"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "jest": "^29.7.0",
+    "typescript": "^5.9.3"
   },
   "jest": {
     "transform": {},
     "testEnvironment": "node"
   },
   "engines": {
-    "node": ">=14.0.0"
-  }
+    "node": "^20.19.0 || >=22.13.0"
+  },
+  "types": "index.d.ts"
 }
