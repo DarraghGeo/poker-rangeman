@@ -620,6 +620,8 @@ export class RangeManager {
       input.forEach(item => {
         if (Array.isArray(item)) {
           set([exactHand(item[0], 'array')], this._parseWeight(item[1], item[0]));
+        } else if (this._isPlainObject(item) && typeof item.hand === 'string') {
+          set([exactHand(item.hand, 'array')], item.weight === undefined ? 1 : this._parseWeight(item.weight, item.hand));
         } else if (typeof item === 'string' && item.includes(':')) {
           const [hand, weight] = this._splitWeight(item);
           set([exactHand(hand.trim(), 'array')], this._parseWeight(weight, hand));
@@ -1216,29 +1218,10 @@ export class RangeManager {
     throw new Error('Villain must be range notation, an array of hands, an object of weights, or a RangeManager');
   }
 
-  // Groups hands by weight rounded to `step` (a weight below step rounds up to step), for weighted equity
-  _weightGroups(hands, weights, step) {
-    const groups = new Map();
-    for (const hand of hands) {
-      const weight = +Math.max(step, Math.round((weights[hand] ?? 1) / step) * step).toFixed(6);
-      if (!groups.has(weight)) groups.set(weight, []);
-      groups.get(weight).push(hand);
-    }
-    return [...groups.entries()].map(([weight, list]) => ({ weight, hands: list }));
-  }
-
-  // Equity between two weighted ranges: one calculation per pair of weight groups, counts scaled by both weights
-  async _weightedEquity(heroGroups, villainGroups, board, deadCards, iterations) {
-    const totals = { win: 0, tie: 0, lose: 0 };
-    for (const hero of heroGroups) {
-      for (const villain of villainGroups) {
-        const result = await this._computeEquity(hero.hands, villain.hands, board, deadCards, iterations);
-        const factor = hero.weight * villain.weight;
-        totals.win += result.win * factor; totals.tie += result.tie * factor; totals.lose += result.lose * factor;
-      }
-    }
-    const total = totals.win + totals.tie + totals.lose;
-    return { ...totals, equity: total ? (totals.win + totals.tie / 2) / total : null };
+  // Equity between two weighted ranges in one bitval call: each pair counts heroWeight x villainWeight
+  async _weightedEquity(heroHands, heroWeights, villainHands, villainWeights, board, deadCards, iterations) {
+    const entries = (hands, weights) => hands.map(hand => (weights[hand] === undefined ? hand : { hand, weight: weights[hand] }));
+    return this._computeEquity(entries(heroHands, heroWeights), entries(villainHands, villainWeights), board, deadCards, iterations);
   }
 
   _weightKey(hands, weights) {
@@ -1266,12 +1249,8 @@ export class RangeManager {
     const deadCards = [...new Set([...this.deadCards, ...extraDead])];
     const iterations = options.iterations ?? 10000;
     if (!Number.isInteger(iterations) || iterations < 1) throw new Error('iterations must be a positive integer');
-    // Weighted equity runs once per distinct weight, so weights are rounded to weightStep (default 1%)
-    const weightStep = this._parseShare(options.weightStep ?? 0.01, 'weightStep');
-    if (weightStep === 0) throw new Error('weightStep must be above 0');
-    const villainGroups = this._weightGroups(villainHands, villainWeights, weightStep);
-    const key = `${this._weightKey(villainHands, villainWeights)}|${board.join(',')}|${[...deadCards].sort().join(',')}|${iterations}|${weightStep}`;
-    return { board, villainHands, villainWeights, villainGroups, weightStep, deadCards, iterations, key };
+    const key = `${this._weightKey(villainHands, villainWeights)}|${board.join(',')}|${[...deadCards].sort().join(',')}|${iterations}`;
+    return { board, villainHands, villainWeights, deadCards, iterations, key };
   }
 
   /**
@@ -1290,10 +1269,9 @@ export class RangeManager {
       const total = totals.win + totals.tie + totals.lose;
       return { ...totals, equity: total ? (totals.win + totals.tie / 2) / total : null };
     }
-    const { board, villainHands, villainGroups, weightStep, deadCards, iterations } = this._prepareEquity(villain, boardCards, options);
+    const { board, villainHands, villainWeights, deadCards, iterations } = this._prepareEquity(villain, boardCards, options);
     if (this.filteredHands.length === 0 || villainHands.length === 0) return { win: 0, tie: 0, lose: 0, equity: null };
-    const heroGroups = this._weightGroups(this.filteredHands, this.handWeights, weightStep);
-    return this._weightedEquity(heroGroups, villainGroups, board, deadCards, iterations);
+    return this._weightedEquity(this.filteredHands, this.handWeights, villainHands, villainWeights, board, deadCards, iterations);
   }
 
   /**
@@ -1314,14 +1292,14 @@ export class RangeManager {
     return results;
   }
 
-  async _handEquity(hand, { board, villainHands, villainGroups, deadCards, iterations, key }) {
+  async _handEquity(hand, { board, villainHands, villainWeights, deadCards, iterations, key }) {
     const cacheKey = `${hand}|${key}`;
     if (!this.equityCache.has(cacheKey)) {
       const handCards = this._extractCardsFromHand(hand);
       const blocked = handCards.some(c => board.includes(c) || deadCards.includes(c));
       const result = blocked || villainHands.length === 0
         ? { win: 0, tie: 0, lose: 0, equity: null }
-        : await this._weightedEquity([{ weight: 1, hands: [hand] }], villainGroups, board, deadCards, iterations);
+        : await this._weightedEquity([hand], {}, villainHands, villainWeights, board, deadCards, iterations);
       this.equityCache.set(cacheKey, result);
     }
     return this.equityCache.get(cacheKey);
@@ -1352,7 +1330,6 @@ export class RangeManager {
     instance.matchup = {
       villainHands: prepared.villainHands,
       villainWeights: prepared.villainWeights,
-      weightStep: prepared.weightStep,
       parentWeights: this.handWeights,
       board: prepared.board,
       deadCards: prepared.deadCards,
@@ -1646,18 +1623,17 @@ export class RangeManager {
 
   // Villain's equity per hand against hero's current hands; cached per set of hero hands
   async _villainEquityByHand() {
-    const { villainHands, board, deadCards, iterations, key, weightStep } = this._requireMatchup();
+    const { villainHands, board, deadCards, iterations, key } = this._requireMatchup();
     const heroHands = this.filteredHands;
     const cacheKey = `villain|${key}|${this._weightKey(heroHands, this.handWeights)}`;
     if (!this.equityCache.has(cacheKey)) {
       const results = {};
-      const heroGroups = this._weightGroups(heroHands, this.handWeights, weightStep);
       for (const hand of villainHands) {
         const cards = this._extractCardsFromHand(hand);
         const blocked = cards.some(c => board.includes(c) || deadCards.includes(c));
         results[hand] = blocked || heroHands.length === 0
           ? { win: 0, tie: 0, lose: 0, equity: null }
-          : await this._weightedEquity([{ weight: 1, hands: [hand] }], heroGroups, board, deadCards, iterations);
+          : await this._weightedEquity([hand], {}, heroHands, this.handWeights, board, deadCards, iterations);
       }
       this.equityCache.set(cacheKey, results);
     }
@@ -2034,10 +2010,10 @@ export class RangeManager {
       equity: null, buckets: null, distance: null
     };
     if (!this.matchup) return report;
-    const { villainHands, villainWeights, weightStep, board, deadCards, iterations, bands, parentHands, parentWeights, shapeEnough, minDominant, topEnd } = this.matchup;
+    const { villainHands, villainWeights, board, deadCards, iterations, bands, parentHands, parentWeights, shapeEnough, minDominant, topEnd } = this.matchup;
     const villainInput = villainHands.length ? villainHands.map(hand => [hand, villainWeights[hand] ?? 1]) : villainHands;
     const referenceWithEquity = await referenceRange.against(villainInput, board, {
-      deadCards, iterations, bands, weightStep, shape: { enough: shapeEnough, minDominant, topEnd }
+      deadCards, iterations, bands, shape: { enough: shapeEnough, minDominant, topEnd }
     });
     const rangeSummary = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, parentHands, shapeEnough, minDominant, this.handWeights, parentWeights);
     const referenceSummary = this._sideSummary(

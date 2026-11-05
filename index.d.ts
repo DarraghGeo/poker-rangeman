@@ -18,10 +18,10 @@ export type Hand = string;
 
 /**
  * Range notation ('AA,KQs,JTo', 'AT+', 'KXs', 'AhXs', with optional weights 'AA:0.5,AhKh:0.25'), an array of
- * hands or notation ('AhKh', 'AKs:0.5', ['AhKh', 0.4]), or an object of weights ({ AhKh: 0.4, QQ: 1 }).
+ * exact hands ('AhKh', 'AhKh:0.5', ['AhKh', 0.4], { hand: 'AhKh', weight: 0.4 }), or an object of weights ({ AhKh: 0.4, QQ: 1 }).
  * A weight is 0 to 1; 0 removes the hand. Later entries override earlier ones.
  */
-export type RangeInput = string | Array<Hand | string | [string, number]> | Record<string, number>;
+export type RangeInput = string | Array<Hand | string | [Hand, number] | { hand: Hand; weight?: number }> | Record<string, number>;
 
 /** A dead card, exact ('Ah') or a wildcard ('Ax' every ace, 'Xh' every heart). */
 export type DeadCard = string;
@@ -79,8 +79,6 @@ export interface EquityOptions {
   deadCards?: DeadCard[];
   /** Monte Carlo samples per matchup, used preflop only. Default 10000. */
   iterations?: number;
-  /** Weights are grouped to this step for weighted equity (one equity run per pair of groups). Default 0.01. */
-  weightStep?: Share;
 }
 
 export interface EquityResult {
@@ -131,7 +129,6 @@ export interface Matchup {
   villainHands: Hand[];
   /** Villain combos whose weight isn't 1. */
   villainWeights: Record<Hand, number>;
-  weightStep: number;
   /** Weights of the range at against() time. */
   parentWeights: Record<Hand, number>;
   board: Card[];

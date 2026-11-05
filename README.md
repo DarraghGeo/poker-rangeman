@@ -891,8 +891,8 @@ behaves exactly as before.
 
 ```javascript
 new RangeManager('AA,KK:0.5,AKs:0.25,AhKh:1');        // colon weights on any notation
-new RangeManager(['AA', 'KK:0.5', ['AhKh', 0.25]]);   // arrays: hands, notation, or [notation, weight] pairs
-new RangeManager({ AA: 1, KK: 0.5, AhKh: 0.25 });     // an object of weights
+new RangeManager(['KsKc:0.5', 'KhKd', ['AhKh', 0.25], { hand: 'AsKs', weight: 0.25 }]); // arrays of exact hands
+new RangeManager({ KsKc: 0.5, AhKh: 0.25 });          // an object of exact hands and weights
 ```
 
 **Reading weights:**
@@ -932,13 +932,12 @@ once (`'KK:0.5'`), one with mixed weights as exact combos.
 combo at 0.5 is half a combo. Both sides can be weighted. Results add a `weight` beside each `count`, and `share` is
 by weight.
 
-The equity solver has no per-combo weights, so weights are grouped to `weightStep` (default `0.01`, i.e. 1%) and
-equity runs once per pair of weight groups, each matchup counted by both weights. A coarser step is faster on
-ranges with many distinct weights:
+Weights go straight to poker-bitvaljs (1.8.0+), which counts each hero/villain matchup heroWeight × villainWeight
+times, so weighted equity is exact and costs the same as unweighted:
 
 ```javascript
 const hero = new RangeManager('AA,KK:0.5,AKs:0.25');
-const spot = await hero.against('QQ+,AK:0.5', ['Kh', '9h', '4d'], { weightStep: 0.05 });
+const spot = await hero.against('QQ+,AK:0.5', ['Kh', '9h', '4d']);
 ```
 
 ---

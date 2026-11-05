@@ -78,15 +78,15 @@ async function check(): Promise<void> {
 
   // Combo weights
   const weighted = new RangeManager('AA,KK:0.5,AhKh:0.25');
-  new RangeManager(['AhKh', 'QQ:0.5', ['JJ', 0.4]]);
+  new RangeManager(['AhKh', 'QsQh:0.5', ['JsJh', 0.4], { hand: 'AsKs', weight: 0.25 }]);
   new RangeManager({ AhKh: 0.4, TT: 1 });
-  const halved: RangeManager = weighted.scale(0.5).setWeight('AA', 0.75).include({ QQ: 0.3 }).exclude([['KK', 0.5]]);
+  const halved: RangeManager = weighted.scale(0.5).setWeight('AA', 0.75).include({ QsQh: 0.3 }).exclude([['KsKd', 0.5]]);
   const w: Record<Hand, number> = halved.weights();
   const one: number = halved.weightOf('AsAd') + halved.weightedSize();
   const isW: boolean = halved.isWeighted();
   const stored2: Record<Hand, number> = halved.handWeights;
   const pendingW: Promise<number> = rm.hitsHand(['Pair'], board).scale(0.5).weightedSize();
-  await weighted.against('QQ+:0.5', board, { weightStep: 0.05 });
+  await weighted.against('QQ+:0.5', board);
   const bucketWeight: number = (await spot.buckets()).hero.buckets.strong.weight;
   const nutWeight: number = report.hero.nuts.weight;
   const classWeight: number = classes.classes.air.weight;

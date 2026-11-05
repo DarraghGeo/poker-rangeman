@@ -3385,11 +3385,17 @@ describe('combo weights', () => {
       expect(stored.equity).toBeCloseTo(36 / 54, 10);
     });
 
-    it('rounds weights to weightStep (default 1%)', async () => {
-      const exact = 6 / (6 + 6 * 0.33);
+    it('uses exact weights (no rounding)', async () => {
+      const exact = 6 / (6 + 6 * 0.333);
       expect((await new RangeManager('TT').equity('88,QQ:0.333', river)).equity).toBeCloseTo(exact, 10);
-      const coarse = 6 / (6 + 6 * 0.25); // 0.333 rounds to the nearest 0.25 step
-      expect((await new RangeManager('TT').equity('88,QQ:0.333', river, { weightStep: 0.25 })).equity).toBeCloseTo(coarse, 10);
+      const both = await new RangeManager('TT:0.37,99').equity('88:0.5,QQ:0.333', river);
+      // TT and 99 both beat 88 and lose to QQ; TT's weight cancels out: 0.5 / (0.5 + 0.333)
+      expect(both.equity).toBeCloseTo(0.5 / (0.5 + 0.333), 10);
+    });
+
+    it('accepts { hand, weight } array entries (bitval form)', () => {
+      const rm = new RangeManager(['KsKc:0.5', 'KhKd', { hand: 'AsKs', weight: 0.25 }, { hand: 'QsQh' }]);
+      expect(rm.weights()).toEqual({ KcKs: 0.5, KdKh: 1, AsKs: 0.25, QhQs: 1 }); // pairs normalise to c, d, h, s order
     });
 
     it('filters on weighted equity', async () => {
