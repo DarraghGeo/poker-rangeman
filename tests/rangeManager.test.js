@@ -2984,7 +2984,7 @@ describe('range vs range analysis', () => {
       expect(report.hero.nuts).toEqual({ count: 3, share: 0.2 });
       expect(report.villain.nuts).toEqual({ count: 0, share: 0 });
       expect(report.advantage.nut).toBeCloseTo(0.2, 10);
-      expect(report.advantage.polarization).toBeCloseTo(0.5, 10);
+      expect(report.advantage.polarization).toBe(0);
       // Per band and per class: hero's share minus villain's
       expect(report.advantage.bands.strong).toBeCloseTo(0.2 - 0.6, 10);
       expect(report.advantage.bands.trash).toBeCloseTo(0.4, 10);
@@ -2992,13 +2992,12 @@ describe('range vs range analysis', () => {
       expect(report.advantage.classes.pocketPair23).toBeCloseTo(0.4 - 0.8, 10);
       expect(report.advantage.classes.pocketPair45).toBeCloseTo(0.4, 10);
       expect(report.advantage.classes.air).toBe(0);
-      // Hero T .2 / M .4 / B .4: half polarized (the rest is half air), half linear
-      expect(report.hero.shape.polarized).toBeCloseTo(0.5, 10);
-      expect(report.hero.shape.linear).toBeCloseTo(0.5, 10);
-      expect(report.hero.shape.condensed).toBe(0);
-      expect(report.hero.shape.contiguity).toBe(1);
-      // A tie goes to the first in order: polarized, linear, condensed
-      expect(report.hero.shape.dominant).toBe('polarized');
+      // Hero T .2 / M .4 / B .4, densities (share / band width) .8 / .95 / 1.21: close to an even spread, so
+      // no part is hollow and the range has no shape
+      expect(report.hero.shape).toMatchObject({ polarized: 0, linear: 0, condensed: 0, dominant: null, contiguity: 1 });
+      expect(report.hero.shape.density.top).toBeCloseTo(0.2 / 0.25, 10);
+      expect(report.hero.shape.density.middle).toBeCloseTo(0.4 / 0.42, 10);
+      expect(report.hero.shape.density.bottom).toBeCloseTo(0.4 / 0.33, 10);
       // Hero's AA sets are the top end of both ranges and of the board; villain's KK sets are top end on the board only
       expect(report.hero.capped).toEqual({ relative: 0, absolute: 0 });
       expect(report.villain.capped).toEqual({ relative: 1, absolute: 0 });
@@ -3024,12 +3023,15 @@ describe('range vs range analysis', () => {
       expect(condensed.capped).toEqual({ relative: 1, absolute: 1 });
     });
 
-    it('lowers condensed in proportion to air rather than zeroing it', async () => {
-      // TT (Good, 6 combos) + 33 (Trash, 6 combos) vs 88,QQ: M .5, B .5, no top
-      const mixed = (await (await new RangeManager('TT,33').against('88,QQ', river)).compare()).hero;
-      expect(mixed.shape.condensed).toBeCloseTo(0.5, 10);
-      expect(mixed.shape.dominant).toBe('condensed'); // exactly the 0.5 minimum
+    it('lowers condensed as the bottom fills in', async () => {
+      // TT (Good, 6 combos) + two 33 combos (Trash) vs 88,QQ: M .75, B .25; densities 1.79 and .76
+      const mixed = (await (await new RangeManager('TT,3c3d,3h3s').against('88,QQ', river)).compare()).hero;
+      expect(mixed.shape.condensed).toBeCloseTo(1 - (0.25 / 0.33) / (0.75 / 0.42), 10);
+      expect(mixed.shape.dominant).toBe('condensed');
       expect(mixed.capped).toEqual({ relative: 1, absolute: 1 });
+      // With as much trash as medium hands, the bottom is denser than the middle: not condensed
+      const even = (await (await new RangeManager('TT,33').against('88,QQ', river)).compare()).hero;
+      expect(even.shape.condensed).toBe(0);
     });
 
     it('scores 0 on every shape for pure air, with dominant null', async () => {
@@ -3056,11 +3058,11 @@ describe('range vs range analysis', () => {
     });
 
     it('names no dominant shape below minDominant', async () => {
-      // TT (Good) + 66,33 (Trash) vs 88,QQ: condensed = M = 1/3, under the 0.5 default
-      const weak = (await (await new RangeManager('TT,66,33').against('88,QQ', river)).compare()).hero;
-      expect(weak.shape.condensed).toBeCloseTo(1 / 3, 10);
+      // TT (Good, 6) + three 33 combos (Trash): M 2/3, B 1/3, condensed about 0.36, under the 0.5 default
+      const weak = (await (await new RangeManager('TT,3c3d,3c3h,3d3h').against('88,QQ', river)).compare()).hero;
+      expect(weak.shape.condensed).toBeCloseTo(1 - ((1 / 3) / 0.33) / ((2 / 3) / 0.42), 10);
       expect(weak.shape.dominant).toBeNull();
-      const lenient = (await (await new RangeManager('TT,66,33').against('88,QQ', river, { shape: { minDominant: 0.3 } })).compare()).hero;
+      const lenient = (await (await new RangeManager('TT,3c3d,3c3h,3d3h').against('88,QQ', river, { shape: { minDominant: 0.3 } })).compare()).hero;
       expect(lenient.shape.dominant).toBe('condensed');
     });
 
@@ -3076,10 +3078,10 @@ describe('range vs range analysis', () => {
     });
 
     it('enough sets how much of an end counts as fully present', async () => {
-      // With enough = 50%, hero's 20% top counts 0.4 and 40% bottom 0.8
+      // AA + 33 is perfectly polarized (T 1/3, B 2/3, no middle); with enough = 50% the top counts 2/3
       const strict = await hero.against(villain, river, { shape: { enough: 0.5 } });
       const side = (await strict.buckets()).hero;
-      expect(side.shape.polarized).toBeCloseTo(0.4 * 0.8 * 0.5, 10);
+      expect((await strict.bucket('strong', 'trash').buckets()).hero.shape.polarized).toBeCloseTo(2 / 3, 10);
       expect(side.capped).toEqual({ relative: 0, absolute: 0 }); // capping uses topEnd, not enough
       await expect(hero.against(villain, river, { shape: { enough: 0 } })).rejects.toThrow('above 0');
     });
@@ -3176,13 +3178,13 @@ describe('README range vs range example, as written', () => {
     expect(report.advantage.bands.strong).toBeCloseTo(0.336, 3);
     expect(report.advantage.bands.trash).toBeCloseTo(-0.503, 3);
     expect(report.advantage.classes.air).toBeCloseTo(-0.103, 3);
-    expect(report.advantage.polarization).toBeCloseTo(-0.292, 3);
+    expect(report.advantage.polarization).toBe(0);
     // 90%+ equity: the opener's AA, 77 and 66 sets; the defender's 77 and 66 sets
     expect(report.hero.nuts.count).toBe(9);
     expect(report.villain.nuts.count).toBe(6);
-    // T .405 / M .500 / B .095: mostly linear, a little polarized
-    expect(report.hero.shape.linear).toBeCloseTo(0.841, 3);
-    expect(report.hero.shape.polarized).toBeCloseTo(0.1505, 4);
+    // T .405 / M .500 / B .095: the bottom is thin (density .29 against the middle's 1.19), so mostly linear
+    expect(report.hero.shape.linear).toBeCloseTo(0.759, 3);
+    expect(report.hero.shape.polarized).toBe(0);
     expect(report.hero.shape.condensed).toBe(0);
     expect(report.hero.shape.dominant).toBe('linear');
     expect(report.hero.capped).toEqual({ relative: 0, absolute: 0 });

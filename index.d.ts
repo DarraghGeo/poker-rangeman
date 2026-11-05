@@ -142,16 +142,17 @@ export interface BucketStats {
 }
 
 /**
- * The three competing range shapes, each 0 to 1, from the shares of the range in the top band (T), the bottom
- * band (B) and the bands between (M). enough(x) = min(1, x / shape.enough), default 10%. Independent: they need
- * not add up to 1. See README "Range shape".
+ * The three competing range shapes, each 0 to 1, from the density (share / band width) of the range in the top
+ * band (T), the bands between (M) and the bottom band (B), compared with an even spread. hollow(part, than) =
+ * 1 - part / than. enough(x) = min(1, x / shape.enough), default 10%. Independent: they need not add up to 1.
+ * See README "Range shape".
  */
 export interface Shape {
-  /** enough(T) x enough(B) x B / (M + B): both ends, no middle. */
+  /** enough(T) x enough(B) x hollow(middle, thinner end): both ends, no hands in between. */
   polarized: number;
-  /** enough(T) x M / (M + B) x contiguity: the top, then medium hands, no gaps. */
+  /** enough(T) x hollow(bottom, middle) x contiguity: the top, then medium hands, no gaps. */
   linear: number;
-  /** M x (1 - enough(T)): medium hands without the top. */
+  /** hollow(thicker end, middle): the top and bottom removed. */
   condensed: number;
   /** The highest of the three, or null when all are 0. */
   dominant: 'polarized' | 'linear' | 'condensed' | null;
@@ -161,6 +162,8 @@ export interface Shape {
   top: number;
   middle: number;
   bottom: number;
+  /** Share / band width for each part: 1 = as many hands as an even spread across equity. */
+  density: { top: number; middle: number; bottom: number };
 }
 
 export interface SideSummary {

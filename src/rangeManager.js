@@ -1536,33 +1536,51 @@ export class RangeManager {
   }
 
   /**
-   * The three competing range shapes of Modern Poker Theory (Ch. 1, Range Morphology), each scored 0 to 1
-   * from the shares in the top band (T), the bottom band (B) and the bands between (M), against villain.
-   * enough(x) = min(1, x / enough): an end counts fully once it holds `enough` of the range (default 10%).
-   * The part below the top is either medium hands or air.
-   * - polarized = enough(T) x enough(B) x B / (M + B): both ends, nothing in the middle
-   * - linear    = enough(T) x M / (M + B) x contiguity: the top, then medium hands, without gaps
-   * - condensed = M x (1 - enough(T)): medium hands without the top; air lowers it in proportion
-   * The scores are independent (a range can be partly linear and partly condensed) and need not add up to 1.
-   * dominant is the highest when it reaches minDominant (default 0.5), else null. Capped describes the top of
-   * the range and is reported beside shape (see _cappedFor).
+   * The three competing range shapes of Modern Poker Theory (Ch. 1, Range Morphology), each scored 0 to 1.
+   * The range's equity against villain is split into the top band (T), the bottom band (B) and the bands
+   * between (M). Each share is compared with an even spread across equity: density = share / band width
+   * (with the default bands 0.25, 0.42 and 0.33), so 1 means as many hands as an even spread would have.
+   * A part is hollow when it is thinner than its neighbours: hollow(part, than) = 1 - part / than, from 0 to 1.
+   * - polarized = enough(T) x enough(B) x hollow(middle, thinner end): both ends, no hands in between
+   * - linear    = enough(T) x hollow(bottom, middle) x contiguity: the top, then medium hands, without gaps
+   * - condensed = hollow(thicker end, middle): the top and bottom removed
+   * enough(x) = min(1, x / enough), default 10%. An even spread scores 0 on all three. The scores are
+   * independent and need not add up to 1. dominant is the highest when it reaches minDominant, else null.
    */
   _shapeOf(buckets, bands, contiguity, enough, minDominant = 0.5) {
     const top = buckets[bands[0].name].share;
     const bottom = bands.length > 1 ? buckets[bands[bands.length - 1].name].share : 0;
     // Summed from the middle bands (not 1 - top - bottom) so an empty middle is exactly 0
     const middle = bands.slice(1, -1).reduce((sum, band) => sum + buckets[band.name].share, 0);
+    const widths = this._bandWidths(bands);
+    const density = (share, width) => (width > 0 ? share / width : 0);
+    const dTop = density(top, widths.top);
+    const dMiddle = density(middle, widths.middle);
+    const dBottom = density(bottom, widths.bottom);
     const present = share => Math.min(1, share / enough);
-    const rest = middle + bottom;
-    const restMiddle = rest > 1e-12 ? middle / rest : 1;
-    const restAir = rest > 1e-12 ? bottom / rest : 0;
+    const hollow = (part, than) => (than <= 0 ? (part <= 0 ? 1 : 0) : Math.max(0, Math.min(1, 1 - part / than)));
     const scores = {
-      polarized: present(top) * present(bottom) * restAir,
-      linear: present(top) * restMiddle * contiguity,
-      condensed: middle * (1 - present(top))
+      polarized: present(top) * present(bottom) * hollow(dMiddle, Math.min(dTop, dBottom)),
+      linear: present(top) * hollow(dBottom, dMiddle) * contiguity,
+      condensed: middle > 0 ? hollow(Math.max(dTop, dBottom), dMiddle) : 0
     };
     const best = Object.entries(scores).reduce((a, b) => (b[1] > a[1] ? b : a));
-    return { ...scores, dominant: best[1] > 0 && best[1] >= minDominant ? best[0] : null, contiguity, top, middle, bottom };
+    return {
+      ...scores,
+      dominant: best[1] > 0 && best[1] >= minDominant ? best[0] : null,
+      contiguity,
+      top,
+      middle,
+      bottom,
+      density: { top: dTop, middle: dMiddle, bottom: dBottom }
+    };
+  }
+
+  // Equity width of the top band, the bands between, and the bottom band
+  _bandWidths(bands) {
+    const topMin = bands[0].min;
+    const bottomMax = bands.length > 1 ? bands[bands.length - 2].min : 0;
+    return { top: 1 - topMin, middle: Math.max(0, topMin - bottomMax), bottom: bottomMax };
   }
 
   /** Equity bucket shares for both sides: { bands, hero, villain }, each { combos, equity, buckets, shape }. */

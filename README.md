@@ -712,7 +712,7 @@ report.advantage.range;           // 0.200: hero equity minus villain equity
 report.advantage.nut;             // 0.026: effective nuts (90%+ equity), 6.1% of hero's range vs 3.4% of villain's
 report.advantage.bands.strong;    // 0.336: hero has far more Strong hands...
 report.advantage.bands.trash;     // -0.503: ...and far less trash
-report.hero.shape;                // { polarized: 0.15, linear: 0.84, condensed: 0, dominant: 'linear', ... }
+report.hero.shape;                // { polarized: 0, linear: 0.76, condensed: 0, dominant: 'linear', ... }
 report.hero.capped;               // { relative: 0, absolute: 0 }: the opener has its share of the nuts
 report.handClasses.air;           // { hero: 0.081, villain: 0.184, heroCount: 12, villainCount: 32 }
 report.flags.isTopPair;           // { hero: 0.345, villain: 0.241, heroCount: 51, villainCount: 42 }
@@ -750,32 +750,33 @@ The analysis only covers hands that can be dealt. Run `against()` again after ch
 
 `shape` scores the three shapes from 0 to 1. They come from the range's equity against villain, split three ways by the bands: **T**, the share in the top band (Strong); **B**, the share in the bottom band (Trash); and **M**, the share in the bands between (Good and Weak). T + M + B = 1.
 
-Two ideas define the scores:
+The shapes are about which part of the range is **hollow**, so each share is compared with an even spread across equity, the straight diagonal on an equity chart. A part's **density** is its share divided by its band's width: with the default bands the top is 25 points wide (75–100%), the middle 42 (33–75%) and the bottom 33 (0–33%), so an even spread has T, M and B of about 25%, 42% and 33% and every density 1. A part is hollow when it is thinner than its neighbours: `hollow(part, than) = 1 − part / than`, from 0 (as dense) to 1 (empty).
 
-- **Enough.** An end of the range counts fully once it holds a minimum share of the range, and partly below that: `enough(x) = min(1, x / e)`, with `e` = 10% by default. Set it with `against(villain, board, { shape: { enough: 0.15 } })`. It decides most borderline cases: with the default, a range with 7% strong hands has its top 70% present.
-- **What the rest is.** Once a range has its top, what separates linear from polarized is the part below it: medium hands (M / (M + B)) or air (B / (M + B)).
-
-| Score | Formula | Meaning |
+| Score | Formula | The book's definition |
 | --- | --- | --- |
-| `shape.polarized` | enough(T) × enough(B) × B / (M + B) | Enough top and enough bottom, with nothing in the middle |
-| `shape.linear` | enough(T) × M / (M + B) × contiguity | Enough top, then medium hands rather than air, without gaps |
-| `shape.condensed` | M × (1 − enough(T)) | Medium hands without the top; air lowers it in proportion |
+| `shape.polarized` | enough(T) × enough(B) × hollow(middle, thinner end) | "High equity value hands and low equity bluffing hands", perfectly polarized with "no hands in between" |
+| `shape.linear` | enough(T) × hollow(bottom, middle) × contiguity | "The highest equity hands without gaps in between" |
+| `shape.condensed` | hollow(thicker end, middle) | "It has the top and bottom hands removed and is comprised of middle equity hands" |
 
-The three shape scores are independent and need not add up to 1: a range can be partly linear and partly condensed, and a range of pure air scores 0 on all three. `shape.dominant` names the highest (on a tie, the first of polarized, linear, condensed) when it reaches 0.5, and is `null` otherwise: a range whose best score is low, such as one that is mostly air, has no dominant shape. Change the minimum with `shape: { minDominant: 0.4 }`.
+**Enough.** An end counts fully once it holds a minimum share of the range, and partly below that: `enough(x) = min(1, x / e)`, with `e` = 10% by default. Set it with `against(villain, board, { shape: { enough: 0.15 } })`.
 
-`shape.contiguity` is the share of the range's hands that are among the top N hands, by equity, of the range as it was at `against()`, where N is the range's own size. It checks the "without gaps" part of linear: a strong + weak range that skips the good hands is not a top slice, so its contiguity and linear score drop. For the range `against()` was called on (and for villain's range) it is 1, because gaps can only be seen against the hands that were available. `shape.top`, `shape.middle` and `shape.bottom` give T, M and B themselves.
+A range spread evenly across equity scores 0 on all three: it has no hollow part. `shape.density` gives the three densities, and `shape.top`, `shape.middle` and `shape.bottom` the shares themselves.
+
+The three scores are independent and need not add up to 1: a range can be partly linear and partly condensed. `shape.dominant` names the highest (on a tie, the first of polarized, linear, condensed) when it reaches 0.5, and is `null` otherwise: an evenly spread range, or one that is mostly air, has no dominant shape. Change the minimum with `shape: { minDominant: 0.4 }`.
+
+`shape.contiguity` is the share of the range's hands that are among the top N hands, by equity, of the range as it was at `against()`, where N is the range's own size. It checks the "without gaps" part of linear: a strong + weak range that skips the good hands is not a top slice, so its contiguity and linear score drop. For the range `against()` was called on (and for villain's range) it is 1, because gaps can only be seen against the hands that were available.
 
 Some examples, on A-7-6 rainbow with the ranges above:
 
 | Range | T / M / B | polarized | linear | condensed | dominant | capped (relative / absolute) |
 | --- | --- | --- | --- | --- | --- | --- |
-| Opener, whole range | .41 / .50 / .09 | 0.15 | 0.84 | 0 | linear | 0 / 0 |
+| Opener, whole range | .41 / .50 / .09 | 0 | 0.76 | 0 | linear | 0 / 0 |
 | Opener, strong + trash | .81 / 0 / .19 | 1 | 0 | 0 | polarized | 0 / 0 |
 | Opener, strong + good | .63 / .38 / 0 | 0 | 1 | 0 | linear | 0 / 0 |
 | Opener, strong + weak (skips good) | .61 / .39 / 0 | 0 | 0.63 | 0 | linear | 0 / 0 |
 | Opener, good + weak | 0 / 1 / 0 | 0 | 0 | 1 | condensed | 1 / 1 |
-| Opener, good + trash | 0 / .72 / .28 | 0 | 0 | 0.72 | condensed | 1 / 1 |
-| Defender, whole range | .07 / .33 / .60 | 0.44 | 0.25 | 0.10 | none | 0.13 / 0 |
+| Opener, good + trash | 0 / .72 / .28 | 0 | 0 | 0.51 | condensed | 1 / 1 |
+| Defender, whole range | .07 / .33 / .60 | 0 | 0 | 0 | none | 0.13 / 0 |
 
 Limits worth knowing:
 
