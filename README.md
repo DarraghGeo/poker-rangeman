@@ -15,6 +15,7 @@ A JavaScript library for parsing, managing, filtering and analysing poker hand r
   - [Equity Methods](#equity-methods)
   - [Strength, Breakdown and Blockers](#strength-breakdown-and-blockers)
   - [Range vs Range Analysis](#range-vs-range-analysis)
+  - [Combo Weights](#combo-weights)
 - [Range Notation Guide](#range-notation-guide)
 - [Hand Strength Criteria](#hand-strength-criteria)
 - [Method Chaining Examples](#method-chaining-examples)
@@ -80,7 +81,7 @@ console.log(combined.contains('5h2s'));     // true
 Creates a new RangeManager instance.
 
 **Parameters:**
-- `input` (string | string[]): Range notation string or array of hand strings
+- `input` (string | array | object): Range notation, an array of hands or notation, or an object of weights. Any part can carry a weight: see [Combo Weights](#combo-weights)
 - `deadCards` (string[], optional): Array of dead cards (e.g., `['Ah', 'Kd']`). Hands containing them are removed immediately. Supports wildcards: `'Ax'` (all Aces), `'Xh'` (all hearts)
 
 **Returns:** RangeManager instance
@@ -237,7 +238,7 @@ filtered3.size();        // 2
 Adds hands to the range. Accepts range notation string or array of hands.
 
 **Parameters:**
-- `input` (string | string[]): Range notation string or array of hand strings
+- `input` (string | array | object | RangeManager): Range notation, hands or weights (see [Combo Weights](#combo-weights))
 
 **Returns:** `RangeManager` - New instance with included hands added
 
@@ -260,7 +261,7 @@ expanded2.size();        // 6
 Returns only hands that exist in both the current range and the input range.
 
 **Parameters:**
-- `input` (string | string[]): Range notation string or array of hand strings
+- `input` (string | array | object | RangeManager): Range notation, hands or weights (see [Combo Weights](#combo-weights))
 
 **Returns:** `RangeManager` - New instance with intersecting hands only
 
@@ -878,6 +879,67 @@ bluffs.size();             // 24 (60 strong combos x alpha 0.4)
 - `bluffCandidates({ pot, bet, value? })`: as the bettor, bluffs to pair with your value hands (the bands in `value`, default the top band). The count is value combos × alpha, so bluffs make up the pot-odds share of the betting range. It takes the lowest-band hands first, preferring those that block more of villain's continuing range (villain hands with at least the pot odds), then lower equity. Async and chainable.
 
 **Performance:** `against()` runs one equity calculation per hand in your range; the first `buckets()` or `compare()` runs one per hand in villain's range. The example above takes about 1.5 s. Two full ranges of about 600 combos each on the flop take about 7 s for `against()` and 7 s more for `compare()`.
+
+---
+
+### Combo Weights
+
+Every combo has a weight from 0 to 1: how often it is in the range. Unweighted combos weigh 1, so an unweighted range
+behaves exactly as before.
+
+**Formats** (later entries override earlier ones; weight 0 removes a combo):
+
+```javascript
+new RangeManager('AA,KK:0.5,AKs:0.25,AhKh:1');        // colon weights on any notation
+new RangeManager(['AA', 'KK:0.5', ['AhKh', 0.25]]);   // arrays: hands, notation, or [notation, weight] pairs
+new RangeManager({ AA: 1, KK: 0.5, AhKh: 0.25 });     // an object of weights
+```
+
+**Reading weights:**
+
+| Method | Returns |
+|---|---|
+| `weightOf(hand)` | The combo's weight, 0 if it isn't in the range |
+| `weights()` | `{ hand: weight }` for every combo |
+| `weightedSize()` | Sum of the weights (`size()` still counts combos) |
+| `isWeighted()` | `true` when any combo weighs less than 1 |
+| `handWeights` | Only the combos whose weight isn't 1 |
+
+**Changing weights** (each returns a new range):
+
+| Method | Effect |
+|---|---|
+| `scale(factor)` | Multiplies every weight (capped at 1); `scale(0.5)` halves the range's frequencies |
+| `setWeight(input, weight)` | Sets the weight of those combos in the range; 0 removes them |
+| `include(input)` | Adds combos; a combo in both keeps the larger weight |
+| `exclude(input)` | Removes that share of each combo: excluding `'AKs:0.25'` keeps 75% of AKs |
+| `intersect(input)` | Keeps combos in both, weights multiplied |
+
+`include`, `exclude` and `intersect` also take another RangeManager, weights included. `exclude` with a list of
+cards (`['Ah', 'Kx']`) still removes every combo holding one.
+
+```javascript
+const range = new RangeManager('AA,KK,AKs').setWeight('KK', 0.5).exclude('AKs:0.25');
+range.toNotation();     // 'AA,AKs:0.75,KK:0.5'
+range.weightedSize();   // 6 + 3 + 3 = 12
+```
+
+`toNotation()` writes weights back in colon form and round-trips: a hand class whose combos share a weight is written
+once (`'KK:0.5'`), one with mixed weights as exact combos.
+
+**Weighted analysis.** Equity, `against()`, buckets, shapes, capping, nuts, hand classes, `breakdown()`,
+`rankHands()`, `strongest()`/`weakest()`, `compareTo()`, `defend()` and `bluffCandidates()` all count by weight: a
+combo at 0.5 is half a combo. Both sides can be weighted. Results add a `weight` beside each `count`, and `share` is
+by weight.
+
+The equity solver has no per-combo weights, so weights are grouped to `weightStep` (default `0.01`, i.e. 1%) and
+equity runs once per pair of weight groups, each matchup counted by both weights. A coarser step is faster on
+ranges with many distinct weights:
+
+```javascript
+const hero = new RangeManager('AA,KK:0.5,AKs:0.25');
+const spot = await hero.against('QQ+,AK:0.5', ['Kh', '9h', '4d'], { weightStep: 0.05 });
+```
 
 ---
 

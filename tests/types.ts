@@ -76,6 +76,23 @@ async function check(): Promise<void> {
   const blockers: VillainRange = await rm.blockers(board, ['Ah', 'Js']);
   const unblocked: string[] = blockers.allBlocks.unblocked;
 
+  // Combo weights
+  const weighted = new RangeManager('AA,KK:0.5,AhKh:0.25');
+  new RangeManager(['AhKh', 'QQ:0.5', ['JJ', 0.4]]);
+  new RangeManager({ AhKh: 0.4, TT: 1 });
+  const halved: RangeManager = weighted.scale(0.5).setWeight('AA', 0.75).include({ QQ: 0.3 }).exclude([['KK', 0.5]]);
+  const w: Record<Hand, number> = halved.weights();
+  const one: number = halved.weightOf('AsAd') + halved.weightedSize();
+  const isW: boolean = halved.isWeighted();
+  const stored2: Record<Hand, number> = halved.handWeights;
+  const pendingW: Promise<number> = rm.hitsHand(['Pair'], board).scale(0.5).weightedSize();
+  await weighted.against('QQ+:0.5', board, { weightStep: 0.05 });
+  const bucketWeight: number = (await spot.buckets()).hero.buckets.strong.weight;
+  const nutWeight: number = report.hero.nuts.weight;
+  const classWeight: number = classes.classes.air.weight;
+  const rankedWeight: number | undefined = (await weighted.rankHands(board))[0]?.weight;
+  void [w, one, isW, stored2, pendingW, bucketWeight, nutWeight, classWeight, rankedWeight];
+
   const notation: string = top.toNotation();
   const size: number = bottom.size();
   void [keyCards, middling, uses, total, byHand, above, between, ranked, pairs, unblocked, notation, size,

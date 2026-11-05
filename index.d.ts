@@ -16,8 +16,12 @@ export type Card = string;
 /** An exact two-card hand, e.g. 'AhKd'. Hands are stored high card first; pairs with suits in c, d, h, s order. */
 export type Hand = string;
 
-/** Range notation ('AA,KQs,JTo', 'AT+', 'KXs', 'AhXs') or an array of exact hands. */
-export type RangeInput = string | Hand[];
+/**
+ * Range notation ('AA,KQs,JTo', 'AT+', 'KXs', 'AhXs', with optional weights 'AA:0.5,AhKh:0.25'), an array of
+ * hands or notation ('AhKh', 'AKs:0.5', ['AhKh', 0.4]), or an object of weights ({ AhKh: 0.4, QQ: 1 }).
+ * A weight is 0 to 1; 0 removes the hand. Later entries override earlier ones.
+ */
+export type RangeInput = string | Array<Hand | string | [string, number]> | Record<string, number>;
 
 /** A dead card, exact ('Ah') or a wildcard ('Ax' every ace, 'Xh' every heart). */
 export type DeadCard = string;
@@ -75,6 +79,8 @@ export interface EquityOptions {
   deadCards?: DeadCard[];
   /** Monte Carlo samples per matchup, used preflop only. Default 10000. */
   iterations?: number;
+  /** Weights are grouped to this step for weighted equity (one equity run per pair of groups). Default 0.01. */
+  weightStep?: Share;
 }
 
 export interface EquityResult {
@@ -93,6 +99,8 @@ export interface RankedHand {
   strength: number;
   /** [strength, ...tiebreak ranks]; compare element by element, the higher array wins. */
   rank: number[];
+  /** The hand's combo weight (1 unless weighted). */
+  weight: number;
 }
 
 /** An equity band: hands with at least `min` equity against villain (and below the next band up). */
@@ -121,6 +129,11 @@ export interface AgainstOptions extends EquityOptions {
 /** The villain, board and bands set by against() / getEquity(). */
 export interface Matchup {
   villainHands: Hand[];
+  /** Villain combos whose weight isn't 1. */
+  villainWeights: Record<Hand, number>;
+  weightStep: number;
+  /** Weights of the range at against() time. */
+  parentWeights: Record<Hand, number>;
   board: Card[];
   deadCards: Card[];
   iterations: number;
@@ -136,7 +149,9 @@ export interface Matchup {
 
 export interface BucketStats {
   count: number;
-  /** Share of the side's live combos (those that can be dealt). */
+  /** Total combo weight. */
+  weight: number;
+  /** Share of the side's live combo weight (combos that can be dealt). */
   share: number;
   combos: Hand[];
 }
@@ -168,6 +183,8 @@ export interface Shape {
 
 export interface SideSummary {
   combos: number;
+  /** Total live combo weight. */
+  weight: number;
   equity: number | null;
   buckets: Record<string, BucketStats>;
   /** null when no hand can be dealt. */
@@ -175,7 +192,7 @@ export interface SideSummary {
   /** How much of the top end the range is missing, 0 to 1 (null preflop). Describes the top, separate from the shape. */
   capped: Capped;
   /** Effective nuts: the range's combos with at least nuts.minEquity (default 90%) equity against the other range. */
-  nuts: { count: number; share: number | null };
+  nuts: { count: number; weight: number; share: number | null };
 }
 
 /**
@@ -198,8 +215,10 @@ export type HandClass =
 export interface HandClassesResult {
   /** Combos that can be dealt on the board. */
   total: number;
-  /** Every class, shares adding up to 1. */
-  classes: Record<HandClass, { count: number; share: number; combos: Hand[] }>;
+  /** Total combo weight. */
+  weight: number;
+  /** Every class, shares (by weight) adding up to 1. */
+  classes: Record<HandClass, { count: number; weight: number; share: number; combos: Hand[] }>;
 }
 
 export interface HandClassesOptions extends StreetOptions {
@@ -305,8 +324,10 @@ export interface StreetOptions {
 export interface Breakdown {
   /** Hands counted (hands sharing a card with the board are left out). */
   total: number;
-  /** Every flag held by at least one hand, most common first. */
-  flags: Partial<Record<Flag, { count: number; share: number; combos: Hand[] }>>;
+  /** Total combo weight. */
+  weight: number;
+  /** Every flag held by at least one hand, most common first. Shares are by weight. */
+  flags: Partial<Record<Flag, { count: number; weight: number; share: number; combos: Hand[] }>>;
 }
 
 export interface EvaluationQuery {
@@ -318,7 +339,7 @@ export interface EvaluationQuery {
 
 /** Methods that return a range; on a RangeQuery they queue another step and return a RangeQuery. */
 type ChainedRangeMethods = {
-  [K in 'exclude' | 'include' | 'intersect' | 'hasSuit' | 'suitedOf' | 'setDeadCards' | 'hasKicker' | 'hasKeyCard'
+  [K in 'exclude' | 'include' | 'intersect' | 'scale' | 'setWeight' | 'hasSuit' | 'suitedOf' | 'setDeadCards' | 'hasKicker' | 'hasKeyCard'
     | 'makesHand' | 'hitsHand' | 'hitsHandBoth' | 'getEquity' | 'strongest' | 'weakest'
     | 'against' | 'bucket' | 'defend' | 'bluffCandidates']:
     (...args: Parameters<RangeManager[K]>) => RangeQuery;
@@ -329,7 +350,8 @@ type ChainedValueMethods = {
   [K in 'toArray' | 'getHands' | 'size' | 'contains' | 'toNotation' | 'getKeyCards' | 'normalizeNotation'
     | 'handContainsDeadCard' | 'handHasSuit' | 'handSuitedOf' | 'evaluateHand' | 'getObject'
     | 'equity' | 'equityByHand' | 'rankHands' | 'breakdown' | 'blockers'
-    | 'bandsByHand' | 'buckets' | 'compare' | 'compareTo' | 'bettingMath' | 'handClasses']:
+    | 'bandsByHand' | 'buckets' | 'compare' | 'compareTo' | 'bettingMath' | 'handClasses'
+    | 'weights' | 'weightOf' | 'weightedSize' | 'isWeighted']:
     (...args: Parameters<RangeManager[K]>) => Promise<Awaited<ReturnType<RangeManager[K]>>>;
 };
 
@@ -358,6 +380,8 @@ export class RangeManager {
   hands: Hand[];
   /** The hands currently in the range. */
   filteredHands: Hand[];
+  /** Weights of hands whose weight isn't 1 (hands not listed weigh 1). */
+  handWeights: Record<Hand, number>;
   lastBoardCards: Card[] | null;
   lastHandStrength: Flag[] | null;
   lastStrict: boolean | null;
@@ -370,9 +394,25 @@ export class RangeManager {
   normalizeNotation(notation: string): string;
 
   // Filtering (each returns a new instance)
-  exclude(input: RangeInput | DeadCard[]): RangeManager;
-  include(input: RangeInput): RangeManager;
-  intersect(input: RangeInput): RangeManager;
+  /** Removes hands, or with weights scales each by (1 - weight). */
+  exclude(input: RangeInput | DeadCard[] | RangeManager): RangeManager;
+  /** Adds hands; a hand in both keeps the higher weight. */
+  include(input: RangeInput | RangeManager): RangeManager;
+  /** Keeps hands in both; weights multiply. */
+  intersect(input: RangeInput | RangeManager): RangeManager;
+
+  // Combo weights
+  /** Every hand's weight, including those at 1. */
+  weights(): Record<Hand, number>;
+  /** A hand's weight (0 if not in the range). */
+  weightOf(hand: Hand): number;
+  /** Sum of the weights. */
+  weightedSize(): number;
+  isWeighted(): boolean;
+  /** Multiplies every weight by factor (capped at 1; 0 empties the range). */
+  scale(factor: number): RangeManager;
+  /** Sets the weight of the given hands that are in the range (0 removes them). */
+  setWeight(input: RangeInput, weight: number): RangeManager;
   hasSuit(suit: string): RangeManager;
   suitedOf(suit: string): RangeManager;
   setDeadCards(deadCards: DeadCard[]): RangeManager;

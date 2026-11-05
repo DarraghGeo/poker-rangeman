@@ -2981,8 +2981,8 @@ describe('range vs range analysis', () => {
       expect(report.advantage.range).toBeCloseTo(81 / 225 - 144 / 225, 10);
       // Effective nuts: 90%+ equity against the other range, here hero's AA sets (3 of 15 combos, 100%);
       // villain's QQ and KK have 80%
-      expect(report.hero.nuts).toEqual({ count: 3, share: 0.2 });
-      expect(report.villain.nuts).toEqual({ count: 0, share: 0 });
+      expect(report.hero.nuts).toEqual({ count: 3, weight: 3, share: 0.2 });
+      expect(report.villain.nuts).toEqual({ count: 0, weight: 0, share: 0 });
       expect(report.advantage.nut).toBeCloseTo(0.2, 10);
       expect(report.advantage.polarization).toBe(0);
       // Per band and per class: hero's share minus villain's
@@ -3043,8 +3043,8 @@ describe('range vs range analysis', () => {
     it('sets the effective nuts equity with nuts.minEquity', async () => {
       // With nuts.minEquity 0.8, villain's QQ and KK (80% against hero) count as effective nuts
       const report = await (await hero.against(villain, river, { nuts: { minEquity: 0.8 } })).compare();
-      expect(report.hero.nuts).toEqual({ count: 3, share: 0.2 });
-      expect(report.villain.nuts).toEqual({ count: 9, share: 0.6 });
+      expect(report.hero.nuts).toEqual({ count: 3, weight: 3, share: 0.2 });
+      expect(report.villain.nuts).toEqual({ count: 9, weight: 9, share: 0.6 });
       expect(report.advantage.nut).toBeCloseTo(-0.4, 10);
     });
 
@@ -3290,6 +3290,160 @@ describe('hand classes and capping, checked against Modern Poker Theory', () => 
 
     it('is null preflop', async () => {
       expect(await capped('AA', 'KK', [])).toEqual({ relative: null, absolute: null });
+    });
+  });
+});
+
+describe('combo weights', () => {
+  const river = ['As', 'Kd', '7c', '4h', '2s'];
+
+  describe('parsing and output', () => {
+    it('reads colon weights on any notation and on single combos', () => {
+      const rm = new RangeManager('QQ+,AKs:0.5,AhKh:0.25');
+      expect(rm.size()).toBe(22);
+      expect(rm.weightOf('AsKs')).toBe(0.5);
+      expect(rm.weightOf('AhKh')).toBe(0.25); // later entries override earlier ones
+      expect(rm.weightOf('QcQd')).toBe(1);
+      expect(rm.weightOf('JcJd')).toBe(0);
+      expect(rm.weightedSize()).toBeCloseTo(18 + 3 * 0.5 + 0.25, 10);
+      expect(rm.isWeighted()).toBe(true);
+      expect(new RangeManager('TT+:0.75').weightedSize()).toBeCloseTo(30 * 0.75, 10);
+    });
+
+    it('reads arrays and objects of exact combos', () => {
+      expect(new RangeManager([['AhKh', 0.4], 'AsKs', 'QcQd:0.5']).weights()).toEqual({ AhKh: 0.4, AsKs: 1, QcQd: 0.5 });
+      expect(new RangeManager({ AhKh: 0.4, AsKs: 1 }).weights()).toEqual({ AhKh: 0.4, AsKs: 1 });
+    });
+
+    it('drops combos with weight 0 and rejects weights outside 0 to 1', () => {
+      expect(new RangeManager('AA,KK:0').toNotation()).toBe('AA');
+      expect(() => new RangeManager('AA:1.5')).toThrow('Weights are numbers from 0 to 1');
+      expect(() => new RangeManager('AA:x')).toThrow('Invalid weight');
+      expect(() => new RangeManager({ AhKh: -1 })).toThrow('Invalid weight');
+      expect(() => new RangeManager({})).toThrow('cannot be empty');
+    });
+
+    it('writes weighted notation that parses back to the same weights', () => {
+      const rm = new RangeManager('QQ+,AKs:0.5,AhKh:0.25');
+      const notation = rm.toNotation();
+      expect(notation).toBe('QQ+,AcKc:0.5,AdKd:0.5,AsKs:0.5,AhKh:0.25');
+      const back = new RangeManager(notation);
+      expect(Object.entries(back.weights()).sort()).toEqual(Object.entries(rm.weights()).sort());
+      expect(new RangeManager('22+,AKs:0.5').toNotation()).toBe('22+,AKs:0.5');
+    });
+
+    it('keeps weights in normalizeNotation()', () => {
+      expect(new RangeManager('AA').normalizeNotation('aks:0.5, qq+')).toBe('AKs:0.5,QQ+');
+    });
+  });
+
+  describe('operations', () => {
+    const rm = new RangeManager('AA,KK:0.5');
+
+    it('scale() multiplies every weight', () => {
+      expect(rm.scale(0.5).weights()).toMatchObject({ AcAd: 0.5, KcKd: 0.25 });
+      expect(rm.scale(3).weightOf('KcKd')).toBe(1); // capped at 1
+      expect(rm.scale(0).size()).toBe(0);
+    });
+
+    it('setWeight() sets the weight of combos already in the range', () => {
+      expect(rm.setWeight('KK', 1).isWeighted()).toBe(false);
+      expect(rm.setWeight('AA', 0).toNotation()).toBe('KK:0.5');
+      expect(rm.setWeight('QQ', 1).size()).toBe(12);
+    });
+
+    it('include() keeps the larger weight, exclude() removes a share, intersect() multiplies', () => {
+      expect(rm.include('KK:0.25,QQ:0.5').toNotation()).toBe('AA,KK-QQ:0.5');
+      expect(rm.exclude('KK:0.5').weightOf('KcKd')).toBeCloseTo(0.25, 10);
+      expect(rm.exclude('AA').toNotation()).toBe('KK:0.5');
+      expect(rm.intersect('AA:0.5,KK').weights()).toMatchObject({ AcAd: 0.5, KcKd: 0.5 });
+      expect(rm.intersect(new RangeManager('KK:0.5')).toNotation()).toBe('KK:0.25');
+    });
+
+    it('keeps weights through filters and chains', async () => {
+      const made = await new RangeManager('AA:0.5,KK').makesHand(['Pair'], ['Qh', '7d', '2c']).scale(0.5);
+      expect(made.weightOf('AcAd')).toBe(0.25);
+      expect(made.weightOf('KcKd')).toBe(0.5);
+      expect(await new RangeManager('AA:0.5').hasSuit('s').weightedSize()).toBeCloseTo(1.5, 10);
+    });
+  });
+
+  describe('weighted equity', () => {
+    it("weights villain's combos: TT against 88 and QQ at half weight", async () => {
+      // TT beats 88 (6 matchups, weight 1) and loses to QQ (6 matchups, weight 0.5): 6 / 9
+      const byHand = await new RangeManager('TT').equityByHand('88,QQ:0.5', river);
+      expect(byHand.TcTd.equity).toBeCloseTo(6 / 9, 10);
+      expect(byHand.TcTd.win).toBeCloseTo(6, 10);
+      expect(byHand.TcTd.lose).toBeCloseTo(3, 10);
+    });
+
+    it("weights hero's combos in the range's total equity", async () => {
+      // TT beats 88 in 36 matchups (weight 1); 33 loses 36 (weight 0.5): 36 / 54
+      const result = await new RangeManager('TT,33:0.5').equity('88', river);
+      expect(result.equity).toBeCloseTo(36 / 54, 10);
+      const stored = await new RangeManager('TT,33:0.5').getEquity('88', river).equity();
+      expect(stored.equity).toBeCloseTo(36 / 54, 10);
+    });
+
+    it('rounds weights to weightStep (default 1%)', async () => {
+      const exact = 6 / (6 + 6 * 0.33);
+      expect((await new RangeManager('TT').equity('88,QQ:0.333', river)).equity).toBeCloseTo(exact, 10);
+      const coarse = 6 / (6 + 6 * 0.25); // 0.333 rounds to the nearest 0.25 step
+      expect((await new RangeManager('TT').equity('88,QQ:0.333', river, { weightStep: 0.25 })).equity).toBeCloseTo(coarse, 10);
+    });
+
+    it('filters on weighted equity', async () => {
+      const spot = await new RangeManager('TT,99').getEquity('88,QQ:0.5,JJ:0.5', river);
+      // TT: beats 88 (6), loses QQ and JJ (12 x 0.5) -> 0.5; 99: beats 88, loses QQ and JJ -> 0.5
+      expect(spot.equityAbove(0.49).size()).toBe(12);
+      expect(spot.equityAbove(0.51).size()).toBe(0);
+    });
+  });
+
+  describe('weighted analysis', () => {
+    it('weights bucket shares, shape and nuts', async () => {
+      // TT (Good, 6 combos at weight 1) and 33 (Trash, 6 combos at weight 0.5) against 88,QQ
+      const { hero } = await (await new RangeManager('TT,33:0.5').against('88,QQ', river)).buckets();
+      expect(hero.combos).toBe(12);
+      expect(hero.weight).toBeCloseTo(9, 10);
+      expect(hero.buckets.good).toMatchObject({ count: 6, weight: 6 });
+      expect(hero.buckets.good.share).toBeCloseTo(6 / 9, 10);
+      expect(hero.buckets.trash.share).toBeCloseTo(3 / 9, 10);
+      expect(hero.shape.middle).toBeCloseTo(6 / 9, 10);
+    });
+
+    it("weights villain's side from its weights", async () => {
+      const { villain } = await (await new RangeManager('TT').against('88,QQ:0.5', river)).buckets();
+      // 88 (Trash vs TT) weight 6; QQ (Strong vs TT) weight 3
+      expect(villain.buckets.trash.share).toBeCloseTo(6 / 9, 10);
+      expect(villain.buckets.strong.share).toBeCloseTo(3 / 9, 10);
+      expect(villain.nuts).toEqual({ count: 6, weight: 3, share: 3 / 9 });
+    });
+
+    it('weights hand classes and flags', async () => {
+      const { total, weight, classes } = await new RangeManager('KK,33:0.5').handClasses(river);
+      expect(total).toBe(9); // KK loses three combos to the Kd
+      expect(weight).toBeCloseTo(6, 10);
+      expect(classes.set.share).toBeCloseTo(3 / 6, 10);
+      expect(classes.pocketPair45.share).toBeCloseTo(3 / 6, 10);
+      const flags = await new RangeManager('KK,33:0.5').breakdown(river);
+      expect(flags.flags.isThreeOfAKind.share).toBeCloseTo(0.5, 10);
+    });
+
+    it('weights compareTo() overlap', async () => {
+      expect((await new RangeManager('AA').compareTo('AA:0.5')).overlap).toBeCloseTo(0.5, 10);
+      expect((await new RangeManager('AA:0.5,KK').compareTo('AA,KK')).overlap).toBeCloseTo(9 / 12, 10);
+    });
+
+    it('weights strongest() and defend()', async () => {
+      // On the river: KK sets (3 combos) above 33 (6 combos); with 33 at weight 0.25 KK holds 3 of 4.5
+      const rm = new RangeManager('KK,33:0.25');
+      expect((await rm.strongest(0.6, river)).toNotation()).toBe('KK');
+      expect((await rm.strongest(0.7, river)).size()).toBe(9);
+      const spot = await rm.against('88', river);
+      // MDF 80% of 4.5 weight is 3.6, more than KK's 3, so the 33s are needed too; at 4x pot (MDF 20%) KK alone
+      expect(spot.defend({ pot: 10, bet: 2.5, by: 'mdf' }).toNotation()).toBe('KK,33:0.25');
+      expect(spot.defend({ pot: 10, bet: 40, by: 'mdf' }).toNotation()).toBe('KK');
     });
   });
 });
