@@ -2984,7 +2984,10 @@ describe('range vs range analysis', () => {
       expect(report.hero.nuts).toEqual({ count: 3, weight: 3, share: 0.2 });
       expect(report.villain.nuts).toEqual({ count: 0, weight: 0, share: 0 });
       expect(report.advantage.nut).toBeCloseTo(0.2, 10);
-      expect(report.advantage.polarization).toBe(0);
+      // Bhatia-Davis: hero's equities AA 1 (3), TT 0.4 (6), 33 0 (6): mean 0.36, variance 0.1344 -> 0.1344 / 0.2304
+      expect(report.hero.shape.polarized).toBeCloseTo(0.1344 / (0.36 * 0.64), 10);
+      expect(report.hero.shape.equity.mean).toBeCloseTo(0.36, 10);
+      expect(report.advantage.polarization).toBeCloseTo(report.hero.shape.polarized - report.villain.shape.polarized, 10);
       // Per band and per class: hero's share minus villain's
       expect(report.advantage.bands.strong).toBeCloseTo(0.2 - 0.6, 10);
       expect(report.advantage.bands.trash).toBeCloseTo(0.4, 10);
@@ -2993,8 +2996,9 @@ describe('range vs range analysis', () => {
       expect(report.advantage.classes.pocketPair45).toBeCloseTo(0.4, 10);
       expect(report.advantage.classes.air).toBe(0);
       // Hero T .2 / M .4 / B .4, densities (share / band width) .8 / .95 / 1.21: close to an even spread, so
-      // no part is hollow and the range has no shape
-      expect(report.hero.shape).toMatchObject({ polarized: 0, linear: 0, condensed: 0, dominant: null, contiguity: 1 });
+      // no part is hollow, so neither linear nor condensed. Its equities sit at 100%, 40% and 0%, so polarized
+      // (0.58, above) is the dominant shape
+      expect(report.hero.shape).toMatchObject({ linear: 0, condensed: 0, dominant: 'polarized', contiguity: 1 });
       expect(report.hero.shape.density.top).toBeCloseTo(0.2 / 0.25, 10);
       expect(report.hero.shape.density.middle).toBeCloseTo(0.4 / 0.42, 10);
       expect(report.hero.shape.density.bottom).toBeCloseTo(0.4 / 0.33, 10);
@@ -3003,7 +3007,7 @@ describe('range vs range analysis', () => {
       expect(report.villain.capped).toEqual({ relative: 1, absolute: 0 });
       expect(report.hero.shape).toMatchObject({ top: 0.2, middle: expect.any(Number), bottom: 0.4 });
       // Villain T .6 / M .4 / B 0: fully linear
-      expect(report.villain.shape).toMatchObject({ polarized: 0, linear: 1, condensed: 0, dominant: 'linear' });
+      expect(report.villain.shape).toMatchObject({ linear: 1, condensed: 0, dominant: 'linear' });
       expect(report.villain.shape).not.toHaveProperty('capped');
       expect(report.flags.isThreeOfAKind).toEqual({ hero: 0.2, villain: 0.2, heroCount: 3, villainCount: 3 });
       // Each combo in one class: AA and KK are sets; TT, 88 and QQ sit between the K and the 7; 33 between the 4 and the 2
@@ -3019,6 +3023,7 @@ describe('range vs range analysis', () => {
     it('scores condensed ranges and reports capped separately', async () => {
       // TT beats 88 and loses to QQ: 50%, all Good
       const condensed = (await (await new RangeManager('TT').against('88,QQ', river)).compare()).hero;
+      // Every hand at 50%: no spread, so 0 polarized
       expect(condensed.shape).toMatchObject({ polarized: 0, linear: 0, condensed: 1, dominant: 'condensed' });
       expect(condensed.capped).toEqual({ relative: 1, absolute: 1 });
     });
@@ -3028,6 +3033,8 @@ describe('range vs range analysis', () => {
       const mixed = (await (await new RangeManager('TT,3c3d,3h3s').against('88,QQ', river)).compare()).hero;
       expect(mixed.shape.condensed).toBeCloseTo(1 - (0.25 / 0.33) / (0.75 / 0.42), 10);
       expect(mixed.shape.dominant).toBe('condensed');
+      // Equities 0.5 (6) and 0 (2): mean 0.375, variance 0.046875 -> 0.2
+      expect(mixed.shape.polarized).toBeCloseTo(0.2, 10);
       expect(mixed.capped).toEqual({ relative: 1, absolute: 1 });
       // With as much trash as medium hands, the bottom is denser than the middle: not condensed
       const even = (await (await new RangeManager('TT,33').against('88,QQ', river)).compare()).hero;
@@ -3070,18 +3077,22 @@ describe('range vs range analysis', () => {
       // Hero ranked: AA (1.0), TT (0.4), 33 (0). AA + 33 skips TT; AA + TT is the top slice
       const polar = (await spot.bucket('strong', 'trash').buckets()).hero.shape;
       expect(polar.contiguity).toBeCloseTo(3 / 9, 10);
-      expect(polar).toMatchObject({ polarized: 1, linear: 0 });
+      // AA (100%) and 33 (0%): nuts and air only, perfectly polarized
+      expect(polar).toMatchObject({ polarized: 1, linear: 0, dominant: 'polarized' });
       const top = (await spot.bucket('strong', 'weak').buckets()).hero.shape;
-      expect(top).toMatchObject({ polarized: 0, linear: 1, contiguity: 1 });
+      // AA (1) and TT (0.4): mean 0.6, variance 0.08 -> 0.08 / 0.24
+      expect(top).toMatchObject({ linear: 1, contiguity: 1 });
+      expect(top.polarized).toBeCloseTo(1 / 3, 10);
       // All 18 combos at against(), including the 3 AA combos with the As that can't be dealt (contiguity skips them)
       expect(spot.matchup.parentHands).toEqual(spot.filteredHands);
     });
 
     it('enough sets how much of an end counts as fully present', async () => {
-      // AA + 33 is perfectly polarized (T 1/3, B 2/3, no middle); with enough = 50% the top counts 2/3
+      // AA + TT is fully linear (T 1/3); with enough = 50% the top counts 2/3. polarized doesn't use enough
       const strict = await hero.against(villain, river, { shape: { enough: 0.5 } });
       const side = (await strict.buckets()).hero;
-      expect((await strict.bucket('strong', 'trash').buckets()).hero.shape.polarized).toBeCloseTo(2 / 3, 10);
+      expect((await strict.bucket('strong', 'weak').buckets()).hero.shape.linear).toBeCloseTo(2 / 3, 10);
+      expect((await strict.bucket('strong', 'trash').buckets()).hero.shape.polarized).toBe(1);
       expect(side.capped).toEqual({ relative: 0, absolute: 0 }); // capping uses topEnd, not enough
       await expect(hero.against(villain, river, { shape: { enough: 0 } })).rejects.toThrow('above 0');
     });
@@ -3178,13 +3189,14 @@ describe('README range vs range example, as written', () => {
     expect(report.advantage.bands.strong).toBeCloseTo(0.336, 3);
     expect(report.advantage.bands.trash).toBeCloseTo(-0.503, 3);
     expect(report.advantage.classes.air).toBeCloseTo(-0.103, 3);
-    expect(report.advantage.polarization).toBe(0);
+    expect(report.advantage.polarization).toBeCloseTo(-0.032, 3);
     // 90%+ equity: the opener's AA, 77 and 66 sets; the defender's 77 and 66 sets
     expect(report.hero.nuts.count).toBe(9);
     expect(report.villain.nuts.count).toBe(6);
     // T .405 / M .500 / B .095: the bottom is thin (density .29 against the middle's 1.19), so mostly linear
     expect(report.hero.shape.linear).toBeCloseTo(0.759, 3);
-    expect(report.hero.shape.polarized).toBe(0);
+    expect(report.hero.shape.polarized).toBeCloseTo(0.207, 3);
+    expect(report.villain.shape.polarized).toBeCloseTo(0.238, 3);
     expect(report.hero.shape.condensed).toBe(0);
     expect(report.hero.shape.dominant).toBe('linear');
     expect(report.hero.capped).toEqual({ relative: 0, absolute: 0 });

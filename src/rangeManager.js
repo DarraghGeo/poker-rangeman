@@ -1649,9 +1649,13 @@ export class RangeManager {
     const totals = { win: 0, tie: 0, lose: 0 };
     const buckets = Object.fromEntries(bands.map(band => [band.name, { count: 0, weight: 0, share: 0, combos: [] }]));
     let totalWeight = 0;
+    let sum = 0;
+    let sumSquares = 0;
     for (const hand of live) {
       const result = equityByHand[hand];
       const weight = weightOf(hand);
+      sum += result.equity * weight;
+      sumSquares += result.equity * result.equity * weight;
       totals.win += result.win * weight; totals.tie += result.tie * weight; totals.lose += result.lose * weight;
       const bucket = buckets[this._bandOf(result.equity, bands)];
       bucket.combos.push(hand);
@@ -1664,12 +1668,14 @@ export class RangeManager {
     }
     const runouts = totals.win + totals.tie + totals.lose;
     const contiguity = this._contiguity(live, parentHands, equityByHand, weightOf, hand => parentWeights[hand] ?? 1);
+    const mean = totalWeight ? sum / totalWeight : 0;
+    const variance = totalWeight ? Math.max(0, sumSquares / totalWeight - mean * mean) : 0;
     return {
       combos: live.length,
       weight: totalWeight,
       equity: runouts ? (totals.win + totals.tie / 2) / runouts : null,
       buckets,
-      shape: live.length ? this._shapeOf(buckets, bands, contiguity, enough, minDominant) : null
+      shape: live.length ? this._shapeOf(buckets, bands, contiguity, enough, minDominant, { mean, variance }) : null
     };
   }
 
@@ -1700,13 +1706,16 @@ export class RangeManager {
    * between (M). Each share is compared with an even spread across equity: density = share / band width
    * (with the default bands 0.25, 0.42 and 0.33), so 1 means as many hands as an even spread would have.
    * A part is hollow when it is thinner than its neighbours: hollow(part, than) = 1 - part / than, from 0 to 1.
-   * - polarized = enough(T) x enough(B) x hollow(middle, thinner end): both ends, no hands in between
+   * - polarized = Var(e) / (mean(e) x (1 - mean(e))), over each hand's equity e against villain (weighted).
+   *   By the Bhatia-Davis inequality this is 1 only when every hand has 0% or 100% equity (perfectly
+   *   polarized: nuts and air against this opponent) and 0 when every hand has the same equity. It needs no
+   *   bands, and doesn't depend on the range's average equity. A range with no spread at all scores 0.
    * - linear    = enough(T) x hollow(bottom, middle) x contiguity: the top, then medium hands, without gaps
    * - condensed = hollow(thicker end, middle): the top and bottom removed
-   * enough(x) = min(1, x / enough), default 10%. An even spread scores 0 on all three. The scores are
+   * enough(x) = min(1, x / enough), default 10%. An even spread scores 0 on linear and condensed. The scores are
    * independent and need not add up to 1. dominant is the highest when it reaches minDominant, else null.
    */
-  _shapeOf(buckets, bands, contiguity, enough, minDominant = 0.5) {
+  _shapeOf(buckets, bands, contiguity, enough, minDominant = 0.5, { mean = 0, variance = 0 } = {}) {
     const top = buckets[bands[0].name].share;
     const bottom = bands.length > 1 ? buckets[bands[bands.length - 1].name].share : 0;
     // Summed from the middle bands (not 1 - top - bottom) so an empty middle is exactly 0
@@ -1719,7 +1728,8 @@ export class RangeManager {
     const present = share => Math.min(1, share / enough);
     const hollow = (part, than) => (than <= 0 ? (part <= 0 ? 1 : 0) : Math.max(0, Math.min(1, 1 - part / than)));
     const scores = {
-      polarized: present(top) * present(bottom) * hollow(dMiddle, Math.min(dTop, dBottom)),
+      // Rounded so floating-point noise doesn't turn a perfect 1 into 0.9999999999999999
+      polarized: mean > 0 && mean < 1 ? Math.round(Math.min(1, variance / (mean * (1 - mean))) * 1e12) / 1e12 : 0,
       linear: present(top) * hollow(dBottom, dMiddle) * contiguity,
       condensed: middle > 0 ? hollow(Math.max(dTop, dBottom), dMiddle) : 0
     };
@@ -1731,7 +1741,8 @@ export class RangeManager {
       top,
       middle,
       bottom,
-      density: { top: dTop, middle: dMiddle, bottom: dBottom }
+      density: { top: dTop, middle: dMiddle, bottom: dBottom },
+      equity: { mean, sd: Math.sqrt(variance) }
     };
   }
 

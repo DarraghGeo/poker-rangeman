@@ -154,13 +154,17 @@ export interface BucketStats {
 }
 
 /**
- * The three competing range shapes, each 0 to 1, from the density (share / band width) of the range in the top
+ * The three competing range shapes, each 0 to 1. polarized is the Bhatia-Davis ratio of each hand's equity;
+ * linear and condensed come from the density (share / band width) of the range in the top
  * band (T), the bands between (M) and the bottom band (B), compared with an even spread. hollow(part, than) =
  * 1 - part / than. enough(x) = min(1, x / shape.enough), default 10%. Independent: they need not add up to 1.
  * See README "Range shape".
  */
 export interface Shape {
-  /** enough(T) x enough(B) x hollow(middle, thinner end): both ends, no hands in between. */
+  /**
+   * Var(e) / (mean(e) x (1 - mean(e))) over each hand's equity e against villain (weighted). 1 = perfectly
+   * polarized (every hand 0% or 100%), 0 = every hand the same equity. No bands involved.
+   */
   polarized: number;
   /** enough(T) x hollow(bottom, middle) x contiguity: the top, then medium hands, no gaps. */
   linear: number;
@@ -176,6 +180,8 @@ export interface Shape {
   bottom: number;
   /** Share / band width for each part: 1 = as many hands as an even spread across equity. */
   density: { top: number; middle: number; bottom: number };
+  /** Mean and standard deviation of the hands' equity (weighted), behind polarized. */
+  equity: { mean: number; sd: number };
 }
 
 export interface SideSummary {
