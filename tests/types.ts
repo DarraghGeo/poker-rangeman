@@ -1,5 +1,5 @@
 // Type-checked by `npm run test:types`; not executed.
-import { RangeManager } from 'poker-rangeman';
+import { RangeManager, RangeQuery } from 'poker-rangeman';
 import type { EquityResult, RankedHand, Breakdown, VillainRange, EvaluationResult, Hand } from 'poker-rangeman';
 
 async function check(): Promise<void> {
@@ -23,6 +23,17 @@ async function check(): Promise<void> {
   const above: RangeManager = await rm.equityAbove('80%', ['Qc', 'Qd'], board);
   const between: RangeManager = await (await rm.equityBetween(0.7, '90%', 'QQ', board)).equityBelow(0.85, 'QQ', board);
 
+  // Chaining async steps with one await
+  const query: RangeQuery = rm.makesHand(['Pair'], board).hasSuit('s').getEquity('QQ+', board).equityAbove('60%');
+  const asPromise: Promise<RangeManager> = query;
+  const chainedRange: RangeManager = await query.strongest('50%', board).exclude('AA');
+  const pendingSize: Promise<number> = rm.hitsHand(['Pair'], board).size();
+  const pendingEquity: Promise<EquityResult> = rm.getEquity('QQ+', board).equity();
+  const withEquity: RangeManager = await rm.getEquity('QQ+', board);
+  const syncFiltered: RangeManager = withEquity.equityAbove('60%').equityBelow(0.9).hasSuit('h');
+  const stored: Record<Hand, EquityResult> | null = syncFiltered.handEquity;
+  const storedTotal: EquityResult = await syncFiltered.equity();
+
   const ranked: RankedHand[] = await rm.rankHands(board);
   const top: RangeManager = await rm.strongest('20%', board, { street: 'river' });
   const bottom: RangeManager = await rm.weakest(0.1, board);
@@ -33,7 +44,8 @@ async function check(): Promise<void> {
 
   const notation: string = top.toNotation();
   const size: number = bottom.size();
-  void [keyCards, middling, uses, total, byHand, above, between, ranked, pairs, unblocked, notation, size];
+  void [keyCards, middling, uses, total, byHand, above, between, ranked, pairs, unblocked, notation, size,
+    asPromise, chainedRange, pendingSize, pendingEquity, stored, storedTotal];
 }
 
 void check;
@@ -42,3 +54,6 @@ void check;
 new RangeManager('AA').makesHand(['Bogus'], ['Kh', '9h', '4d']);
 // @ts-expect-error: a share is a number or a percentage string
 new RangeManager('AA').equityAbove('eighty', 'KK');
+// @ts-expect-error: a pending chain is not a RangeManager until awaited
+const notAwaited: RangeManager = new RangeManager('AA').makesHand(['Pair'], ['Kh', '9h', '4d']);
+void notAwaited;

@@ -70,6 +70,8 @@ export class RangeManager {
     this.lastStreet = null;
     this.evaluationCache = new Map();
     this.equityCache = new Map();
+    // Per-hand equity stored by getEquity(), read by the equity filters
+    this.handEquity = null;
 
     if (!input) throw new Error('Input is required');
     if (!Array.isArray(input) && typeof input !== 'string') {
@@ -831,6 +833,8 @@ export class RangeManager {
     const filtered = this._withoutCards(this.filteredHands, expanded);
     const newInstance = this._createFilteredInstance(filtered);
     newInstance.deadCards = expanded;
+    // Equity depends on dead cards: run getEquity() again
+    newInstance.handEquity = null;
     return newInstance;
   }
 
@@ -1088,8 +1092,18 @@ export class RangeManager {
   /**
    * Equity of this whole range against villain, counting every possible runout (exact on the flop and
    * turn, a Monte Carlo estimate preflop). Combos that clash with the board or dead cards are skipped.
+   * With no arguments, totals the equity stored by getEquity() for the hands in the range.
    */
   async equity(villain, boardCards = [], options = {}) {
+    if (villain === undefined) {
+      const handEquity = this._requireStoredEquity();
+      const totals = { win: 0, tie: 0, lose: 0 };
+      for (const hand of this.filteredHands) {
+        for (const key of ['win', 'tie', 'lose']) totals[key] += handEquity[hand][key];
+      }
+      const total = totals.win + totals.tie + totals.lose;
+      return { ...totals, equity: total ? (totals.win + totals.tie / 2) / total : null };
+    }
     const { board, villainHands, deadCards, iterations } = this._prepareEquity(villain, boardCards, options);
     if (this.filteredHands.length === 0 || villainHands.length === 0) return { win: 0, tie: 0, lose: 0, equity: null };
     return this._computeEquity(this.filteredHands, villainHands, board, deadCards, iterations);
@@ -1098,9 +1112,13 @@ export class RangeManager {
   /**
    * Equity of each hand in this range against villain, as { hand: { win, tie, lose, equity } }.
    * equity is null for a hand that cannot be dealt (it shares a card with the board or dead cards).
-   * Results are cached, so the equity filters can be chained without recomputing.
+   * With no arguments, returns the equity stored by getEquity() for the hands in the range.
    */
   async equityByHand(villain, boardCards = [], options = {}) {
+    if (villain === undefined) {
+      const handEquity = this._requireStoredEquity();
+      return Object.fromEntries(this.filteredHands.map(hand => [hand, handEquity[hand]]));
+    }
     const prepared = this._prepareEquity(villain, boardCards, options);
     const results = {};
     for (const hand of this.filteredHands) {
@@ -1122,30 +1140,70 @@ export class RangeManager {
     return this.equityCache.get(cacheKey);
   }
 
-  async _filterByEquity(matches, villain, boardCards, options) {
-    const byHand = await this.equityByHand(villain, boardCards, options);
-    const filtered = this.filteredHands.filter(hand => byHand[hand].equity !== null && matches(byHand[hand].equity));
+  /**
+   * Runs equity against villain once for every hand and stores it on the returned range, so the equity
+   * filters (equityAbove, equityBelow, equityBetween) and equity()/equityByHand() can read it without
+   * recomputing. Chainable: await rm.getEquity('QQ+', board).equityAbove('60%').hasSuit('s')
+   */
+  async getEquity(villain, boardCards = [], options = {}) {
+    if (villain === undefined) throw new Error('getEquity needs a villain range');
+    const handEquity = await this.equityByHand(villain, boardCards, options);
+    const instance = this._createFilteredInstance(this.filteredHands);
+    instance.handEquity = handEquity;
+    return instance;
+  }
+
+  _requireStoredEquity() {
+    if (!this.handEquity) throw new Error('No equity yet: call getEquity(villain, board) first');
+    const missing = this.filteredHands.filter(hand => !Object.hasOwn(this.handEquity, hand));
+    if (missing.length > 0) {
+      throw new Error(`${missing.length} hand(s) have no equity (e.g. ${missing[0]}, added after getEquity): call getEquity again`);
+    }
+    return this.handEquity;
+  }
+
+  _filterByStoredEquity(matches) {
+    const handEquity = this._requireStoredEquity();
+    const filtered = this.filteredHands.filter(hand => handEquity[hand].equity !== null && matches(handEquity[hand].equity));
     return this._createFilteredInstance(filtered);
   }
 
-  /** Hands whose equity against villain is greater than min (0-1 or '80%'). */
-  async equityAbove(min, villain, boardCards = [], options = {}) {
-    const threshold = this._parseShare(min);
-    return this._filterByEquity(e => e > threshold, villain, boardCards, options);
+  // With only thresholds, filters synchronously on the equity stored by getEquity(). Given villain (and board,
+  // options) as in 3.6.0, runs getEquity first and returns a RangeQuery.
+  _equityFilter(buildMatcher, equityArgs) {
+    if (equityArgs.length > 0 && equityArgs[0] !== undefined) {
+      return new RangeQuery(Promise.resolve().then(() => {
+        const matches = buildMatcher();
+        return this.getEquity(...equityArgs).then(range => range._filterByStoredEquity(matches));
+      }));
+    }
+    return this._filterByStoredEquity(buildMatcher());
   }
 
-  /** Hands whose equity against villain is less than max (0-1 or '20%'). */
-  async equityBelow(max, villain, boardCards = [], options = {}) {
-    const threshold = this._parseShare(max);
-    return this._filterByEquity(e => e < threshold, villain, boardCards, options);
+  /** Hands whose stored equity is greater than min (0-1 or '80%'). */
+  equityAbove(min, ...equityArgs) {
+    return this._equityFilter(() => {
+      const threshold = this._parseShare(min);
+      return e => e > threshold;
+    }, equityArgs);
   }
 
-  /** Hands whose equity against villain is between min and max, inclusive (0-1 or '70%'). */
-  async equityBetween(min, max, villain, boardCards = [], options = {}) {
-    const low = this._parseShare(min);
-    const high = this._parseShare(max);
-    if (low > high) throw new Error(`Equity range is empty: min ${min} is above max ${max}`);
-    return this._filterByEquity(e => e >= low && e <= high, villain, boardCards, options);
+  /** Hands whose stored equity is less than max (0-1 or '20%'). */
+  equityBelow(max, ...equityArgs) {
+    return this._equityFilter(() => {
+      const threshold = this._parseShare(max);
+      return e => e < threshold;
+    }, equityArgs);
+  }
+
+  /** Hands whose stored equity is between min and max, inclusive (0-1 or '70%'). */
+  equityBetween(min, max, ...equityArgs) {
+    return this._equityFilter(() => {
+      const low = this._parseShare(min);
+      const high = this._parseShare(max);
+      if (low > high) throw new Error(`Equity range is empty: min ${min} is above max ${max}`);
+      return e => e >= low && e <= high;
+    }, equityArgs);
   }
 
   _compareRankArrays(a, b) {
@@ -1419,3 +1477,75 @@ export class RangeManager {
   }
 }
 
+
+// ============================================================================
+// CHAINABLE ASYNC FILTERS
+// ============================================================================
+
+// Async methods that return a range. They return a RangeQuery, so further filters can be chained
+// before a single await: await rm.makesHand(['Pair'], board).getEquity('QQ+', board).equityAbove('60%')
+const ASYNC_RANGE_METHODS = ['makesHand', 'hitsHand', 'hitsHandBoth', 'getEquity', 'strongest', 'weakest'];
+
+// Methods that return a range synchronously; on a RangeQuery they queue another step
+// (the equity filters are synchronous after getEquity, or return a RangeQuery given a villain)
+const SYNC_RANGE_METHODS = [
+  'exclude', 'include', 'intersect', 'hasSuit', 'suitedOf', 'setDeadCards', 'hasKicker', 'hasKeyCard',
+  'equityAbove', 'equityBelow', 'equityBetween'
+];
+
+// Methods that return a value; on a RangeQuery they return a Promise of that value.
+// toString is left out: string conversion calls it, and a Promise there would throw.
+const VALUE_METHODS = [
+  'toArray', 'getHands', 'size', 'contains', 'toNotation', 'getKeyCards', 'normalizeNotation',
+  'handContainsDeadCard', 'handHasSuit', 'handSuitedOf',
+  'evaluateHand', 'getObject', 'equity', 'equityByHand', 'rankHands', 'breakdown', 'blockers'
+];
+
+/**
+ * A pending range from an async filter. Awaiting it (or calling then/catch/finally) gives the
+ * RangeManager. Calling a range method on it chains another filter and returns a new RangeQuery;
+ * calling a value method returns a Promise of the value. Errors from any step reject the whole chain.
+ */
+export class RangeQuery {
+  #promise;
+
+  constructor(promise) {
+    this.#promise = Promise.resolve(promise);
+  }
+
+  then(onFulfilled, onRejected) {
+    return this.#promise.then(onFulfilled, onRejected);
+  }
+
+  catch(onRejected) {
+    return this.#promise.catch(onRejected);
+  }
+
+  finally(onFinally) {
+    return this.#promise.finally(onFinally);
+  }
+
+  get [Symbol.toStringTag]() {
+    return 'RangeQuery';
+  }
+}
+
+for (const name of ASYNC_RANGE_METHODS) {
+  const run = RangeManager.prototype[name];
+  RangeManager.prototype[name] = function (...args) {
+    // Called inside then() so a validation error rejects the query instead of throwing synchronously
+    return new RangeQuery(Promise.resolve().then(() => run.apply(this, args)));
+  };
+}
+
+for (const name of [...ASYNC_RANGE_METHODS, ...SYNC_RANGE_METHODS]) {
+  RangeQuery.prototype[name] = function (...args) {
+    return new RangeQuery(this.then(range => range[name](...args)));
+  };
+}
+
+for (const name of VALUE_METHODS) {
+  RangeQuery.prototype[name] = function (...args) {
+    return this.then(range => range[name](...args));
+  };
+}

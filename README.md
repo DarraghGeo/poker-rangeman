@@ -327,7 +327,7 @@ Filters the range to only include hands that make the specified strength criteri
 - `boardCards` (string[]): Array of board cards (must have at least 3 cards)
 - `options` (boolean | object, optional): `strict` boolean, or an [options object](#evaluation-options)
 
-**Returns:** `Promise<RangeManager>` - Promise resolving to new instance with matching hands
+**Returns:** `RangeQuery` - a pending range: `await` it for the new instance, or keep chaining (see [Chaining async steps](#chaining-async-steps))
 
 **Example:**
 ```javascript
@@ -358,7 +358,7 @@ Filters the range to only include hands where at least one hand card is used in 
 - `boardCards` (string[]): Array of board cards (must have at least 3 cards)
 - `options` (boolean | object, optional): `strict` boolean, or an [options object](#evaluation-options)
 
-**Returns:** `Promise<RangeManager>` - Promise resolving to new instance with matching hands
+**Returns:** `RangeQuery` - a pending range: `await` it for the new instance, or keep chaining (see [Chaining async steps](#chaining-async-steps))
 
 **Example:**
 ```javascript
@@ -380,7 +380,7 @@ Filters the range to only include hands where both hand cards are used in making
 - `boardCards` (string[]): Array of board cards (must have at least 3 cards)
 - `options` (boolean | object, optional): `strict` boolean, or an [options object](#evaluation-options)
 
-**Returns:** `Promise<RangeManager>` - Promise resolving to new instance with matching hands
+**Returns:** `RangeQuery` - a pending range: `await` it for the new instance, or keep chaining (see [Chaining async steps](#chaining-async-steps))
 
 **Example:**
 ```javascript
@@ -580,13 +580,13 @@ const evaluation = await rm.getObject('AcKc', board);
 
 Equity runs out the board for every matchup between this range and villain's: exact on the flop and turn, and preflop a lookup table or Monte Carlo estimate. Hands that share a card with the board, the range's dead cards or `options.deadCards` are skipped.
 
-`villain` can be range notation (`'QQ+,AK'`), an array of hands, two cards (`['Ah', 'Kd']`) or another `RangeManager`. `boardCards` is `[]` (preflop) or 3 to 5 cards. `options` are `{ deadCards, iterations }`: extra dead cards (wildcards allowed) and Monte Carlo samples per matchup preflop (default 10000).
+Run equity once with [`getEquity()`](#getequityvillain-boardcards-options), then filter on it as often as you like. `villain` can be range notation (`'QQ+,AK'`), an array of hands, two cards (`['Ah', 'Kd']`) or another `RangeManager`. `boardCards` is `[]` (preflop) or 3 to 5 cards. `options` are `{ deadCards, iterations }`: extra dead cards (wildcards allowed) and Monte Carlo samples per matchup preflop (default 10000).
 
 Equity thresholds are a number from 0 to 1 (`0.8`) or a percentage string (`'80%'`).
 
-#### `equity(villain, boardCards?, options?)`
+#### `equity(villain?, boardCards?, options?)`
 
-The whole range's equity against villain.
+The whole range's equity against villain. With no arguments, it totals the equity stored by `getEquity()` instead of calculating.
 
 **Returns:** `Promise<{ win, tie, lose, equity }>`: runout counts from this range's side, and `equity = (win + tie / 2) / total` (`null` if no matchup is possible)
 
@@ -596,32 +596,44 @@ await hero.equity('QQ+,AK', ['Kh', '9h', '4d']);
 // { win: 233331, tie: 80460, lose: 541569, equity: 0.3198... }
 ```
 
-#### `equityByHand(villain, boardCards?, options?)`
+#### `getEquity(villain, boardCards?, options?)`
 
-Each hand's equity against villain.
-
-**Returns:** `Promise<{ [hand]: { win, tie, lose, equity } }>`. `equity` is `null` for a hand that cannot be dealt.
-
-Results are cached on the range and shared with every range derived from it, so chained equity filters on the same villain and board do not recompute.
-
-#### `equityAbove(min, villain, boardCards?, options?)`
-#### `equityBelow(max, villain, boardCards?, options?)`
-#### `equityBetween(min, max, villain, boardCards?, options?)`
-
-Keep the hands whose equity against villain is greater than `min`, less than `max`, or between `min` and `max` inclusive. Each returns a new `RangeManager`, so they chain with each other and with every other filter.
+Runs equity against villain once for every hand in the range and stores it on the range it returns. The equity filters, `equity()` and `equityByHand()` then read the stored values instead of recalculating, and later filters keep them. Like the other async steps it returns a chainable `RangeQuery`.
 
 ```javascript
 const hero = new RangeManager('22+,A2s+,KTs+,QTs+,JTs,AJo+,KQo');
-const villain = 'TT+,AQs+,AK';
 const flop = ['Kh', '9h', '4d'];
 
-const value = await hero.equityAbove('80%', villain, flop);
-const medium = await hero.equityBetween('70%', '90%', villain, flop);
-const bluffCatchers = await (await hero.makesHand(['Pair'], flop)).equityBetween(0.4, 0.6, villain, flop);
-const giveUp = await hero.equityBelow(0.2, villain, flop);
+const withEquity = await hero.getEquity('TT+,AQs+,AK', flop);  // the only equity run
+
+withEquity.equityAbove('80%').toNotation();            // 'KK+,99,44'
+withEquity.equityBetween('70%', '90%').toNotation();   // 'AA,99,44,AKs,AKo'
+withEquity.equityBelow(0.2).size();                    // 101
+(await withEquity.equity()).equity;                    // 0.307..., the whole range
+
+// Or in one chain
+const bluffCatchers = await hero
+  .makesHand(['Pair'], flop)
+  .getEquity('TT+,AQs+,AK', flop)
+  .equityBetween(0.4, 0.6);
+bluffCatchers.toNotation();                            // 'QQ,A4s,KTs+,KQo'
 ```
 
-**Performance:** per-hand equity runs one calculation per hand, so it grows with both ranges. The example above (198 hero combos against about 50 villain combos on the flop) takes about 0.2 s; turn and river boards are faster. Preflop uses Monte Carlo unless poker-bitvaljs has its preflop table loaded, so lower `iterations` for large ranges.
+Run `getEquity()` again after changing the villain range or the board. `setDeadCards()` clears the stored equity, since dead cards change the result. A filter throws if a hand has no stored equity, for example one added with `include()` after `getEquity()`.
+
+#### `equityAbove(min)` / `equityBelow(max)` / `equityBetween(min, max)`
+
+Keep the hands whose stored equity is greater than `min`, less than `max`, or between `min` and `max` inclusive. They need `getEquity()` earlier in the chain, run synchronously, and return a new `RangeManager`. Hands that cannot be dealt (equity `null`) are dropped.
+
+The 3.6.0 form, `equityAbove(min, villain, boardCards?, options?)`, still works: given a villain it runs `getEquity()` first and returns a `RangeQuery`.
+
+#### `equityByHand(villain?, boardCards?, options?)`
+
+Each hand's equity, as `Promise<{ [hand]: { win, tie, lose, equity } }>`. With no arguments it returns the stored equity; with a villain it calculates (results are cached). `equity` is `null` for a hand that cannot be dealt.
+
+`equity()` likewise totals the stored equity when called with no arguments.
+
+**Performance:** `getEquity()` runs one calculation per hand, so it grows with both ranges. The example above (198 hero combos against about 50 villain combos on the flop) takes about 0.2 s; turn and river boards are faster. Preflop uses Monte Carlo unless poker-bitvaljs has its preflop table loaded, so lower `iterations` for large ranges.
 
 ---
 
@@ -637,7 +649,7 @@ Every hand in the range, strongest first, by made hand (draws do not count).
 
 #### `strongest(portion, boardCards, options?)` / `weakest(portion, boardCards, options?)`
 
-The strongest or weakest share of the range on this board (`0.2` or `'20%'`). Hands tied with the last hand taken are kept too. Returns a new `RangeManager`.
+The strongest or weakest share of the range on this board (`0.2` or `'20%'`). Hands tied with the last hand taken are kept too. Returns a `RangeQuery` (await it, or keep chaining).
 
 ```javascript
 const rm = new RangeManager('22+,AK,AQ,KQ');
@@ -823,45 +835,44 @@ Each hole card is an overcard (above every board card), a middle card, an underc
 
 ## Method Chaining Examples
 
-The `RangeManager` API is designed for fluent method chaining. Almost all filtering methods return a new `RangeManager` instance, allowing you to chain operations:
+Every filter returns a new range, so filters chain. The original range never changes.
 
 ```javascript
 import { RangeManager } from 'poker-rangeman';
 
-// Chain multiple filters
 const rm = new RangeManager('22+,AKs,AKo,AQs,AQo');
 const result = rm
-  .hasSuit('s')           // Filter to hands with at least one spade
-  .exclude(['As'])        // Remove hands with As
-  .intersect('AKs,AKo');  // Only keep AKs and AKo
+  .hasSuit('s')           // Hands with at least one spade
+  .exclude(['As'])        // Remove hands with the As
+  .intersect('AKs,AKo');  // Only keep AK
 
-console.log(result.toString()); // "AKs,AKo" (without As)
-
-// Chain with async methods
-const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
-const filtered = await rm
-  .makesHand(['Pair'], board)  // Filter to pairs
-  .hasSuit('s');               // Then filter to spades
-
-// Complex chaining
-const complex = await new RangeManager('22+,AKs,AKo,AQs,AQo')
-  .exclude(['Ah', 'Kd'])           // Remove dead cards
-  .hasSuit('s')                    // Filter to spades
-  .makesHand(['Pair', 'Straight'], board)  // Filter to pairs or straights
-  .intersect('AKs');               // Only keep AKs
-
-console.log(complex.size());
+result.toNotation(); // 'AKo' (the only suited AK with a spade is AsKs, which holds the As)
 ```
 
-**Note:** When chaining async methods, make sure to `await` the entire chain:
+### Chaining async steps
+
+The board and equity filters are asynchronous: `makesHand()`, `hitsHand()`, `hitsHandBoth()`, `getEquity()`, `strongest()` and `weakest()`. They return a `RangeQuery`, a pending range you can keep chaining. Any filter can follow, and a single `await` at the end runs the steps in order and gives the final `RangeManager`:
 
 ```javascript
-// Correct
-const result = await rm.makesHand(['Pair'], board).hasSuit('s');
+const board = ['Ah', 'Kd', '7c'];
 
-// Incorrect - will not work
-const result = rm.makesHand(['Pair'], board).hasSuit('s'); // Missing await
+const pairsWithSpade = await rm
+  .makesHand(['Pair'], board)  // async
+  .hasSuit('s');               // queued after it
+pairsWithSpade.toNotation();   // 'QQ-88,66-22,AQs,AQo'
+
+const strongPairs = await new RangeManager('22+,AK,AQ,KQ')
+  .exclude(['Qh'])
+  .makesHand(['Pair', 'Two Pair', 'Three of a Kind'], board)
+  .getEquity('TT+,AK', board)  // one equity run per hand
+  .equityAbove('50%')          // reads the stored equity
+  .hasSuit('s');
 ```
+
+- Awaiting each step separately works too: `(await rm.makesHand(['Pair'], board)).hasSuit('s')`.
+- Without the `await`, the result is a `RangeQuery`, not a `RangeManager`. `rm.makesHand(['Pair'], board).hasSuit('s').size()` returns a Promise of the size.
+- Methods that return a value (`size()`, `toArray()`, `toNotation()`, `contains()`, `equity()`, `breakdown()`, ...) return a Promise of that value when called on a pending chain. Use `toNotation()` there rather than `toString()`, which a `RangeQuery` does not override.
+- An error in any step rejects the whole chain, so one `try`/`catch` (or `.catch()`) around the `await` covers every step.
 
 ---
 
@@ -947,15 +958,15 @@ import { RangeManager } from 'poker-rangeman';
 const rm = new RangeManager('22+,AKs,AKo,AQs,AQo');
 const board = ['Ah', 'Kd', 'Qc'];
 
-// Chain multiple filters
+// Chain sync and async filters with one await
 const result = await rm
   .exclude(['As'])                    // Remove As
   .hasSuit('s')                       // Filter to spades
-  .makesHand(['Pair'], board)         // Filter to pairs
-  .intersect('AKs');                  // Only keep AKs
+  .makesHand(['Two Pair'], board)     // Filter to two pair
+  .intersect('AKo,AQo');              // Only keep offsuit AK and AQ
 
-console.log(result.size());
-console.log(result.toString());
+console.log(result.size());     // 4
+console.log(result.toArray());  // ['AcKs', 'AdKs', 'AcQs', 'AdQs']
 ```
 
 ### Example 6: Include and Intersect
@@ -1026,7 +1037,7 @@ console.log('Hands using both cards:', bothCards.size());
 import { RangeManager } from 'poker-rangeman';
 
 const rm = new RangeManager('22+,AKs,AKo,AQs,AQo');
-const board = ['Ah', 'Kd', 'Qc'];
+const board = ['As', '8d', '5c'];
 
 // First, filter to hands that hit a pair
 const hitHands = await rm.hitsHand(['Pair'], board);
@@ -1039,12 +1050,12 @@ console.log('Hands with As as key card:', withAsKeyCard.toString());
 const withKdKicker = hitHands.hasKicker(['Kd']);
 console.log('Hands with Kd as kicker:', withKdKicker.toString());
 
-// Chain methods together
+// Chain methods together: pairs of aces with a king kicker
 const result = await rm
   .hitsHand(['Pair'], board)
   .hasKeyCard(['As'])
-  .hasKicker(['Kd']);
-console.log('Hands with As key card and Kd kicker:', result.toString());
+  .hasKicker(['Kx']);
+console.log('Hands with As key card and a king kicker:', result.toNotation()); // 'AKs,AKo'
 
 // Use wildcards
 const withAnyAceKeyCard = hitHands.hasKeyCard(['Ax']);
@@ -1093,7 +1104,7 @@ console.log(filtered2.toNotation());   // Still abbreviated (e.g., "AKs" or indi
 Types ship with the package (`index.d.ts`) and cover every method, option and criterion:
 
 ```typescript
-import { RangeManager, type Criterion, type EquityResult } from 'poker-rangeman';
+import { RangeManager, RangeQuery, type Criterion, type EquityResult } from 'poker-rangeman';
 ```
 
 ## Releasing

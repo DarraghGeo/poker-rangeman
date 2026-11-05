@@ -1,4 +1,5 @@
-import { RangeManager } from '../src/rangeManager.js';
+import { jest } from '@jest/globals';
+import { RangeManager, RangeQuery } from '../src/rangeManager.js';
 
 // ============================================================================
 // TEST IMPLEMENTATIONS - Must be defined before describe blocks
@@ -2729,6 +2730,168 @@ describe('RangeManager with poker-extval 5', () => {
       expect(result.heroBlocks.blocked.isPair).toHaveLength(3);
       await expect(rm.blockers(['Kh', '9h', '4h'])).rejects.toThrow('at least 5');
       await expect(rm.blockers(['Kh', '9h', '4h'], 'KhJs')).rejects.toThrow('shares cards');
+    });
+  });
+});
+
+// ============================================================================
+// CHAINING ASYNC STEPS AND STORED EQUITY
+// ============================================================================
+
+describe('chaining async steps', () => {
+  const board = ['Ah', 'Kd', '7c'];
+
+  describe('README examples, as written', () => {
+    it('sync chain', () => {
+      const rm = new RangeManager('22+,AKs,AKo,AQs,AQo');
+      expect(rm.hasSuit('s').exclude(['As']).intersect('AKs,AKo').toNotation()).toBe('AKo');
+    });
+
+    it('makesHand then hasSuit with one await', async () => {
+      const rm = new RangeManager('22+,AKs,AKo,AQs,AQo');
+      const pairsWithSpade = await rm.makesHand(['Pair'], board).hasSuit('s');
+      expect(pairsWithSpade).toBeInstanceOf(RangeManager);
+      expect(pairsWithSpade.toNotation()).toBe('QQ-88,66-22,AQs,AQo');
+    });
+
+    it('long chain through getEquity', async () => {
+      const result = await new RangeManager('22+,AK,AQ,KQ')
+        .exclude(['Qh'])
+        .makesHand(['Pair', 'Two Pair', 'Three of a Kind'], board)
+        .getEquity('TT+,AK', board)
+        .equityAbove('50%')
+        .hasSuit('s');
+      expect(result).toBeInstanceOf(RangeManager);
+      expect(result.size()).toBe(21);
+    });
+
+    it('Example 5', async () => {
+      const result = await new RangeManager('22+,AKs,AKo,AQs,AQo')
+        .exclude(['As']).hasSuit('s').makesHand(['Two Pair'], ['Ah', 'Kd', 'Qc']).intersect('AKo,AQo');
+      expect(result.size()).toBe(4);
+      expect(result.toArray()).toEqual(['AcKs', 'AdKs', 'AcQs', 'AdQs']);
+    });
+
+    it('Example 9', async () => {
+      const result = await new RangeManager('22+,AKs,AKo,AQs,AQo')
+        .hitsHand(['Pair'], ['As', '8d', '5c']).hasKeyCard(['As']).hasKicker(['Kx']);
+      expect(result.toNotation()).toBe('AKs,AKo');
+    });
+
+    it('getEquity examples', async () => {
+      const flop = ['Kh', '9h', '4d'];
+      const hero = new RangeManager('22+,A2s+,KTs+,QTs+,JTs,AJo+,KQo');
+      const withEquity = await hero.getEquity('TT+,AQs+,AK', flop);
+      expect(withEquity.equityAbove('80%').toNotation()).toBe('KK+,99,44');
+      expect(withEquity.equityBetween('70%', '90%').toNotation()).toBe('AA,99,44,AKs,AKo');
+      expect(withEquity.equityBelow(0.2).size()).toBe(101);
+      expect((await withEquity.equity()).equity).toBeCloseTo(0.307, 3);
+      const bluffCatchers = await hero.makesHand(['Pair'], flop).getEquity('TT+,AQs+,AK', flop).equityBetween(0.4, 0.6);
+      expect(bluffCatchers.toNotation()).toBe('QQ,A4s,KTs+,KQo');
+    });
+  });
+
+  describe('RangeQuery', () => {
+    it('async filters return a RangeQuery that resolves to a RangeManager', async () => {
+      const query = new RangeManager('AA').makesHand(['Pair'], board);
+      expect(query).toBeInstanceOf(RangeQuery);
+      expect(Object.prototype.toString.call(query)).toBe('[object RangeQuery]');
+      expect(await query).toBeInstanceOf(RangeManager);
+    });
+
+    it('supports then, catch and finally', async () => {
+      const rm = new RangeManager('QQ');
+      expect(await rm.makesHand(['Pair'], board).then(r => r.size())).toBe(6);
+      expect(await rm.makesHand(['Pair'], []).catch(e => e.message)).toBe('Board cards are required');
+      let finished = false;
+      await rm.makesHand(['Pair'], board).finally(() => { finished = true; });
+      expect(finished).toBe(true);
+    });
+
+    it('value methods return a Promise of the value', async () => {
+      const query = new RangeManager('QQ,JJ').makesHand(['Pair'], board);
+      await expect(query.size()).resolves.toBe(12);
+      await expect(query.toNotation()).resolves.toBe('QQ-JJ');
+      await expect(query.contains('QcQd')).resolves.toBe(true);
+    });
+
+    it('chains every kind of async step', async () => {
+      const result = await new RangeManager('TT+,AQs+,AK')
+        .hitsHand(['Pair'], ['Kh', '9h', '4d'])
+        .strongest('50%', ['Kh', '9h', '4d'])
+        .weakest(1, ['Kh', '9h', '4d'])
+        .hitsHandBoth(['Pair'], ['Kh', '9h', '4d']);
+      // The strongest half of the pairs is AA and AK; of those only AA uses both hole cards
+      expect(result).toBeInstanceOf(RangeManager);
+      expect(result.toNotation()).toBe('AA');
+    });
+
+    it('rejects the whole chain when any step fails', async () => {
+      const chain = new RangeManager('AA').hasSuit('s').makesHand(['Bogus'], board).hasSuit('h');
+      await expect(chain).rejects.toThrow('Invalid criteria: Bogus');
+      await expect(new RangeManager('AA').makesHand(['Pair'], board).hasSuit('z')).rejects.toThrow('Invalid suit');
+    });
+
+    it('does not change the original range', async () => {
+      const rm = new RangeManager('AA,KK');
+      await rm.makesHand(['Pair'], board).exclude('AA');
+      expect(rm.size()).toBe(12);
+    });
+  });
+
+  describe('getEquity and stored equity', () => {
+    const turn = ['Kh', '9h', '4d', '3c'];
+
+    it('runs equity once, then filters read the stored values', async () => {
+      const rm = new RangeManager('AA,KK,QQ,22');
+      const spy = jest.spyOn(RangeManager.prototype, '_computeEquity');
+      try {
+        const withEquity = await rm.getEquity('JJ', turn);
+        const runs = spy.mock.calls.length;
+        expect(runs).toBe(21); // one per hand that can be dealt: 6 AA, 3 KK (the Kh is on the board), 6 QQ, 6 22
+        expect(withEquity.equityAbove('80%').toNotation()).toBe('QQ+');
+        expect(withEquity.equityBelow(0.2).toNotation()).toBe('22');
+        expect(withEquity.equityBetween('70%', 0.97).equityAbove(0.9).toNotation()).toBe('AA,QQ');
+        await withEquity.equity();
+        await withEquity.equityByHand();
+        expect(spy.mock.calls.length).toBe(runs);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('equity filters after getEquity are synchronous and keep the stored equity', async () => {
+      const withEquity = await new RangeManager('AA,KK,QQ,22').getEquity('JJ', turn);
+      const above = withEquity.equityAbove(0.5);
+      expect(above).toBeInstanceOf(RangeManager);
+      expect(above.hasSuit('s').equityBelow(0.99).handEquity).toBe(withEquity.handEquity);
+    });
+
+    it('equity() and equityByHand() with no arguments use the stored equity of the current hands', async () => {
+      const withEquity = await new RangeManager('AA,22').getEquity('JJ', turn);
+      const aces = withEquity.equityAbove(0.5);
+      const byHand = await aces.equityByHand();
+      expect(Object.keys(byHand)).toHaveLength(6);
+      const total = await aces.equity();
+      expect(total.equity).toBeCloseTo(byHand.AcAd.equity, 10);
+    });
+
+    it('throws when no equity is stored or a hand has none', async () => {
+      const rm = new RangeManager('AA');
+      expect(() => rm.equityAbove(0.5)).toThrow('call getEquity');
+      const withEquity = await rm.getEquity('KK', turn);
+      expect(() => withEquity.include('22').equityAbove(0.5)).toThrow('added after getEquity');
+      expect(() => withEquity.setDeadCards(['2c']).equityAbove(0.5)).toThrow('call getEquity');
+      await expect(rm.getEquity()).rejects.toThrow('villain');
+      await expect(rm.equity()).rejects.toThrow('call getEquity');
+    });
+
+    it('keeps the 3.6.0 form that takes villain and board', async () => {
+      const rm = new RangeManager('AA,KK,QQ,22');
+      const query = rm.equityAbove('80%', 'JJ', turn);
+      expect(query).toBeInstanceOf(RangeQuery);
+      expect((await query).toNotation()).toBe('QQ+');
+      await expect(rm.equityAbove('80', 'JJ', turn)).rejects.toThrow('percentage');
     });
   });
 });
