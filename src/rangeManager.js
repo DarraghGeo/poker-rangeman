@@ -1170,6 +1170,8 @@ export class RangeManager {
   async getEquity(villain, boardCards = [], options = {}) {
     if (villain === undefined) throw new Error('getEquity needs a villain range');
     const bands = this._resolveBands(options.bands);
+    const shapeEnough = this._parseShare(options.shape?.enough ?? 0.1, 'shape.enough');
+    if (shapeEnough === 0) throw new Error('shape.enough must be above 0');
     const prepared = this._prepareEquity(villain, boardCards, options);
     const handEquity = {};
     for (const hand of this.filteredHands) {
@@ -1184,7 +1186,10 @@ export class RangeManager {
       deadCards: prepared.deadCards,
       iterations: prepared.iterations,
       key: prepared.key,
-      bands
+      bands,
+      shapeEnough,
+      // The range at against() time: the hands later filters choose from, for shape contiguity
+      parentHands: [...this.filteredHands]
     };
     return instance;
   }
@@ -1192,7 +1197,9 @@ export class RangeManager {
   /**
    * Sets villain's range and the board for range vs range analysis: runs hero's equity once (as getEquity)
    * and stores the matchup, so buckets, bucket filters, compare(), compareTo(), defend() and
-   * bluffCandidates() work without repeating villain and board. options: { bands, deadCards, iterations }.
+   * bluffCandidates() work without repeating villain and board.
+   * options: { bands, deadCards, iterations, shape: { enough } } (enough: the share at which an end of the
+   * range counts as fully present for the shape scores, default 0.1).
    */
   async against(villain, boardCards = [], options = {}) {
     if (villain === undefined) throw new Error('against needs a villain range');
@@ -1463,8 +1470,9 @@ export class RangeManager {
     return this.equityCache.get(cacheKey);
   }
 
-  // { combos, equity, buckets: { name: { count, share, combos } }, shape } for one side
-  _sideSummary(equityByHand, hands, bands) {
+  // { combos, equity, buckets: { name: { count, share, combos } }, shape } for one side. parentHands: the
+  // range the hands were chosen from (for contiguity); null when the hands are the whole range.
+  _sideSummary(equityByHand, hands, bands, parentHands = null, enough = 0.1) {
     const live = hands.filter(hand => equityByHand[hand] && equityByHand[hand].equity !== null);
     const totals = { win: 0, tie: 0, lose: 0 };
     const buckets = Object.fromEntries(bands.map(band => [band.name, { count: 0, share: 0, combos: [] }]));
@@ -1478,43 +1486,68 @@ export class RangeManager {
       bucket.share = live.length ? bucket.count / live.length : 0;
     }
     const runouts = totals.win + totals.tie + totals.lose;
-    const summary = {
+    const contiguity = this._contiguity(live, parentHands, equityByHand);
+    return {
       combos: live.length,
       equity: runouts ? (totals.win + totals.tie / 2) / runouts : null,
-      buckets
+      buckets,
+      shape: live.length ? this._shapeOf(buckets, bands, contiguity, enough) : null
     };
-    summary.shape = this._shapeOf(summary, bands);
-    return summary;
+  }
+
+  // Share of the hands that are among the parent range's top N hands by equity (N = the hands' count; hands
+  // tied with the Nth count too). 1 means no gaps: the hands are a top slice of what they were chosen from.
+  _contiguity(live, parentHands, equityByHand) {
+    if (!parentHands || live.length === 0) return 1;
+    const parent = parentHands
+      .filter(hand => equityByHand[hand] && equityByHand[hand].equity !== null)
+      .map(hand => equityByHand[hand].equity)
+      .sort((a, b) => b - a);
+    if (live.length >= parent.length) return 1;
+    const cutoff = parent[live.length - 1];
+    return live.filter(hand => equityByHand[hand].equity >= cutoff).length / live.length;
   }
 
   /**
-   * A heuristic label for a range's shape from its bucket shares (top band, bottom band, the middle):
-   * - polarized: top >= 10%, bottom >= 20% and the extremes outweigh the middle
-   * - linear: top >= 10% and bottom < 10% (strong hands down, few weak ones)
-   * - condensed: top < 10% and the middle >= 50%
-   * - mixed: none of these
-   * capped: top < 5% (few or none of the strongest hands). polarization: extremes minus middle, -1 to 1.
+   * Shape scores from 0 to 1, from the shares in the top band (T), the bottom band (B) and the bands
+   * between (M), against villain. enough(x) = min(1, x / enough): an end counts fully once it holds
+   * `enough` of the range (default 10%). The part below the top is either medium hands or air.
+   * - polarized = enough(T) x enough(B) x B / (M + B): both ends, nothing in the middle
+   * - linear    = enough(T) x M / (M + B) x contiguity: the top, then medium hands, without gaps
+   * - condensed = M x (1 - enough(T)) x (1 - enough(B)): medium hands, both ends missing
+   * - capped    = 1 - enough(T): the top missing
+   * Scores are not exclusive and need not add up to 1. See README "Range shape".
    */
-  _shapeOf(summary, bands) {
-    const shares = bands.map(band => summary.buckets[band.name].share);
-    const top = shares[0];
-    const bottom = shares[shares.length - 1];
-    const middle = shares.slice(1, -1).reduce((sum, share) => sum + share, 0);
-    let label = 'mixed';
-    if (top >= 0.1 && bottom >= 0.2 && top + bottom > middle) label = 'polarized';
-    else if (top >= 0.1 && bottom < 0.1) label = 'linear';
-    else if (top < 0.1 && middle >= 0.5) label = 'condensed';
-    return { label, capped: top < 0.05, polarization: top + bottom - middle };
+  _shapeOf(buckets, bands, contiguity, enough) {
+    const top = buckets[bands[0].name].share;
+    const bottom = bands.length > 1 ? buckets[bands[bands.length - 1].name].share : 0;
+    // Summed from the middle bands (not 1 - top - bottom) so an empty middle is exactly 0
+    const middle = bands.slice(1, -1).reduce((sum, band) => sum + buckets[band.name].share, 0);
+    const present = share => Math.min(1, share / enough);
+    const rest = middle + bottom;
+    const restMiddle = rest > 1e-12 ? middle / rest : 1;
+    const restAir = rest > 1e-12 ? bottom / rest : 0;
+    return {
+      polarized: present(top) * present(bottom) * restAir,
+      linear: present(top) * restMiddle * contiguity,
+      condensed: middle * (1 - present(top)) * (1 - present(bottom)),
+      capped: 1 - present(top),
+      contiguity,
+      top,
+      middle,
+      bottom
+    };
   }
 
   /** Equity bucket shares for both sides: { bands, hero, villain }, each { combos, equity, buckets, shape }. */
   async buckets() {
     const { bands } = this._requireMatchup();
     const villainEquity = await this._villainEquityByHand();
+    const { parentHands, shapeEnough } = this.matchup;
     return {
       bands,
-      hero: this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands),
-      villain: this._sideSummary(villainEquity, this.matchup.villainHands, bands)
+      hero: this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, parentHands, shapeEnough),
+      villain: this._sideSummary(villainEquity, this.matchup.villainHands, bands, null, shapeEnough)
     };
   }
 
@@ -1598,10 +1631,14 @@ export class RangeManager {
       equity: null, buckets: null, distance: null
     };
     if (!this.matchup) return report;
-    const { villainHands, board, deadCards, iterations, bands } = this.matchup;
-    const referenceWithEquity = await referenceRange.against(villainHands, board, { deadCards, iterations, bands });
-    const rangeSummary = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands);
-    const referenceSummary = this._sideSummary(referenceWithEquity.handEquity, referenceWithEquity.filteredHands, bands);
+    const { villainHands, board, deadCards, iterations, bands, parentHands, shapeEnough } = this.matchup;
+    const referenceWithEquity = await referenceRange.against(villainHands, board, {
+      deadCards, iterations, bands, shape: { enough: shapeEnough }
+    });
+    const rangeSummary = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, parentHands, shapeEnough);
+    const referenceSummary = this._sideSummary(
+      referenceWithEquity.handEquity, referenceWithEquity.filteredHands, bands, null, shapeEnough
+    );
     const equities = (byHand, hands) => hands.map(hand => byHand[hand].equity).filter(e => e !== null);
     report.equity = { range: rangeSummary.equity, reference: referenceSummary.equity };
     report.buckets = { range: rangeSummary, reference: referenceSummary };

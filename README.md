@@ -710,7 +710,7 @@ report.hero.buckets.strong.share; // 0.405  (good 0.243, weak 0.257, trash 0.095
 report.villain.buckets.strong.share; // 0.069 (good 0.241, weak 0.092, trash 0.598)
 report.rangeAdvantage;            // 0.200: hero equity minus villain equity
 report.nutAdvantage;              // 0.336: hero's strong share minus villain's
-report.hero.shape;                // { label: 'linear', capped: false, polarization: 0 }
+report.hero.shape;                // { polarized: 0.15, linear: 0.84, condensed: 0, capped: 0, contiguity: 1, ... }
 report.handClasses.isTopPair;     // { hero: 0.345, villain: 0.241, heroCount: 51, villainCount: 42 }
 
 // Filters chain as usual
@@ -740,16 +740,41 @@ The analysis only covers hands that can be dealt. Run `against()` again after ch
 - `handClasses`: the share of each range holding each flag (made hands, pair positions, draws, overcards), most common first. It needs a board; it is `null` preflop.
 - `reference`: with the default bands, the book's averages over all 1,755 flops for a big blind defending against an in-position opener with 20-40bb ranges: BB strong 7% / good 25% / weak 23% / trash about 45%, opener 22% / 43% / 29% / 6% (PDF p. 600). A point of comparison, not a target.
 
-`shape` is a heuristic label from the bucket shares:
+#### Range shape
 
-| Label | Rule |
-| --- | --- |
-| `polarized` | top band at least 10%, bottom band at least 20%, and the two outweigh the middle |
-| `linear` | top band at least 10%, bottom band under 10% |
-| `condensed` | top band under 10%, middle bands at least 50% |
-| `mixed` | none of these |
+`shape` scores how polarized, linear, condensed and capped a range is, each from 0 to 1. The scores come from the range's equity against villain, split three ways by the bands: **T**, the share in the top band (Strong); **B**, the share in the bottom band (Trash); and **M**, the share in the bands between (Good and Weak). T + M + B = 1.
 
-`capped` is true when the top band is under 5%, and `polarization` is the top and bottom shares minus the middle (-1 to 1). The book notes that real ranges mix these shapes, which is why the bucket shares themselves are the main output.
+Two ideas define the scores:
+
+- **Enough.** An end of the range counts fully once it holds a minimum share of the range, and partly below that: `enough(x) = min(1, x / e)`, with `e` = 10% by default. Set it with `against(villain, board, { shape: { enough: 0.15 } })`. It decides most borderline cases: with the default, a range with 7% strong hands has its top 70% present.
+- **What the rest is.** Once a range has its top, what separates linear from polarized is the part below it: medium hands (M / (M + B)) or air (B / (M + B)).
+
+| Score | Formula | Meaning |
+| --- | --- | --- |
+| `polarized` | enough(T) × enough(B) × B / (M + B) | Enough top and enough bottom, with nothing in the middle |
+| `linear` | enough(T) × M / (M + B) × contiguity | Enough top, then medium hands rather than air, without gaps |
+| `condensed` | M × (1 − enough(T)) × (1 − enough(B)) | Medium hands with both ends removed |
+| `capped` | 1 − enough(T) | How much of the top is missing |
+
+`contiguity` is the share of the range's hands that are among the top N hands, by equity, of the range as it was at `against()`, where N is the range's own size. It checks the "without gaps" part of linear: a strong + weak range that skips the good hands is not a top slice, so its contiguity and linear score drop. For the range `against()` was called on (and for villain's range) it is 1, because gaps can only be seen against the hands that were available. `top`, `middle` and `bottom` give T, M and B themselves.
+
+The scores are not exclusive and need not add up to 1: a range can be half polarized and half linear (the strong hands, then equal amounts of medium hands and air). Some examples, on A-7-6 rainbow with the ranges above:
+
+| Range | T / M / B | polarized | linear | condensed | capped |
+| --- | --- | --- | --- | --- | --- |
+| Opener, whole range | .41 / .50 / .09 | 0.15 | 0.84 | 0 | 0 |
+| Opener, strong + trash | .81 / 0 / .19 | 1 | 0 | 0 | 0 |
+| Opener, strong + good | .63 / .38 / 0 | 0 | 1 | 0 | 0 |
+| Opener, strong + weak (skips good) | .61 / .39 / 0 | 0 | 0.63 | 0 | 0 |
+| Opener, good + weak | 0 / 1 / 0 | 0 | 0 | 1 | 1 |
+| Defender, whole range | .07 / .33 / .60 | 0.44 | 0.25 | 0 | 0.31 |
+
+Limits worth knowing:
+
+- The band edges are hard cut-offs, as in the book's buckets: a hand at 74% equity is middle and one at 76% is top. Ranges with many hands near an edge can move noticeably.
+- Gaps are only detected against the range at `against()`.
+- With few combos, single hands move the shares a lot; `combos` is reported next to the shape.
+- The book's "merged" describes betting the polarized and condensed parts together with one small size, a strategy rather than a range shape, so it has no score.
 
 #### `compareTo(reference)`
 

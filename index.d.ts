@@ -106,6 +106,8 @@ export type BandsOption = 'acevedo' | 'quartiles' | Array<{ name: string; min: S
 
 export interface AgainstOptions extends EquityOptions {
   bands?: BandsOption;
+  /** enough: the share at which an end of the range counts as fully present in the shape scores (default 0.1). */
+  shape?: { enough?: Share };
 }
 
 /** The villain, board and bands set by against() / getEquity(). */
@@ -116,6 +118,9 @@ export interface Matchup {
   iterations: number;
   key: string;
   bands: Band[];
+  shapeEnough: number;
+  /** The range at against() time, which later filters choose from. */
+  parentHands: Hand[];
 }
 
 export interface BucketStats {
@@ -125,19 +130,33 @@ export interface BucketStats {
   combos: Hand[];
 }
 
-/** Heuristic shape from bucket shares; see README "Range vs range analysis". */
+/**
+ * Shape scores from 0 to 1, from the shares of the range in the top band (T), the bottom band (B) and the
+ * bands between (M). enough(x) = min(1, x / shape.enough), default 10%. Not exclusive. See README "Range shape".
+ */
 export interface Shape {
-  label: 'polarized' | 'linear' | 'condensed' | 'mixed';
-  capped: boolean;
-  /** Top + bottom band share minus the middle bands, from -1 to 1. */
-  polarization: number;
+  /** enough(T) x enough(B) x B / (M + B): both ends, no middle. */
+  polarized: number;
+  /** enough(T) x M / (M + B) x contiguity: the top, then medium hands, no gaps. */
+  linear: number;
+  /** M x (1 - enough(T)) x (1 - enough(B)): medium hands, both ends missing. */
+  condensed: number;
+  /** 1 - enough(T): the top missing. */
+  capped: number;
+  /** Share of the hands in the top N of the range at against() (N = their count); 1 = no gaps. */
+  contiguity: number;
+  /** T, M and B themselves. */
+  top: number;
+  middle: number;
+  bottom: number;
 }
 
 export interface SideSummary {
   combos: number;
   equity: number | null;
   buckets: Record<string, BucketStats>;
-  shape: Shape;
+  /** null when no hand can be dealt. */
+  shape: Shape | null;
 }
 
 export interface BucketsReport {

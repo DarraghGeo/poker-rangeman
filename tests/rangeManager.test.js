@@ -2980,17 +2980,44 @@ describe('range vs range analysis', () => {
       const report = await spot.compare();
       expect(report.rangeAdvantage).toBeCloseTo(81 / 225 - 144 / 225, 10);
       expect(report.nutAdvantage).toBeCloseTo(0.2 - 0.6, 10);
-      expect(report.hero.shape).toEqual({ label: 'polarized', capped: false, polarization: expect.any(Number) });
-      expect(report.hero.shape.polarization).toBeCloseTo(0.2, 10);
-      expect(report.villain.shape.label).toBe('linear');
+      // Hero T .2 / M .4 / B .4: half polarized (the rest is half air), half linear
+      expect(report.hero.shape.polarized).toBeCloseTo(0.5, 10);
+      expect(report.hero.shape.linear).toBeCloseTo(0.5, 10);
+      expect(report.hero.shape.condensed).toBe(0);
+      expect(report.hero.shape.capped).toBe(0);
+      expect(report.hero.shape.contiguity).toBe(1);
+      expect(report.hero.shape).toMatchObject({ top: 0.2, middle: expect.any(Number), bottom: 0.4 });
+      // Villain T .6 / M .4 / B 0: fully linear
+      expect(report.villain.shape).toMatchObject({ polarized: 0, linear: 1, condensed: 0, capped: 0 });
       expect(report.handClasses.isThreeOfAKind).toEqual({ hero: 0.2, villain: 0.2, heroCount: 3, villainCount: 3 });
       expect(report.reference.bigBlind.strong).toBe(0.07);
       expect(report.reference.source).toMatch(/Modern Poker Theory/);
     });
 
-    it('labels condensed and capped ranges', async () => {
+    it('scores condensed and capped ranges', async () => {
+      // TT beats 88 and loses to QQ: 50%, all Good
       const condensed = await new RangeManager('TT').against('88,QQ', river);
-      expect((await condensed.compare()).hero.shape).toMatchObject({ label: 'condensed', capped: true });
+      expect((await condensed.compare()).hero.shape).toMatchObject({ polarized: 0, linear: 0, condensed: 1, capped: 1 });
+    });
+
+    it('measures contiguity against the range at against(): gaps lower linear', async () => {
+      // Hero ranked: AA (1.0), TT (0.4), 33 (0). AA + 33 skips TT; AA + TT is the top slice
+      const polar = (await spot.bucket('strong', 'trash').buckets()).hero.shape;
+      expect(polar.contiguity).toBeCloseTo(3 / 9, 10);
+      expect(polar).toMatchObject({ polarized: 1, linear: 0 });
+      const top = (await spot.bucket('strong', 'weak').buckets()).hero.shape;
+      expect(top).toMatchObject({ polarized: 0, linear: 1, contiguity: 1 });
+      // All 18 combos at against(), including the 3 AA combos with the As that can't be dealt (contiguity skips them)
+      expect(spot.matchup.parentHands).toEqual(spot.filteredHands);
+    });
+
+    it('enough sets how much of an end counts as fully present', async () => {
+      // With enough = 50%, hero's 20% top counts 0.4 and 40% bottom 0.8
+      const strict = await hero.against(villain, river, { shape: { enough: 0.5 } });
+      const shape = (await strict.buckets()).hero.shape;
+      expect(shape.polarized).toBeCloseTo(0.4 * 0.8 * 0.5, 10);
+      expect(shape.capped).toBeCloseTo(0.6, 10);
+      await expect(hero.against(villain, river, { shape: { enough: 0 } })).rejects.toThrow('above 0');
     });
 
     it('leaves out the reference with custom bands and hand classes preflop', async () => {
@@ -3082,9 +3109,11 @@ describe('README range vs range example, as written', () => {
     expect(report.villain.buckets.trash.share).toBeCloseTo(0.598, 3);
     expect(report.rangeAdvantage).toBeCloseTo(0.200, 3);
     expect(report.nutAdvantage).toBeCloseTo(0.336, 3);
-    expect(report.hero.shape.label).toBe('linear');
-    expect(report.hero.shape.capped).toBe(false);
-    expect(report.hero.shape.polarization).toBeCloseTo(0, 10);
+    // T .405 / M .500 / B .095: mostly linear, a little polarized
+    expect(report.hero.shape.linear).toBeCloseTo(0.841, 3);
+    expect(report.hero.shape.polarized).toBeCloseTo(0.1505, 4);
+    expect(report.hero.shape.condensed).toBe(0);
+    expect(report.hero.shape.capped).toBe(0);
     expect(report.handClasses.isTopPair.hero).toBeCloseTo(0.345, 3);
     expect(report.handClasses.isTopPair.villain).toBeCloseTo(0.241, 3);
     expect(report.handClasses.isTopPair.heroCount).toBe(51);
