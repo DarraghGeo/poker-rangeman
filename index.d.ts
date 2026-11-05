@@ -131,18 +131,19 @@ export interface BucketStats {
 }
 
 /**
- * Shape scores from 0 to 1, from the shares of the range in the top band (T), the bottom band (B) and the
- * bands between (M). enough(x) = min(1, x / shape.enough), default 10%. Not exclusive. See README "Range shape".
+ * The three competing range shapes, each 0 to 1, from the shares of the range in the top band (T), the bottom
+ * band (B) and the bands between (M). enough(x) = min(1, x / shape.enough), default 10%. Independent: they need
+ * not add up to 1. See README "Range shape".
  */
 export interface Shape {
   /** enough(T) x enough(B) x B / (M + B): both ends, no middle. */
   polarized: number;
   /** enough(T) x M / (M + B) x contiguity: the top, then medium hands, no gaps. */
   linear: number;
-  /** M x (1 - enough(T)) x (1 - enough(B)): medium hands, both ends missing. */
+  /** M x (1 - enough(T)): medium hands without the top. */
   condensed: number;
-  /** 1 - enough(T): the top missing. */
-  capped: number;
+  /** The highest of the three, or null when all are 0. */
+  dominant: 'polarized' | 'linear' | 'condensed' | null;
   /** Share of the hands in the top N of the range at against() (N = their count); 1 = no gaps. */
   contiguity: number;
   /** T, M and B themselves. */
@@ -157,6 +158,8 @@ export interface SideSummary {
   buckets: Record<string, BucketStats>;
   /** null when no hand can be dealt. */
   shape: Shape | null;
+  /** How much of the top is missing, 1 - enough(T): describes the top, separate from the shape. */
+  capped: number | null;
 }
 
 export interface BucketsReport {

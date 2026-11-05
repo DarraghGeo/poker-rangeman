@@ -2984,20 +2984,38 @@ describe('range vs range analysis', () => {
       expect(report.hero.shape.polarized).toBeCloseTo(0.5, 10);
       expect(report.hero.shape.linear).toBeCloseTo(0.5, 10);
       expect(report.hero.shape.condensed).toBe(0);
-      expect(report.hero.shape.capped).toBe(0);
       expect(report.hero.shape.contiguity).toBe(1);
+      // A tie goes to the first in order: polarized, linear, condensed
+      expect(report.hero.shape.dominant).toBe('polarized');
+      expect(report.hero.capped).toBe(0);
       expect(report.hero.shape).toMatchObject({ top: 0.2, middle: expect.any(Number), bottom: 0.4 });
       // Villain T .6 / M .4 / B 0: fully linear
-      expect(report.villain.shape).toMatchObject({ polarized: 0, linear: 1, condensed: 0, capped: 0 });
+      expect(report.villain.shape).toMatchObject({ polarized: 0, linear: 1, condensed: 0, dominant: 'linear' });
+      expect(report.villain.capped).toBe(0);
+      expect(report.villain.shape).not.toHaveProperty('capped');
       expect(report.handClasses.isThreeOfAKind).toEqual({ hero: 0.2, villain: 0.2, heroCount: 3, villainCount: 3 });
       expect(report.reference.bigBlind.strong).toBe(0.07);
       expect(report.reference.source).toMatch(/Modern Poker Theory/);
     });
 
-    it('scores condensed and capped ranges', async () => {
+    it('scores condensed ranges and reports capped separately', async () => {
       // TT beats 88 and loses to QQ: 50%, all Good
-      const condensed = await new RangeManager('TT').against('88,QQ', river);
-      expect((await condensed.compare()).hero.shape).toMatchObject({ polarized: 0, linear: 0, condensed: 1, capped: 1 });
+      const condensed = (await (await new RangeManager('TT').against('88,QQ', river)).compare()).hero;
+      expect(condensed.shape).toMatchObject({ polarized: 0, linear: 0, condensed: 1, dominant: 'condensed' });
+      expect(condensed.capped).toBe(1);
+    });
+
+    it('lowers condensed in proportion to air rather than zeroing it', async () => {
+      // TT (Good, 6 combos) + 33 (Trash, 6 combos) vs 88,QQ: M .5, B .5, no top
+      const mixed = (await (await new RangeManager('TT,33').against('88,QQ', river)).compare()).hero;
+      expect(mixed.shape.condensed).toBeCloseTo(0.5, 10);
+      expect(mixed.capped).toBe(1);
+    });
+
+    it('scores 0 on every shape for pure air, with dominant null', async () => {
+      const air = (await (await new RangeManager('33').against('88,QQ', river)).compare()).hero;
+      expect(air.shape).toMatchObject({ polarized: 0, linear: 0, condensed: 0, dominant: null });
+      expect(air.capped).toBe(1);
     });
 
     it('measures contiguity against the range at against(): gaps lower linear', async () => {
@@ -3014,9 +3032,9 @@ describe('range vs range analysis', () => {
     it('enough sets how much of an end counts as fully present', async () => {
       // With enough = 50%, hero's 20% top counts 0.4 and 40% bottom 0.8
       const strict = await hero.against(villain, river, { shape: { enough: 0.5 } });
-      const shape = (await strict.buckets()).hero.shape;
-      expect(shape.polarized).toBeCloseTo(0.4 * 0.8 * 0.5, 10);
-      expect(shape.capped).toBeCloseTo(0.6, 10);
+      const side = (await strict.buckets()).hero;
+      expect(side.shape.polarized).toBeCloseTo(0.4 * 0.8 * 0.5, 10);
+      expect(side.capped).toBeCloseTo(0.6, 10);
       await expect(hero.against(villain, river, { shape: { enough: 0 } })).rejects.toThrow('above 0');
     });
 
@@ -3113,7 +3131,8 @@ describe('README range vs range example, as written', () => {
     expect(report.hero.shape.linear).toBeCloseTo(0.841, 3);
     expect(report.hero.shape.polarized).toBeCloseTo(0.1505, 4);
     expect(report.hero.shape.condensed).toBe(0);
-    expect(report.hero.shape.capped).toBe(0);
+    expect(report.hero.shape.dominant).toBe('linear');
+    expect(report.hero.capped).toBe(0);
     expect(report.handClasses.isTopPair.hero).toBeCloseTo(0.345, 3);
     expect(report.handClasses.isTopPair.villain).toBeCloseTo(0.241, 3);
     expect(report.handClasses.isTopPair.heroCount).toBe(51);

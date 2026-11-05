@@ -44,6 +44,8 @@ async function check(): Promise<void> {
   const nut: number = report.nutAdvantage;
   const polarized: number | undefined = report.hero.shape?.polarized;
   const shape: Shape | null = report.villain.shape;
+  const dominant: Shape['dominant'] | undefined = report.hero.shape?.dominant;
+  const capped: number | null = report.hero.capped;
   await rm.against('QQ+', board, { shape: { enough: '15%' } });
   const strongShare: number = (await spot.buckets()).villain.buckets.strong.share;
   const vsReference: CompareToReport = await spot.compareTo('TT+,AK');
@@ -67,7 +69,7 @@ async function check(): Promise<void> {
   const size: number = bottom.size();
   void [keyCards, middling, uses, total, byHand, above, between, ranked, pairs, unblocked, notation, size,
     asPromise, chainedRange, pendingSize, pendingEquity, stored, storedTotal,
-    goodSpades, nut, polarized, shape, strongShare, distance, math, defending, bluffs, bands, custom, pendingReport];
+    goodSpades, nut, polarized, shape, dominant, capped, strongShare, distance, math, defending, bluffs, bands, custom, pendingReport];
 }
 
 void check;

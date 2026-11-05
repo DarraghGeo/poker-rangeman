@@ -710,7 +710,8 @@ report.hero.buckets.strong.share; // 0.405  (good 0.243, weak 0.257, trash 0.095
 report.villain.buckets.strong.share; // 0.069 (good 0.241, weak 0.092, trash 0.598)
 report.rangeAdvantage;            // 0.200: hero equity minus villain equity
 report.nutAdvantage;              // 0.336: hero's strong share minus villain's
-report.hero.shape;                // { polarized: 0.15, linear: 0.84, condensed: 0, capped: 0, contiguity: 1, ... }
+report.hero.shape;                // { polarized: 0.15, linear: 0.84, condensed: 0, dominant: 'linear', ... }
+report.hero.capped;               // 0: the opener has its strong hands
 report.handClasses.isTopPair;     // { hero: 0.345, villain: 0.241, heroCount: 51, villainCount: 42 }
 
 // Filters chain as usual
@@ -742,7 +743,9 @@ The analysis only covers hands that can be dealt. Run `against()` again after ch
 
 #### Range shape
 
-`shape` scores how polarized, linear, condensed and capped a range is, each from 0 to 1. The scores come from the range's equity against villain, split three ways by the bands: **T**, the share in the top band (Strong); **B**, the share in the bottom band (Trash); and **M**, the share in the bands between (Good and Weak). T + M + B = 1.
+*Modern Poker Theory* (Ch. 1, Range Morphology) names three main range shapes: **linear**, **polarized** and **condensed**. They compete, but most ranges are a mix of them. Separately, a range can be **capped** (missing its strongest hands) or uncapped; that describes the top of the range rather than its shape, so it can go with any of the three.
+
+`shape` scores the three shapes from 0 to 1, and `capped` (next to `shape` in each side's summary) scores the top. All four come from the range's equity against villain, split three ways by the bands: **T**, the share in the top band (Strong); **B**, the share in the bottom band (Trash); and **M**, the share in the bands between (Good and Weak). T + M + B = 1.
 
 Two ideas define the scores:
 
@@ -751,29 +754,33 @@ Two ideas define the scores:
 
 | Score | Formula | Meaning |
 | --- | --- | --- |
-| `polarized` | enough(T) × enough(B) × B / (M + B) | Enough top and enough bottom, with nothing in the middle |
-| `linear` | enough(T) × M / (M + B) × contiguity | Enough top, then medium hands rather than air, without gaps |
-| `condensed` | M × (1 − enough(T)) × (1 − enough(B)) | Medium hands with both ends removed |
+| `shape.polarized` | enough(T) × enough(B) × B / (M + B) | Enough top and enough bottom, with nothing in the middle |
+| `shape.linear` | enough(T) × M / (M + B) × contiguity | Enough top, then medium hands rather than air, without gaps |
+| `shape.condensed` | M × (1 − enough(T)) | Medium hands without the top; air lowers it in proportion |
 | `capped` | 1 − enough(T) | How much of the top is missing |
 
-`contiguity` is the share of the range's hands that are among the top N hands, by equity, of the range as it was at `against()`, where N is the range's own size. It checks the "without gaps" part of linear: a strong + weak range that skips the good hands is not a top slice, so its contiguity and linear score drop. For the range `against()` was called on (and for villain's range) it is 1, because gaps can only be seen against the hands that were available. `top`, `middle` and `bottom` give T, M and B themselves.
+The three shape scores are independent and need not add up to 1: a range can be partly linear and partly condensed, and a range of pure air scores 0 on all three. `shape.dominant` names the highest (on a tie, the first of polarized, linear, condensed), or is `null` when all three are 0.
 
-The scores are not exclusive and need not add up to 1: a range can be half polarized and half linear (the strong hands, then equal amounts of medium hands and air). Some examples, on A-7-6 rainbow with the ranges above:
+`shape.contiguity` is the share of the range's hands that are among the top N hands, by equity, of the range as it was at `against()`, where N is the range's own size. It checks the "without gaps" part of linear: a strong + weak range that skips the good hands is not a top slice, so its contiguity and linear score drop. For the range `against()` was called on (and for villain's range) it is 1, because gaps can only be seen against the hands that were available. `shape.top`, `shape.middle` and `shape.bottom` give T, M and B themselves.
 
-| Range | T / M / B | polarized | linear | condensed | capped |
-| --- | --- | --- | --- | --- | --- |
-| Opener, whole range | .41 / .50 / .09 | 0.15 | 0.84 | 0 | 0 |
-| Opener, strong + trash | .81 / 0 / .19 | 1 | 0 | 0 | 0 |
-| Opener, strong + good | .63 / .38 / 0 | 0 | 1 | 0 | 0 |
-| Opener, strong + weak (skips good) | .61 / .39 / 0 | 0 | 0.63 | 0 | 0 |
-| Opener, good + weak | 0 / 1 / 0 | 0 | 0 | 1 | 1 |
-| Defender, whole range | .07 / .33 / .60 | 0.44 | 0.25 | 0 | 0.31 |
+Some examples, on A-7-6 rainbow with the ranges above:
+
+| Range | T / M / B | polarized | linear | condensed | dominant | capped |
+| --- | --- | --- | --- | --- | --- | --- |
+| Opener, whole range | .41 / .50 / .09 | 0.15 | 0.84 | 0 | linear | 0 |
+| Opener, strong + trash | .81 / 0 / .19 | 1 | 0 | 0 | polarized | 0 |
+| Opener, strong + good | .63 / .38 / 0 | 0 | 1 | 0 | linear | 0 |
+| Opener, strong + weak (skips good) | .61 / .39 / 0 | 0 | 0.63 | 0 | linear | 0 |
+| Opener, good + weak | 0 / 1 / 0 | 0 | 0 | 1 | condensed | 1 |
+| Opener, good + trash | 0 / .72 / .28 | 0 | 0 | 0.72 | condensed | 1 |
+| Defender, whole range | .07 / .33 / .60 | 0.44 | 0.25 | 0.10 | polarized | 0.31 |
 
 Limits worth knowing:
 
 - The band edges are hard cut-offs, as in the book's buckets: a hand at 74% equity is middle and one at 76% is top. Ranges with many hands near an edge can move noticeably.
 - Gaps are only detected against the range at `against()`.
 - With few combos, single hands move the shares a lot; `combos` is reported next to the shape.
+- The book says both that "a condensed range is capped" and, in its next example, that a condensed range can hold very strong hands and not be capped. Here condensed falls as strong hands appear, and capped is scored on its own.
 - The book's "merged" describes betting the polarized and condensed parts together with one small size, a strategy rather than a range shape, so it has no score.
 
 #### `compareTo(reference)`

@@ -1491,7 +1491,9 @@ export class RangeManager {
       combos: live.length,
       equity: runouts ? (totals.win + totals.tie / 2) / runouts : null,
       buckets,
-      shape: live.length ? this._shapeOf(buckets, bands, contiguity, enough) : null
+      shape: live.length ? this._shapeOf(buckets, bands, contiguity, enough) : null,
+      // A description of the top of the range, separate from its shape: 1 - enough(T)
+      capped: live.length ? 1 - Math.min(1, buckets[bands[0].name].share / enough) : null
     };
   }
 
@@ -1509,14 +1511,15 @@ export class RangeManager {
   }
 
   /**
-   * Shape scores from 0 to 1, from the shares in the top band (T), the bottom band (B) and the bands
-   * between (M), against villain. enough(x) = min(1, x / enough): an end counts fully once it holds
-   * `enough` of the range (default 10%). The part below the top is either medium hands or air.
+   * The three competing range shapes of Modern Poker Theory (Ch. 1, Range Morphology), each scored 0 to 1
+   * from the shares in the top band (T), the bottom band (B) and the bands between (M), against villain.
+   * enough(x) = min(1, x / enough): an end counts fully once it holds `enough` of the range (default 10%).
+   * The part below the top is either medium hands or air.
    * - polarized = enough(T) x enough(B) x B / (M + B): both ends, nothing in the middle
    * - linear    = enough(T) x M / (M + B) x contiguity: the top, then medium hands, without gaps
-   * - condensed = M x (1 - enough(T)) x (1 - enough(B)): medium hands, both ends missing
-   * - capped    = 1 - enough(T): the top missing
-   * Scores are not exclusive and need not add up to 1. See README "Range shape".
+   * - condensed = M x (1 - enough(T)): medium hands without the top; air lowers it in proportion
+   * The scores are independent (a range can be partly linear and partly condensed) and need not add up to 1.
+   * dominant is the highest, or null when all are 0. Capped describes the top and is reported beside shape.
    */
   _shapeOf(buckets, bands, contiguity, enough) {
     const top = buckets[bands[0].name].share;
@@ -1527,16 +1530,13 @@ export class RangeManager {
     const rest = middle + bottom;
     const restMiddle = rest > 1e-12 ? middle / rest : 1;
     const restAir = rest > 1e-12 ? bottom / rest : 0;
-    return {
+    const scores = {
       polarized: present(top) * present(bottom) * restAir,
       linear: present(top) * restMiddle * contiguity,
-      condensed: middle * (1 - present(top)) * (1 - present(bottom)),
-      capped: 1 - present(top),
-      contiguity,
-      top,
-      middle,
-      bottom
+      condensed: middle * (1 - present(top))
     };
+    const best = Object.entries(scores).reduce((a, b) => (b[1] > a[1] ? b : a));
+    return { ...scores, dominant: best[1] > 0 ? best[0] : null, contiguity, top, middle, bottom };
   }
 
   /** Equity bucket shares for both sides: { bands, hero, villain }, each { combos, equity, buckets, shape }. */
