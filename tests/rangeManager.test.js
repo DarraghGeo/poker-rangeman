@@ -2484,10 +2484,251 @@ describe('RangeManager regressions', () => {
       // The cache now holds both strict:true and strict:false entries for each hand
       const nonStrict = await strictRange.makesHand(['Pair'], board, false);
       const hand = nonStrict.toArray()[0];
-      const prefix = `${hand}|${board.join(',')}|strict:`;
+      const key = strict => nonStrict._cacheKey(hand, board.join(','), strict);
       expect(nonStrict.lastStrict).toBe(false);
-      expect(nonStrict.evaluationCache.has(prefix + 'true')).toBe(true);
-      expect(nonStrict._getCachedOnly(hand, board)).toBe(nonStrict.evaluationCache.get(prefix + 'false'));
+      expect(nonStrict.evaluationCache.has(key(true))).toBe(true);
+      expect(nonStrict._getCachedOnly(hand, board)).toBe(nonStrict.evaluationCache.get(key(false)));
+    });
+  });
+});
+
+// ============================================================================
+// POKER-EXTVAL 5 FEATURES
+// ============================================================================
+
+describe('RangeManager with poker-extval 5', () => {
+  const flop = ['Kh', '9s', '4d'];
+
+  describe('hole cards passed to the evaluator', () => {
+    it('does not call an under pair a bottom pair', async () => {
+      const rm = new RangeManager('22');
+      expect((await rm.makesHand(['Bottom Pair'], flop)).size()).toBe(0);
+      expect((await rm.makesHand(['Underpair'], flop)).size()).toBe(6);
+    });
+
+    it('does not count draws made only of board cards', async () => {
+      const rm = new RangeManager('AcQc');
+      expect((await rm.makesHand(['Flush Draw'], ['Kh', '9h', '4h', '2h'])).size()).toBe(0);
+    });
+
+    it('labels over, middling and under pairs against the whole board', async () => {
+      expect((await new RangeManager('AA').makesHand(['Overpair'], flop)).size()).toBe(6);
+      expect((await new RangeManager('TT').makesHand(['Middling Pair'], flop)).size()).toBe(6);
+      expect((await new RangeManager('TT').makesHand(['Overpair', 'Underpair'], flop)).size()).toBe(0);
+      expect((await new RangeManager('22').makesHand(['Middling Pair'], flop)).size()).toBe(0);
+    });
+
+    it('accepts the old isOverpair flag name and the Over Pair name', async () => {
+      const rm = new RangeManager('AA');
+      expect((await rm.makesHand(['isOverpair'], flop)).size()).toBe(6);
+      expect((await rm.makesHand(['Over Pair'], flop)).size()).toBe(6);
+    });
+
+    it('hitsHandBoth counts pocket pair labels as using both hole cards', async () => {
+      expect((await new RangeManager('AA').hitsHandBoth(['Overpair'], flop)).size()).toBe(6);
+    });
+
+    it('getObject() reports usesHoleCards and isMiddlingPair', async () => {
+      const rm = new RangeManager('AA');
+      const result = Object.values(await rm.getObject('AcKd', ['8h', '8d', '3c']))[0];
+      expect(result.isPair).toBe(true);
+      expect(result.usesHoleCards).toBe(false);
+      const middling = Object.values(await rm.getObject('TcTd', flop))[0];
+      expect(middling.isMiddlingPair).toBe(true);
+      expect(middling.keyCards.isMiddlingPair.sort()).toEqual(['Tc', 'Td']);
+    });
+  });
+
+  describe('evaluation options', () => {
+    it('excludeBoardPlays drops made hands that only use board cards', async () => {
+      const rm = new RangeManager('AKo');
+      const board = ['8h', '8d', '3c'];
+      expect((await rm.makesHand(['Pair'], board)).size()).toBe(12);
+      expect((await rm.makesHand(['Pair'], board, { excludeBoardPlays: true })).size()).toBe(0);
+    });
+
+    it('excludeBoardPlays keeps hands whose made hand uses a hole card', async () => {
+      const rm = new RangeManager('A8s');
+      expect((await rm.makesHand(['Three of a Kind'], ['8h', '8d', '3c'], { excludeBoardPlays: true })).size()).toBe(2);
+    });
+
+    it('street overrides the inferred street', async () => {
+      // A 5-card flop allows a backdoor flush draw; evaluated as the river it does not
+      const rm = new RangeManager('AhQh');
+      const board = ['Kh', '9s', '4h'];
+      expect((await rm.makesHand(['Backdoor Flush Draw'], board)).size()).toBe(0);
+      const kh = new RangeManager('AhQs');
+      expect((await kh.makesHand(['Backdoor Flush Draw'], ['Kh', '9s', '4h'])).size()).toBe(1);
+      expect((await kh.makesHand(['Backdoor Flush Draw'], ['Kh', '9s', '4h'], { street: 'river' })).size()).toBe(0);
+    });
+
+    it('still accepts the positional strict flag', async () => {
+      const rm = new RangeManager('AA');
+      const filtered = await rm.makesHand(['Pair'], flop, false);
+      expect(filtered.lastStrict).toBe(false);
+      expect(filtered.size()).toBe(6);
+    });
+
+    it('rejects an invalid street or strict value', async () => {
+      const rm = new RangeManager('AA');
+      await expect(rm.makesHand(['Pair'], flop, { street: 'preflop' })).rejects.toThrow('Invalid street');
+      await expect(rm.makesHand(['Pair'], flop, { strict: 'yes' })).rejects.toThrow('strict must be a boolean');
+    });
+  });
+
+  describe('hole cards against the board criteria', () => {
+    it('filters by overcards, middle cards and undercards', async () => {
+      const board = ['Th', '7s', '2d'];
+      expect((await new RangeManager('AKo').makesHand(['Two Overcards'], board)).size()).toBe(12);
+      expect((await new RangeManager('A5o').makesHand(['Overcard And Middle Card'], board)).size()).toBe(12);
+      expect((await new RangeManager('98s').makesHand(['Two Middle Cards'], board)).size()).toBe(4);
+      expect((await new RangeManager('AKo').makesHand(['Overcard'], board)).size()).toBe(12);
+      expect((await new RangeManager('98s').makesHand(['Two Overcards'], board)).size()).toBe(0);
+    });
+  });
+
+  describe('any-suit notation', () => {
+    it('AK means AKs and AKo', () => {
+      const rm = new RangeManager('AK');
+      expect(rm.size()).toBe(16);
+      expect(rm.toNotation()).toBe('AKs,AKo');
+    });
+
+    it('AT+ means ATs+ and ATo+', () => {
+      expect(new RangeManager('at+').toArray().sort()).toEqual(new RangeManager('ATs+,ATo+').toArray().sort());
+    });
+
+    it('AK-AT means AKs-ATs and AKo-ATo', () => {
+      expect(new RangeManager('AK-AT').toArray().sort()).toEqual(new RangeManager('AKs-ATs,AKo-ATo').toArray().sort());
+    });
+
+    it('still treats AA as a pair', () => {
+      expect(new RangeManager('AA').size()).toBe(6);
+    });
+  });
+
+  describe('equity', () => {
+    const turn = ['Kh', '9h', '4d', '3c'];
+
+    it('equity() returns the range equity against villain', async () => {
+      const result = await new RangeManager('AA').equity('KK', turn);
+      expect(result.win + result.tie + result.lose).toBeGreaterThan(0);
+      expect(result.equity).toBeGreaterThan(0);
+      expect(result.equity).toBeLessThan(0.2); // KK has a set
+    });
+
+    it('accepts villain as notation, a hand array, two cards or a RangeManager', async () => {
+      const rm = new RangeManager('AsAd');
+      const a = await rm.equity('QcQd', turn);
+      expect((await rm.equity(['QcQd'], turn)).equity).toBeCloseTo(a.equity, 10);
+      expect((await rm.equity(['Qc', 'Qd'], turn)).equity).toBeCloseTo(a.equity, 10);
+      expect((await rm.equity(new RangeManager('QcQd'), turn)).equity).toBeCloseTo(a.equity, 10);
+    });
+
+    it('equityByHand() gives each hand its own equity, null when it cannot be dealt', async () => {
+      const rm = new RangeManager('AA,KhQh');
+      const byHand = await rm.equityByHand('QQ', ['Kh', '9h', '4d']);
+      expect(Object.keys(byHand)).toHaveLength(7);
+      expect(byHand.KhQh.equity).toBeNull();
+      expect(byHand.AcAd.equity).toBeGreaterThan(0.8);
+    });
+
+    it('equityAbove(), equityBelow() and equityBetween() filter and chain', async () => {
+      const rm = new RangeManager('AA,KK,QQ,22');
+      const villain = 'JJ';
+      const above = await rm.equityAbove('80%', villain, turn);
+      expect(above.toNotation()).toBe('QQ+');
+      const below = await rm.equityBelow(0.2, villain, turn);
+      expect(below.toNotation()).toBe('22');
+      const between = await rm.equityBetween('70%', '100%', villain, turn);
+      expect(between.toNotation()).toBe('QQ+');
+      expect(between.contains('KcKh')).toBe(false); // the Kh is on the board, so it has no equity
+      // KK has a set (100% against JJ); AA and QQ are about 95.5%
+      const chained = await between.equityAbove(0.97, villain, turn);
+      expect(chained.toNotation()).toBe('KK');
+    });
+
+    it('caches per-hand equity across chained filters', async () => {
+      const rm = new RangeManager('AA,KK');
+      await rm.equityByHand('QQ', turn);
+      const cached = rm.equityCache.size;
+      await rm.equityAbove(0.5, 'QQ', turn);
+      expect(rm.equityCache.size).toBe(cached);
+    });
+
+    it('supports preflop equity with a Monte Carlo estimate', async () => {
+      const result = await new RangeManager('AA').equity('KK', [], { iterations: 500 });
+      expect(result.equity).toBeGreaterThan(0.7);
+      expect(result.equity).toBeLessThan(0.9);
+    });
+
+    it('skips dead cards', async () => {
+      const rm = new RangeManager('AA', ['As']);
+      const byHand = await rm.equityByHand('KK', turn);
+      expect(Object.keys(byHand)).toHaveLength(3);
+    });
+
+    it('rejects invalid thresholds and boards', async () => {
+      const rm = new RangeManager('AA');
+      await expect(rm.equityAbove('80', 'KK', turn)).rejects.toThrow('percentage');
+      await expect(rm.equityAbove(1.5, 'KK', turn)).rejects.toThrow('0 to 1');
+      await expect(rm.equityBetween(0.9, 0.7, 'KK', turn)).rejects.toThrow('empty');
+      await expect(rm.equity('KK', ['Kh', '9h'])).rejects.toThrow('0 or 3 to 5');
+      await expect(rm.equity(42, turn)).rejects.toThrow('Villain');
+    });
+  });
+
+  describe('strength ranking', () => {
+    it('rankHands() orders hands strongest first', async () => {
+      const ranked = await new RangeManager('AA,KK,98s').rankHands(flop);
+      expect(ranked[0].category).toBe('isThreeOfAKind');
+      expect(ranked[0].hand[0]).toBe('K');
+      // Then AA's pair of aces, then 98s's pair of nines
+      expect(ranked[3].hand).toMatch(/^A.A.$/);
+      expect(ranked[ranked.length - 1].hand).toMatch(/^9.8.$/);
+      // KK loses three combos to the Kh and 98s one to the 9s
+      expect(ranked).toHaveLength(12);
+    });
+
+    it('strongest() and weakest() take a share of the range', async () => {
+      const rm = new RangeManager('KK,AA,22');
+      expect((await rm.strongest('20%', flop)).toNotation()).toBe('KK');
+      expect((await rm.weakest(0.4, flop)).toNotation()).toBe('22');
+      expect((await rm.strongest(0, flop)).size()).toBe(0);
+    });
+
+    it('keeps hands tied with the cutoff', async () => {
+      const rm = new RangeManager('AA');
+      expect((await rm.strongest(0.1, flop)).size()).toBe(6);
+    });
+  });
+
+  describe('breakdown()', () => {
+    it('counts combos per flag, most common first', async () => {
+      const result = await new RangeManager('AA,KK,QJs').breakdown(flop);
+      expect(result.total).toBe(13);
+      expect(result.flags.isPair.count).toBe(6);
+      expect(result.flags.isThreeOfAKind.count).toBe(3);
+      expect(result.flags.isOverPair.combos).toHaveLength(6);
+      expect(result.flags.isPair.share).toBeCloseTo(6 / 13, 10);
+      const counts = Object.values(result.flags).map(f => f.count);
+      expect(counts).toEqual([...counts].sort((a, b) => b - a));
+    });
+  });
+
+  describe('blockers()', () => {
+    it('splits the range by the cards that block it', async () => {
+      const result = await new RangeManager('AQs,AA,QQ').blockers(['Kh', '9h', '4h', '2c'], 'AhJs');
+      expect(result.heroBlocks.blocked.isFlush).toEqual(['AhQh']);
+      expect(result.allBlocks.unblocked).toHaveLength(12);
+    });
+
+    it('accepts hero cards as an array and requires 5 known cards', async () => {
+      const rm = new RangeManager('AA');
+      const result = await rm.blockers(['Kh', '9h', '4h'], ['Ah', 'Js']);
+      expect(result.heroBlocks.blocked.isPair).toHaveLength(3);
+      await expect(rm.blockers(['Kh', '9h', '4h'])).rejects.toThrow('at least 5');
+      await expect(rm.blockers(['Kh', '9h', '4h'], 'KhJs')).rejects.toThrow('shares cards');
     });
   });
 });

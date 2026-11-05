@@ -1,19 +1,26 @@
 name: Publish to npm
 
-# Runs on every push to main. Tests always run; the package is published only
-# when the version in package.json is not on npm yet, so bump the version
-# (e.g. `npm version minor`) in the commit you want released.
+# Publishes when a push to main changes the package's code (src/, index.d.ts) or package.json.
+# Changes to docs or tests alone do not publish (the Test workflow still runs them).
 #
-# Uses npm trusted publishing (OIDC): no NPM_TOKEN secret is needed, and npm
-# attaches a provenance attestation automatically. The trusted publisher on
-# npmjs.com must name this workflow file: publish.yml
+# Versioning: if package.json holds a version that is not on npm yet (e.g. after
+# `npm version minor --no-git-tag-version`), that version is published. Otherwise the
+# patch version is bumped and the bump is committed back to main. Either way the
+# release is tagged v<version>.
+#
+# Uses npm trusted publishing (OIDC): no NPM_TOKEN secret is needed, and npm attaches
+# a provenance attestation. The trusted publisher on npmjs.com must name this file.
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'index.d.ts'
+      - 'package.json'
   workflow_dispatch:
 
 permissions:
-  contents: write # push the v<version> git tag after publishing
+  contents: write # commit the version bump and push the tag
   id-token: write # npm trusted publishing / provenance
 
 concurrency:
@@ -42,26 +49,42 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Check whether this version is already published
+      - name: Choose version
         id: version
         run: |
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if npm view "$NAME@$VERSION" version > /dev/null 2>&1; then
-            echo "::notice::$NAME@$VERSION is already on npm; skipping publish. Bump the version in package.json to release."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
+          LATEST=$(npm view "$NAME" version 2>/dev/null || echo "0.0.0")
+          # Is package.json's version newer than npm's latest? (major.minor.patch)
+          NEWER=$(node -e '
+            const [a, b] = process.argv.slice(1).map(v => v.split("-")[0].split(".").map(Number));
+            const diff = a.map((n, i) => n - b[i]).find(d => d !== 0) || 0;
+            console.log(diff > 0);
+          ' "$VERSION" "$LATEST")
+          if [ "$NEWER" = "true" ]; then
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            echo "Publishing $VERSION from package.json (npm latest: $LATEST)"
           else
-            echo "Will publish $NAME@$VERSION"
-            echo "publish=true" >> "$GITHUB_OUTPUT"
+            # Not newer than npm: release the next patch after npm's latest
+            npm version "$LATEST" --no-git-tag-version --allow-same-version > /dev/null
+            npm version patch --no-git-tag-version > /dev/null
+            VERSION=$(node -p "require('./package.json').version")
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "Bumped to $VERSION (npm latest: $LATEST)"
           fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Publish
-        if: steps.version.outputs.publish == 'true'
-        run: npm publish
+      - name: Commit version bump
+        if: steps.version.outputs.bumped == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "$VERSION"
+          git push origin HEAD:main
 
       - name: Tag release
-        if: steps.version.outputs.publish == 'true'
         env:
           TAG: v${{ steps.version.outputs.version }}
         run: |
@@ -71,3 +94,6 @@ jobs:
             git tag "$TAG"
             git push origin "$TAG"
           fi
+
+      - name: Publish
+        run: npm publish
