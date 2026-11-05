@@ -113,6 +113,36 @@ export interface EvaluationQuery {
   isAll(criteria: Criterion | Criterion[]): EvaluationResult;
 }
 
+/** Methods that return a range; on a RangeQuery they queue another step and return a RangeQuery. */
+type ChainedRangeMethods = {
+  [K in 'exclude' | 'include' | 'intersect' | 'hasSuit' | 'suitedOf' | 'setDeadCards' | 'hasKicker' | 'hasKeyCard'
+    | 'makesHand' | 'hitsHand' | 'hitsHandBoth' | 'getEquity' | 'strongest' | 'weakest']:
+    (...args: Parameters<RangeManager[K]>) => RangeQuery;
+};
+
+/** Methods that return a value; on a RangeQuery they return a Promise of the value. */
+type ChainedValueMethods = {
+  [K in 'toArray' | 'getHands' | 'size' | 'contains' | 'toNotation' | 'getKeyCards' | 'normalizeNotation'
+    | 'handContainsDeadCard' | 'handHasSuit' | 'handSuitedOf' | 'evaluateHand' | 'getObject'
+    | 'equity' | 'equityByHand' | 'rankHands' | 'breakdown' | 'blockers']:
+    (...args: Parameters<RangeManager[K]>) => Promise<Awaited<ReturnType<RangeManager[K]>>>;
+};
+
+/**
+ * A pending range from an async filter. Await it (or use then/catch/finally) for the RangeManager.
+ * Range methods chain another step; value methods return a Promise of the value. toString is not overridden.
+ */
+export interface RangeQuery extends Promise<RangeManager>, ChainedRangeMethods, ChainedValueMethods {
+  // Overloaded, so declared here (a mapped type would keep only the last overload)
+  equityAbove(min: Share, villain?: Villain, boardCards?: Card[], options?: EquityOptions): RangeQuery;
+  equityBelow(max: Share, villain?: Villain, boardCards?: Card[], options?: EquityOptions): RangeQuery;
+  equityBetween(min: Share, max: Share, villain?: Villain, boardCards?: Card[], options?: EquityOptions): RangeQuery;
+}
+export const RangeQuery: {
+  new (promise: RangeManager | PromiseLike<RangeManager>): RangeQuery;
+  readonly prototype: RangeQuery;
+};
+
 export class RangeManager {
   constructor(input: RangeInput, deadCards?: DeadCard[]);
 
@@ -127,6 +157,8 @@ export class RangeManager {
   lastHandStrength: Flag[] | null;
   lastStrict: boolean | null;
   lastStreet: Street | null;
+  /** Per-hand equity stored by getEquity(), or null. */
+  handEquity: Record<Hand, EquityResult> | null;
 
   normalizeNotation(notation: string): string;
 
@@ -141,10 +173,10 @@ export class RangeManager {
   handHasSuit(hand: Hand, suit: string): boolean;
   handSuitedOf(hand: Hand, suit: string): boolean;
 
-  // Board evaluation
-  makesHand(criteria: Criterion[], boardCards: Card[], options?: EvaluationOptionsArg): Promise<RangeManager>;
-  hitsHand(criteria: Criterion[], boardCards: Card[], options?: EvaluationOptionsArg): Promise<RangeManager>;
-  hitsHandBoth(criteria: Criterion[], boardCards: Card[], options?: EvaluationOptionsArg): Promise<RangeManager>;
+  // Board evaluation (async: returns a chainable RangeQuery)
+  makesHand(criteria: Criterion[], boardCards: Card[], options?: EvaluationOptionsArg): RangeQuery;
+  hitsHand(criteria: Criterion[], boardCards: Card[], options?: EvaluationOptionsArg): RangeQuery;
+  hitsHandBoth(criteria: Criterion[], boardCards: Card[], options?: EvaluationOptionsArg): RangeQuery;
   evaluateHand(hand: Hand, boardCards: Card[], options?: EvaluationOptionsArg): Promise<EvaluationQuery>;
   getObject(hand: Hand, boardCards: Card[], options?: EvaluationOptionsArg): Promise<EvaluationResult>;
   hasKicker(cards: DeadCard[], and?: boolean, handStrength?: Criterion | null): RangeManager;
@@ -152,16 +184,25 @@ export class RangeManager {
   getKeyCards(handStrength?: Criterion | null): Card[];
 
   // Equity (board: [] preflop, or 3-5 cards)
-  equity(villain: Villain, boardCards?: Card[], options?: EquityOptions): Promise<EquityResult>;
-  equityByHand(villain: Villain, boardCards?: Card[], options?: EquityOptions): Promise<Record<Hand, EquityResult>>;
-  equityAbove(min: Share, villain: Villain, boardCards?: Card[], options?: EquityOptions): Promise<RangeManager>;
-  equityBelow(max: Share, villain: Villain, boardCards?: Card[], options?: EquityOptions): Promise<RangeManager>;
-  equityBetween(min: Share, max: Share, villain: Villain, boardCards?: Card[], options?: EquityOptions): Promise<RangeManager>;
+  /** Runs equity once per hand and stores it on the returned range for the equity filters. */
+  getEquity(villain: Villain, boardCards?: Card[], options?: EquityOptions): RangeQuery;
+  /** With no arguments, totals the equity stored by getEquity(). */
+  equity(villain?: Villain, boardCards?: Card[], options?: EquityOptions): Promise<EquityResult>;
+  /** With no arguments, the equity stored by getEquity(). */
+  equityByHand(villain?: Villain, boardCards?: Card[], options?: EquityOptions): Promise<Record<Hand, EquityResult>>;
+  /** Filters on the equity stored by getEquity(). */
+  equityAbove(min: Share): RangeManager;
+  /** 3.6.0 form: runs getEquity(villain, boardCards, options) first. */
+  equityAbove(min: Share, villain: Villain, boardCards?: Card[], options?: EquityOptions): RangeQuery;
+  equityBelow(max: Share): RangeManager;
+  equityBelow(max: Share, villain: Villain, boardCards?: Card[], options?: EquityOptions): RangeQuery;
+  equityBetween(min: Share, max: Share): RangeManager;
+  equityBetween(min: Share, max: Share, villain: Villain, boardCards?: Card[], options?: EquityOptions): RangeQuery;
 
   // Strength, breakdown and blockers (board: 3-5 cards)
   rankHands(boardCards: Card[], options?: StreetOptions): Promise<RankedHand[]>;
-  strongest(portion: Share, boardCards: Card[], options?: StreetOptions): Promise<RangeManager>;
-  weakest(portion: Share, boardCards: Card[], options?: StreetOptions): Promise<RangeManager>;
+  strongest(portion: Share, boardCards: Card[], options?: StreetOptions): RangeQuery;
+  weakest(portion: Share, boardCards: Card[], options?: StreetOptions): RangeQuery;
   breakdown(boardCards: Card[], options?: StreetOptions): Promise<Breakdown>;
   blockers(boardCards: Card[], heroCards?: Hand | [Card, Card] | null, options?: StreetOptions): Promise<VillainRange>;
 
