@@ -126,6 +126,13 @@ async function check(): Promise<void> {
   const syncTo: number | null = syncMatchup.compareToSync('QQ+').distance;
   void [syncReport, syncTotal, syncTo, rm.equityByHandSync('QQ', board), syncSpot.bucketsSync(), syncSpot.compareToSync('TT+'), syncSpot.bluffCandidatesSync({ pot: 10, bet: 5 }), rm.getEquitySync('QQ', board)];
   const valueSlice: Range = syncMatchup.villain.strongest(0.25, { ties: 'split' });
+  const nextCard: Matchup = coreHero.vsSync('QQ+', ['Ad', '7c', '6h', '2s'], { byCard: true });
+  const kdEquity: number | undefined = nextCard.hero.byCard?.equity[0 * 52 + 47];
+  const runoutMatchup: Matchup = await coreHero.vs('QQ+', ['Ad', '7c', '6h'], { byRunout: true });
+  const runout = runoutMatchup.hero.byRunout;
+  const firstRunout: number | null = runout ? runout.equity[runout.rowOf[0] * runout.n] : null;
+  const runoutCards: Uint8Array | null = runoutMatchup.runouts;
+  const runoutSize: number | null = runoutMatchup.runoutSize;
   const sliceVector: Float64Array = sliceByEquity(valueSlice.weights, syncMatchup.villain.equity, 0.5, { from: 'bottom', ties: 'keep' });
   const blocks: Float64Array = blockedShare(coreHero.ids, valueSlice.weights);
   void [sliceVector, blocks];

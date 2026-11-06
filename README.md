@@ -113,8 +113,9 @@ const spot = Range.from(hero).vsSync(villain, turn);
 const value = spot.villain.strongest(0.25, { ties: 'split' });   // villain's strongest 25% by equity
 const vsValue = Range.from(hero).vsSync(value, turn);            // hero's equity against it
 const blocks = blockedShare(spot.hero.range.ids, value.weights); // how much of it each hero combo blocks
-``` A
-`Board` has every combo's poker-extval flag bits (`lo`, `hi`), `strength` and `score`, and `has(id, flag)`,
+```
+
+A `Board` has every combo's poker-extval flag bits (`lo`, `hi`), `strength` and `score`, and `has(id, flag)`,
 `matching(range, criteria)`, `rank(range)`, `strongest(range, share)` and `weakest(range, share)`. Card numbers are
 `rank * 4 + suit` (`'2s'` = 0 … `'Ac'` = 51), as in poker-extval; `HAND_STRINGS[id]` and `idOfHand(hand)` convert
 combo ids. In the core, dead cards remove the combos that hold them from both ranges.
@@ -131,6 +132,33 @@ const report = spot.compare();            // same numbers as RangeManager's comp
 report.advantage.nut;                     // hero's effective-nut share minus villain's
 report.hero.shape.dominant;               // 'linear', 'polarized', 'condensed' or null
 spot.compareTo('77+,ATs+,KQs,AJo+').distance;
+```
+
+**Per-card and per-runout equity.** `vs()` / `vsSync()` take `byCard: true` (flop or turn) and `byRunout: true`
+(flop), from poker-bitvaljs 1.13's options in the same single pass. Each side then has:
+
+- `byCard`: `{ win, tie, lose, equity }`, each a `Float64Array(1326 * 52)` indexed `id * 52 + card` (card numbers as
+  above). On the flop each turn + river runout counts toward both of its cards, so a combo's counts over all cards sum
+  to twice its totals; on the turn they sum to the totals.
+- `byRunout` (flop): `{ equity, n, rowOf }`, kept in poker-bitvaljs's row order rather than by combo id (by id it would
+  be ~12 MB per side, mostly empty): a combo's equity on runout `k` is `equity[rowOf[id] * n + k]`, with `rowOf[id]`
+  -1 for combos not in the range. The `Matchup` has `runouts` (card numbers, `runoutSize` = 2 per runout, `n` = 1,176
+  runouts) to tell which cards runout `k` is.
+
+Entries are NaN for combos not in the range and for cards on the board, dead or in the hand. A combo that meets
+nothing on a card (every opposing combo blocked) has exact 0/0/0 counts and NaN equity. The options throw on preflop
+and river boards. A ~300 × 300 turn with `byCard` takes about 3–5 ms (about 2 ms without it); a ~470 × 300 flop with both options about 65 ms
+(about 22 ms without them).
+
+```javascript
+await ready();
+const spot = Range.from(hero).vsSync(villain, turn, { byCard: true });
+const id = idOfHand('KhKs');
+spot.hero.byCard.equity[id * 52 + cardIndex('Kd')];   // KhKs's equity if the river is the Kd
+
+const flop = Range.from(hero).vsSync(villain, ['Ad', '7c', '6h'], { byRunout: true });
+const { equity, n, rowOf } = flop.hero.byRunout;
+equity[rowOf[id] * n + 0];                            // on runout 0: cards flop.runouts[0] and flop.runouts[1]
 ```
 
 ### Workers
@@ -172,8 +200,8 @@ Everything is browser-safe: poker-rangeman uses no Node built-ins. `npm run test
 esbuild, runs it in headless Chromium and checks the results match Node. For poker-bitvaljs's Web Workers, see its
 `workerUrl` option.
 
-Bundle size: an app bundle with esbuild is about 380 KB unminified: poker-rangeman 162 KB, poker-bitvaljs 112 KB and
-poker-extval 107 KB, one copy each. poker-extval 6.0.0-beta.5 depends on poker-rangeman 4, so npm and bundlers share
+Bundle size: an app bundle with esbuild is about 400 KB unminified: poker-rangeman 153 KB, poker-bitvaljs 132 KB and
+poker-extval 112 KB, one copy each. poker-extval 6.0.0-beta.5 depends on poker-rangeman 4, so npm and bundlers share
 the app's copy.
 
 ### Breaking changes

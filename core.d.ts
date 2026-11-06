@@ -25,7 +25,23 @@ export interface VsOptions {
   iterations?: number;
   /** Use poker-bitvaljs's Web Workers (browsers; default false). */
   workers?: boolean;
+  /** Flop or turn: each combo's result for every next card (Side.byCard). */
+  byCard?: boolean;
+  /** Flop: each combo's equity for every turn + river pair (Side.byRunout, Matchup.runouts). */
+  byRunout?: boolean;
 }
+
+/**
+ * Per next card, Float64Array(1326 * 52) by `id * 52 + card` (card number, '2s' = 0 ... 'Ac' = 51). NaN for combos not
+ * in the range and cards on the board, dead or in the hand; a combo that meets nothing on a card has 0/0/0 counts and
+ * NaN equity. On the flop each runout counts toward both of its cards, so counts sum to twice the totals.
+ */
+export interface ByCard { win: Float64Array; tie: Float64Array; lose: Float64Array; equity: Float64Array }
+/**
+ * Per runout (flop), in poker-bitvaljs's row order: combo id's equity on runout k is `equity[rowOf[id] * n + k]`
+ * (rowOf[id] is -1 for combos not in the range). NaN where the runout uses its cards or it meets nothing.
+ */
+export interface ByRunout { equity: Float64Array; n: number; rowOf: Int16Array }
 
 /** An immutable weighted range. Every method returns a new Range. */
 export class Range {
@@ -88,6 +104,10 @@ export interface Side {
   readonly lose: Float64Array;
   /** (win + tie / 2) / total; NaN for combos not in the range or that can't be dealt. */
   readonly equity: Float64Array;
+  /** With { byCard: true } (flop or turn), else null. */
+  readonly byCard: ByCard | null;
+  /** With { byRunout: true } (flop), else null. */
+  readonly byRunout: ByRunout | null;
   /** The range's equity: each combo's counts times its weight. */
   total(): EquityTotal;
   /** Combos with equity from min (inclusive) to max (exclusive; inclusive when max is 1). */
@@ -130,6 +150,9 @@ export class Matchup {
   readonly hero: Side;
   /** Villain's combos against hero's range. */
   readonly villain: Side;
+  /** With { byRunout: true }: each runout's cards, runoutSize card numbers per runout (pairs a < b), else null. */
+  readonly runouts: Uint8Array | null;
+  readonly runoutSize: number | null;
   /** Equity buckets, shape, capping and effective nuts for both sides, as RangeManager's buckets(). */
   buckets(options?: ReportOptions): BucketsReport;
   /** The full range vs range report, as RangeManager's compare(). */
@@ -200,7 +223,7 @@ export function weightedNotation(hands: Hand[], weightOf: (hand: Hand) => number
 export const CRITERIA_MAPPING: Record<string, string>;
 export function criterionFlag(criterion: string): string;
 
-export interface HandCounts { win: Float64Array; tie: Float64Array; lose: Float64Array }
+export interface HandCounts { win: Float64Array; tie: Float64Array; lose: Float64Array; byCard?: ByCard; byRunout?: ByRunout }
 /**
  * poker-bitvaljs's compareRangeHands for combo ids and weights (Float64Array(1326) by id): each side's per-hand counts
  * by combo id, weighted by the other side's weights, and the range totals.
@@ -208,7 +231,8 @@ export interface HandCounts { win: Float64Array; tie: Float64Array; lose: Float6
 export function handEquity(bitval: unknown, job: {
   heroIds: ArrayLike<ComboId>; heroWeight: Float64Array; villainIds: ArrayLike<ComboId>; villainWeight: Float64Array;
   board: Array<number | Card>; dead?: Array<number | Card>; iterations?: number; workers?: boolean;
-}): Promise<{ hero: HandCounts; villain: HandCounts; total: { win: number; tie: number; lose: number } }>;
+  byCard?: boolean; byRunout?: boolean;
+}): Promise<{ hero: HandCounts; villain: HandCounts; total: { win: number; tie: number; lose: number }; runouts?: Uint8Array; runoutSize?: number }>;
 /**
  * The strongest (from 'top', default) or weakest share of a weighted range by an equity vector, both Float64Array(1326)
  * by combo id; NaN-equity and zero-weight combos are left out. ties 'split' gives exactly the share. Returns the slice's

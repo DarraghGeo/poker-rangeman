@@ -508,4 +508,4 @@ export class RangeManager {
 
 // The core API (also 'poker-rangeman/core'): ranges as typed arrays, boards classified once, per-combo equity
 export { Range, Board, ready, terminateWorkers, handEquity, handEquitySync, sliceByEquity, blockedShare } from './core.js';
-export type { Side, VsOptions, RangeSource, ComboId } from './core.js';
+export type { Side, VsOptions, RangeSource, ComboId, ByCard, ByRunout } from './core.js';

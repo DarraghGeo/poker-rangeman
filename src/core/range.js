@@ -188,7 +188,8 @@ export class Range {
   /**
    * Every combo's equity against villain on the board, both sides, from one poker-bitvaljs compareRangeHands call
    * (exact postflop, Monte Carlo preflop unless its preflop table is loaded). options: { dead, iterations (preflop
-   * boards, default 10000), workers (poker-bitvaljs's Web Workers, browsers only; default false) }.
+   * boards, default 10000), workers (poker-bitvaljs's Web Workers, browsers only; default false), byCard (flop or turn:
+   * every combo's result for each next card), byRunout (flop: for each turn + river pair) }.
    */
   async vs(villain, board = [], options = {}) {
     const [bitval] = await Promise.all([loadBitVal(), loadExtVal()]);
@@ -223,7 +224,8 @@ export class Range {
     return {
       hero, villain: villainRange,
       heroIds: hero.ids, villainIds: villainRange.ids, heroWeight: hero.weights, villainWeight: villainRange.weights,
-      board: boardNumbers, dead, iterations, workers: options.workers ?? false
+      board: boardNumbers, dead, iterations, workers: options.workers ?? false,
+      byCard: options.byCard ?? false, byRunout: options.byRunout ?? false
     };
   }
 }
@@ -238,6 +240,18 @@ class Side {
     this.win = counts.win;
     this.tie = counts.tie;
     this.lose = counts.lose;
+    /**
+     * With vs(..., { byCard: true }) on a flop or turn: { win, tie, lose, equity }, Float64Array(1326 * 52) by
+     * id * 52 + card, each combo's result when that card comes next (NaN for board, dead and own cards, and equity NaN
+     * where it meets nothing). On the flop each runout counts toward both its cards. Otherwise null.
+     */
+    this.byCard = counts.byCard ?? null;
+    /**
+     * With { byRunout: true } on a flop: { equity, n, rowOf }; combo id's equity on runout k is
+     * equity[rowOf[id] * n + k] (rowOf[id] is -1 for combos not in the range; NaN for runouts using its cards or where
+     * it meets nothing). Otherwise null.
+     */
+    this.byRunout = counts.byRunout ?? null;
     /** Equity by combo id: (win + tie / 2) / total; NaN for combos not in the range or that meet nothing. */
     this.equity = new Float64Array(COMBO_COUNT).fill(NaN);
     for (const id of range.ids) {
@@ -303,6 +317,9 @@ export class Matchup {
     this.board = job.board.map(cardStringOf);
     this.hero = new Side(job.hero, result.hero);
     this.villain = new Side(job.villain, result.villain);
+    /** With { byRunout: true }: each runout's cards (card numbers, runoutSize per runout; pairs a < b), else null. */
+    this.runouts = result.runouts ?? null;
+    this.runoutSize = result.runoutSize ?? null;
     this.#dead = job.dead;
     this.#iterations = job.iterations;
     this.#workers = job.workers;
