@@ -21,12 +21,13 @@ export async function scenarios({ RangeManager, Range, Board }) {
 
   const hero = Range.from(opener);
   const single = await hero.vs(defender, flop, { workers: false });
-  const pooled = await hero.vs(defender, flop, { workers: 2 });
+  const pooled = await hero.vs(defender, flop, { workers: true });
   out.coreTotal = single.hero.total();
   out.coreVillainTotal = single.villain.total();
   out.workersMatch = Array.from(single.hero.win).every((w, i) => w === pooled.hero.win[i])
     && Array.from(single.villain.tie).every((t, i) => t === pooled.villain.tie[i]);
-  out.preflopSeeded = (await Range.from('AA,KK').vs('QQ', [], { workers: false, iterations: 3000, seed: 3 })).hero.total();
+  // Preflop is Monte Carlo: compare a rounded estimate
+  out.preflop = Math.round((await Range.from('AA,KK').vs('QQ', [], { iterations: 20000 })).hero.total().equity * 50) / 50;
   const board = await Board.from(turn);
   out.board = [board.matching(hero, ['Pair']).toNotation(), board.strongest(hero, 0.25).toNotation()];
   return out;

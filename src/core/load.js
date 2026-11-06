@@ -26,7 +26,7 @@ export async function loadExtVal() {
   return extval;
 }
 
-/** Loads both evaluators. After it resolves, Board.from and Range#vs work synchronously (see the *Sync methods). */
+/** Loads both evaluators up front (otherwise they load on first use). After it resolves, Board.fromSync works. */
 export function ready() {
   pending ||= Promise.all([loadBitVal(), loadExtVal()]).then(() => undefined);
   return pending;
@@ -37,4 +37,9 @@ export function loaded(...need) {
   const missing = (need.length ? need : ['bitval', 'extval']).filter(name => (name === 'bitval' ? !bitval : !extval));
   if (missing.length) throw new Error('Call `await ready()` first: the evaluators load asynchronously');
   return { bitval, extval };
+}
+
+/** Stops the Web Workers poker-bitvaljs keeps between calls (browsers; they start again when needed). */
+export function terminateWorkers() {
+  if (bitval && typeof bitval.terminateWorkerPool === 'function') bitval.terminateWorkerPool();
 }

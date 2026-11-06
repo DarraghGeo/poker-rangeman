@@ -98,7 +98,7 @@ async function check(): Promise<void> {
   // Core API
   const coreHero: Range = Range.from('AA,KK:0.5', { dead: ['Ah'] }).include(['AhKh:0.5']).withSuit('s');
   const sameClass: typeof CoreRange = Range;
-  const matchup: Matchup = await coreHero.vs('QQ+', board, { workers: false, seed: 1 });
+  const matchup: Matchup = await coreHero.vs('QQ+', board, { workers: false, iterations: 2000 });
   const side: Side = matchup.villain;
   const perCombo: number = matchup.hero.equity[idOfHand('AsKs')] + side.win[0];
   const strongCore: Range = matchup.hero.above(0.6).filter((id, weight) => weight > 0.5 && HAND_STRINGS[id] !== 'AsAd');
@@ -108,8 +108,8 @@ async function check(): Promise<void> {
   const exactShare: Range = coreBoard.strongest(coreHero, 0.25, { ties: 'split' });
   const coreReport: ComparisonReport = matchup.compare({ bands: 'quartiles', shape: { topEnd: '3%' } });
   const coreBuckets: number = matchup.buckets().hero.buckets.strong.share;
-  const coreTo: number | null = matchup.compareTo('QQ+').distance;
-  const coreMissing: Range = matchup.compareTo(Range.from('AA')).missing;
+  const coreTo: number | null = (await matchup.compareTo('QQ+')).distance;
+  const coreMissing: Range = (await matchup.compareTo(Range.from('AA'))).missing;
   const coreClasses: HandClassesResult = coreBoard.handClasses(coreHero, { highCards: false });
   const coreFlags: Breakdown = coreBoard.breakdown(coreHero);
   void [coreReport, coreBuckets, coreTo, coreMissing, coreClasses, coreFlags];
@@ -118,7 +118,7 @@ async function check(): Promise<void> {
   coreBoard.weakest(coreHero, 0.25, { ties: 'half' });
   void [exactShare, exactCompat];
   await ready();
-  const synced: number | null = coreHero.vsSync('QQ', board).hero.total().equity;
+  const synced: number | null = Board.fromSync(board).strongest(coreHero, 0.5).weightedSize;
   terminateWorkers();
   void [sameClass, perCombo, strongCore, topPairs, rankedIds, synced];
 

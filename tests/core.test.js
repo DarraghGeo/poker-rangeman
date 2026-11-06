@@ -94,22 +94,41 @@ describe('Matchup', () => {
     sameSet(m.hero.between(0.4, 0.7), spot.equityBetween(0.4, 0.7));
   });
 
-  it('gives the same results with workers', async () => {
-    const single = await Range.from(OPENER).vs(DEFENDER, FLOP, { workers: false });
-    const pooled = await Range.from(OPENER).vs(DEFENDER, FLOP, { workers: 3 });
-    expect(Array.from(pooled.hero.win)).toEqual(Array.from(single.hero.win));
-    expect(Array.from(pooled.villain.lose)).toEqual(Array.from(single.villain.lose));
-    expect(pooled.runouts).toBe(single.runouts);
-    // Preflop samples are split across workers: the estimate is close, not identical
-    const preflop = await Range.from('AA,KK').vs('QQ,AKs', [], { workers: 2, iterations: 20000, seed: 9 });
-    expect(preflop.runouts).toBe(20000);
+  it("gives poker-bitvaljs's per-hand counts unchanged", async () => {
+    const { default: BitVal } = await import('poker-bitvaljs');
+    const bitval = new BitVal();
+    const villain = '22-88:0.6,A2s-A8s,K9s,Q9s+,J9s+:0.25,T8s+';
+    const m = await Range.from(OPENER).vs(villain, TURN);
+    // The same entries, in the same order, as src/core/bitval-equity.js passes them
+    const entries = range => Array.from(range.ids, id => (range.weights[id] === 1 ? HAND_STRINGS[id] : { hand: HAND_STRINGS[id], weight: range.weights[id] }));
+    const direct = await bitval.compareRangeHands(entries(Range.from(OPENER)), entries(Range.from(villain)), TURN, [], 5, 10000, true, null, 100, false);
+    direct.hero.hands.forEach((hand, i) => {
+      const id = idOfHand(hand);
+      expect([m.hero.win[id], m.hero.tie[id], m.hero.lose[id]]).toEqual([direct.hero.win[i], direct.hero.tie[i], direct.hero.lose[i]]);
+    });
+    expect(m.hero.total().win).toBeCloseTo(direct.win, 6);
+    // Preflop is poker-bitvaljs's Monte Carlo (shared boards): an estimate
+    const preflop = await Range.from('AA,KK').vs('QQ,AKs', [], { iterations: 20000 });
     expect(preflop.hero.total().equity).toBeCloseTo(0.79, 1);
   });
 
-  it('runs synchronously after ready()', async () => {
+  it('a hand that blocks every villain combo meets nothing', async () => {
+    // Villain holds only combos sharing a card with AhKh, at fractional and solver-style (nine decimal) weights
+    for (const villain of ['AhQh:0.1,KhJd:0.2,AhTs:0.7,Kh9c:0.3', 'AhQh:0.123456789,KhJd:0.987654321,AhTs:0.333333333,Kh9c:0.1', 'AhQh,KhJd,AhTs,Kh9c']) {
+      for (const board of [[], FLOP.filter(c => c !== 'Ad').concat('2d'), ['2c', '7d', '3s', '5d'], ['2c', '7d', '3s', '5d', '8s']]) {
+        const m = await Range.from('AhKh,QQ').vs(villain, board, { iterations: 2000 });
+        const id = idOfHand('AhKh');
+        expect([m.hero.win[id], m.hero.tie[id], m.hero.lose[id]]).toEqual([0, 0, 0]);
+        expect(m.hero.equity[id]).toBeNaN();
+        const spot = await new RangeManager('AhKh,QQ').getEquity(villain, board, { iterations: 2000 });
+        expect(spot.handEquity.AhKh).toEqual({ win: 0, tie: 0, lose: 0, equity: null });
+        expect((await new RangeManager('AhKh,QQ').equityByHand(villain, board, { iterations: 2000 })).AhKh.equity).toBeNull();
+      }
+    }
+  });
+
+  it('loads the evaluators with ready()', async () => {
     await ready();
-    const m = Range.from('AA').vsSync('KK', RIVER);
-    expect(m.hero.total().equity).toBe(1);
     expect(Board.fromSync(FLOP).matching(Range.from('AA,KK'), ['Three of a Kind']).size).toBe(3); // AA makes a set on an ace-high board
   });
 
@@ -131,7 +150,7 @@ describe('Matchup', () => {
 
   it('compareTo() matches RangeManager', async () => {
     const m = await Range.from(OPENER).vs(DEFENDER, TURN, { workers: false });
-    const core = m.compareTo('77+,ATs+,KQs,AJo+');
+    const core = await m.compareTo('77+,ATs+,KQs,AJo+');
     const compat = await (await new RangeManager(OPENER).against(DEFENDER, TURN)).compareTo('77+,ATs+,KQs,AJo+');
     expect(core.overlap).toBeCloseTo(compat.overlap, 12);
     expect(core.distance).toBeCloseTo(compat.distance, 12);
@@ -142,19 +161,15 @@ describe('Matchup', () => {
     expect(core.combos).toEqual(compat.combos);
   });
 
-  it('ties mathematically equal hands exactly with fractional weights', async () => {
-    // 5c5d and 5d5h are suit-isomorphic on this board against this villain: equal equity, to the last bit
+  it('gives mathematically equal hands equal equity (to rounding) with fractional weights', async () => {
+    // 5c5d and 5d5h are suit-isomorphic on this board against this villain. poker-bitvaljs sums weights in its own
+    // order, so they can differ in the last bits
     const m = await Range.from('55').vs('Tx2c,7x2s:0.6,KK-JJ:0.6,52o:0.6', ['Jd', '8s', '3c'], { workers: false });
-    expect(m.hero.equity[idOfHand('5c5d')]).toBe(m.hero.equity[idOfHand('5d5h')]);
+    expect(m.hero.equity[idOfHand('5c5d')]).toBeCloseTo(m.hero.equity[idOfHand('5d5h')], 12);
     const spot = await new RangeManager('55').getEquity('Tx2c,7x2s:0.6,KK-JJ:0.6,52o:0.6', ['Jd', '8s', '3c']);
-    expect(spot.handEquity['5c5d'].equity).toBe(spot.handEquity['5d5h'].equity);
+    expect(spot.handEquity['5c5d'].equity).toBeCloseTo(spot.handEquity['5d5h'].equity, 12);
   });
 
-  it('samples preflop reproducibly with a seed', async () => {
-    const a = await Range.from('AA,KK').vs('QQ', [], { workers: false, iterations: 5000, seed: 4 });
-    const b = await Range.from('AA,KK').vs('QQ', [], { workers: false, iterations: 5000, seed: 4 });
-    expect(a.hero.total()).toEqual(b.hero.total());
-  });
 });
 
 describe('Board', () => {

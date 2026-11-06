@@ -32,8 +32,8 @@ function randomNotation(random, parts = 5) {
     else if (kind === 6) token = `${rank()}x${rank()}${SUITS[Math.floor(random() * 4)]}`;
     else token = `${RANKS[a]}${RANKS[a]}-${RANKS[Math.min(12, a + 2)]}${RANKS[Math.min(12, a + 2)]}`;
     // Weights that are binary fractions add up exactly in floating point, so neither version's results carry
-    // rounding noise: mathematically tied hands tie in both (3.8 could split ties like 0.6 + 1.2 vs 1.2 + 0.6 by
-    // noise; this version snaps weighted counts so they tie exactly, which tests/core.test.js checks)
+    // rounding noise and mathematically tied hands tie in both (with weights like 0.6, sums in a different order can
+    // split such ties by noise, deciding cut-offs differently)
     if (random() < 0.3) token += `:${[0.25, 0.5, 0.75, 0.375][Math.floor(random() * 4)]}`;
     tokens.push(token);
   }

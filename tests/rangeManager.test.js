@@ -2894,7 +2894,7 @@ describe('chaining async steps', () => {
 
     it('runs equity once, then filters read the stored values', async () => {
       const rm = new RangeManager('AA,KK,QQ,22');
-      const spy = jest.spyOn(RangeManager.prototype, '_runEngine');
+      const spy = jest.spyOn(RangeManager.prototype, '_bitvalHandEquity');
       try {
         const withEquity = await rm.getEquity('JJ', turn);
         const runs = spy.mock.calls.length;

@@ -9,27 +9,27 @@ whole-range call in both versions.
 
 | Operation | 3.8.0 | This version | Faster |
 | --- | --- | --- | --- |
-| Parse notation ×100 (same string) | 29.0 ms | 0.09 ms | 320.8× |
-| Parse notation ×100 (different strings) | 12.8 ms | 5.35 ms | 2.4× |
-| toNotation ×100 | 33.0 ms | 1.22 ms | 27.2× |
-| include/exclude/intersect ×100 | 72.3 ms | 20.5 ms | 3.5× |
-| makesHand Pair, flop | 21.3 ms | 0.39 ms | 54.3× |
-| hitsHand Flush Draw, turn | 25.6 ms | 10.5 ms | 2.4× |
-| makesHand non-strict, flop | 4.73 ms | 3.03 ms | 1.6× |
-| rankHands, river | 21.4 ms | 2.61 ms | 8.2× |
-| strongest 20%, flop | 18.4 ms | 1.39 ms | 13.3× |
-| handClasses, flop | 18.4 ms | 0.57 ms | 32.4× |
-| breakdown, flop | 19.1 ms | 1.78 ms | 10.8× |
-| blockers, flop | 1.10 ms | 0.49 ms | 2.3× |
-| equity (range total), flop | 16.8 ms | 14.3 ms | 1.2× |
-| equity (range total), turn | 1.35 ms | 0.82 ms | 1.6× |
-| getEquity per hand, flop | 693 ms | 31.0 ms | 22.4× |
-| getEquity per hand, turn | 40.3 ms | 2.98 ms | 13.5× |
-| getEquity per hand, river | 13.4 ms | 1.77 ms | 7.6× |
-| getEquity per hand, wide vs wide, flop | 6127 ms | 70.8 ms | 86.6× |
-| against + compare(), flop | 1435 ms | 31.0 ms | 46.3× |
-| against + compare(), turn | 112 ms | 5.07 ms | 22.1× |
-| against + compare(), river | 57.1 ms | 3.87 ms | 14.7× |
-| against + compare(), weighted, flop | 1363 ms | 27.7 ms | 49.2× |
-| compareTo, flop | 1062 ms | 53.0 ms | 20.0× |
-| getEquity per hand, preflop (1,000 boards) | 109 ms | 17.3 ms | 6.3× |
+| Parse notation ×100 (same string) | 30.9 ms | 0.09 ms | 343.2× |
+| Parse notation ×100 (different strings) | 12.9 ms | 5.81 ms | 2.2× |
+| toNotation ×100 | 32.8 ms | 1.28 ms | 25.6× |
+| include/exclude/intersect ×100 | 69.9 ms | 19.9 ms | 3.5× |
+| makesHand Pair, flop | 23.8 ms | 0.38 ms | 62.2× |
+| hitsHand Flush Draw, turn | 23.6 ms | 12.5 ms | 1.9× |
+| makesHand non-strict, flop | 5.15 ms | 5.09 ms | 1.0× |
+| rankHands, river | 21.3 ms | 2.95 ms | 7.2× |
+| strongest 20%, flop | 16.5 ms | 1.52 ms | 10.9× |
+| handClasses, flop | 17.0 ms | 0.53 ms | 32.0× |
+| breakdown, flop | 19.7 ms | 2.67 ms | 7.4× |
+| blockers, flop | 0.79 ms | 0.37 ms | 2.1× |
+| equity (range total), flop | 16.8 ms | 14.7 ms | 1.1× |
+| equity (range total), turn | 1.46 ms | 0.85 ms | 1.7× |
+| getEquity per hand, flop | 693 ms | 21.4 ms | 32.4× |
+| getEquity per hand, turn | 39.8 ms | 3.11 ms | 12.8× |
+| getEquity per hand, river | 22.2 ms | 3.48 ms | 6.4× |
+| getEquity per hand, wide vs wide, flop | 6171 ms | 47.8 ms | 129.1× |
+| against + compare(), flop | 1397 ms | 24.3 ms | 57.4× |
+| against + compare(), turn | 113 ms | 4.90 ms | 23.0× |
+| against + compare(), river | 55.9 ms | 4.82 ms | 11.6× |
+| against + compare(), weighted, flop | 1341 ms | 21.7 ms | 61.8× |
+| compareTo, flop | 1063 ms | 39.6 ms | 26.8× |
+| getEquity per hand, preflop (1,000 boards) | 102 ms | 13.3 ms | 7.7× |

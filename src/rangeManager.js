@@ -2,7 +2,7 @@ const VALID_RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3',
 const VALID_SUITS = ['s', 'h', 'd', 'c'];
 const RANK_VALUES = { A: 14, K: 13, Q: 12, J: 11, T: 10, 9: 9, 8: 8, 7: 7, 6: 6, 5: 5, 4: 4, 3: 3, 2: 2 };
 
-import { rangeEquity } from './core/equity.js';
+import { handEquity } from './core/bitval-equity.js';
 import { COMBO_COUNT, COMBO_LO, COMBO_HI, idOfHand, cardIndex } from './core/cards.js';
 import * as notation from './core/notation.js';
 import { loadBitVal, loadExtVal } from './core/load.js';
@@ -841,27 +841,34 @@ export class RangeManager {
     return Object.fromEntries(this.filteredHands.map(hand => [hand, this.equityCache.get(`${hand}|${prepared.key}`)]));
   }
 
-  // Runs the equity engine: per-hand { win, tie, lose } arrays for hero (and villain against hero with both)
-  async _runEngine(heroHands, heroWeights, villainHands, villainWeights, board, deadCards, iterations, both) {
+  // Per-hand { win, tie, lose } arrays for hero's hands (and villain's against hero), aligned with the hand lists,
+  // from one poker-bitvaljs compareRangeHands call
+  async _bitvalHandEquity(heroHands, heroWeights, villainHands, villainWeights, board, deadCards, iterations) {
     const bv = await this._loadBitVal();
-    const heroIds = heroHands.map(idOfHand);
-    const villainIds = villainHands.map(idOfHand);
-    const weightArray = (hands, ids, weights) => {
+    const ids = hands => hands.map(idOfHand);
+    const weightArray = (hands, list, weights) => {
       const array = new Float64Array(COMBO_COUNT);
-      hands.forEach((hand, i) => { array[ids[i]] += weights[hand] ?? 1; });
+      hands.forEach((hand, i) => { array[list[i]] = weights[hand] ?? 1; });
       return array;
     };
-    return rangeEquity(bv, {
+    const heroIds = ids(heroHands), villainIds = ids(villainHands);
+    const result = await handEquity(bv, {
       heroIds, villainIds,
       heroWeight: weightArray(heroHands, heroIds, heroWeights),
       villainWeight: weightArray(villainHands, villainIds, villainWeights),
-      board: board.map(cardIndex), dead: deadCards.map(cardIndex), iterations, both
+      board, dead: deadCards, iterations
     });
+    const aligned = (side, list) => ({
+      win: Float64Array.from(list, id => side.win[id]),
+      tie: Float64Array.from(list, id => side.tie[id]),
+      lose: Float64Array.from(list, id => side.lose[id])
+    });
+    return { hero: aligned(result.hero, heroIds), villain: aligned(result.villain, villainIds) };
   }
 
-  // Computes and caches the equity of every hand not cached yet, in one engine pass
+  // Computes and caches the equity of every hand not cached yet, in one poker-bitvaljs call
   // withVillain: when every hand is computed in this pass, also cache villain's per-hand equity against these hands
-  // (the engine gives both sides at once), as _villainEquityByHand() would compute it
+  // (poker-bitvaljs gives both sides at once), as _villainEquityByHand() would compute it
   async _fillHandEquity(hands, { board, villainHands, villainWeights, deadCards, iterations, key }, withVillain = false) {
     const missing = hands.filter(hand => !this.equityCache.has(`${hand}|${key}`));
     if (missing.length === 0) return;
@@ -875,10 +882,10 @@ export class RangeManager {
     // Villain's side plays against every hero hand off the board, including those holding an extra dead card
     // (dead cards only leave the deck, as in _villainEquityByHand); hero's own results are kept for live hands
     const onBoard = new Set(board);
-    const engineHands = both ? missing.filter(hand => !this._extractCardsFromHand(hand).some(c => onBoard.has(c))) : live;
-    const { hero, villain } = await this._runEngine(engineHands, this.handWeights, villainHands, villainWeights, board, deadCards, iterations, both);
+    const bitvalHands = both ? missing.filter(hand => !this._extractCardsFromHand(hand).some(c => onBoard.has(c))) : live;
+    const { hero, villain } = await this._bitvalHandEquity(bitvalHands, this.handWeights, villainHands, villainWeights, board, deadCards, iterations);
     const liveSet = new Set(live);
-    engineHands.forEach((hand, i) => {
+    bitvalHands.forEach((hand, i) => {
       if (liveSet.has(hand)) this.equityCache.set(`${hand}|${key}`, this._equityResult(hero.win[i], hero.tie[i], hero.lose[i]));
     });
     if (both) {
@@ -910,7 +917,7 @@ export class RangeManager {
     const minDominant = this._parseShare(options.shape?.minDominant ?? 0.5, 'shape.minDominant');
     const nutsMinEquity = this._parseShare(options.nuts?.minEquity ?? 0.9, 'nuts.minEquity');
     const prepared = this._prepareEquity(villain, boardCards, options);
-    // Villain's side comes out of the same engine pass, ready for buckets()/compare()
+    // Villain's side comes out of the same poker-bitvaljs call, ready for buckets()/compare()
     await this._fillHandEquity(this.filteredHands, prepared, true);
     const handEquity = {};
     for (const hand of this.filteredHands) handEquity[hand] = this.equityCache.get(`${hand}|${prepared.key}`);
@@ -1197,8 +1204,8 @@ export class RangeManager {
       const live = heroHands.length === 0 ? [] : villainHands.filter(hand => !this._extractCardsFromHand(hand).some(c => blockedCards.has(c)));
       for (const hand of villainHands) results[hand] = { win: 0, tie: 0, lose: 0, equity: null };
       if (live.length) {
-        // Villain's hands against hero's current range, every hand in one engine pass
-        const { hero: side } = await this._runEngine(live, {}, heroHands, this.handWeights, board, deadCards, iterations, false);
+        // Villain's hands against hero's current range, every hand in one poker-bitvaljs call
+        const { hero: side } = await this._bitvalHandEquity(live, {}, heroHands, this.handWeights, board, deadCards, iterations);
         live.forEach((hand, i) => { results[hand] = this._equityResult(side.win[i], side.tie[i], side.lose[i]); });
       }
       this.equityCache.set(cacheKey, results);
@@ -1647,4 +1654,4 @@ for (const name of VALUE_METHODS) {
 
 // The core API: ranges as typed arrays, boards classified once, per-combo equity for both sides (also available
 // as 'poker-rangeman/core')
-export { Range, Board, ready, terminateWorkers, setWorkerUrl } from './core/index.js';
+export { Range, Board, ready, terminateWorkers } from './core/index.js';

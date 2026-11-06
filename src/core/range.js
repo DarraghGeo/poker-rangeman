@@ -4,10 +4,9 @@
 import { COMBO_COUNT, COMBO_LO, COMBO_HI, HAND_STRINGS, idOfAnyHand, cardIndex } from './cards.js';
 import { parseWeighted, expandCards, isValidCard, isValidConcreteCard, isValidSuit, weightedNotation, classNotation } from './notation.js';
 import { criterionFlag, VALID_CRITERIA } from './criteria.js';
-import { rangeEquity } from './equity.js';
+import { handEquity } from './bitval-equity.js';
 import { loadBitVal, loadExtVal, loaded } from './load.js';
 import { flagLayout, hasFlagAt, flagMasks } from './flags.js';
-import { runPooled } from './pool.js';
 import { classifyBoard } from './classify.js';
 import { analysisOptions, compareReport, sideSummary, cappedOf, nutsOf, handClassesOf, breakdownOf, earthMoversDistance, equityPairs } from './reports.js';
 
@@ -186,20 +185,14 @@ export class Range {
   }
 
   /**
-   * Every combo's equity against villain on the board, both sides, in one pass (exact postflop, sampled preflop).
-   * options: { dead, iterations (preflop boards, default 10000), seed, workers (false | true | count) }.
+   * Every combo's equity against villain on the board, both sides, from one poker-bitvaljs compareRangeHands call
+   * (exact postflop, Monte Carlo preflop unless its preflop table is loaded). options: { dead, iterations (preflop
+   * boards, default 10000), workers (poker-bitvaljs's Web Workers, browsers only; default false) }.
    */
   async vs(villain, board = [], options = {}) {
-    await Promise.all([loadBitVal(), loadExtVal()]);
+    const [bitval] = await Promise.all([loadBitVal(), loadExtVal()]);
     const job = this.#matchupJob(villain, board, options);
-    const result = await runPooled(job, options.workers);
-    return new Matchup(job, result);
-  }
-
-  /** vs() without workers, after `await ready()`. */
-  vsSync(villain, board = [], options = {}) {
-    const job = this.#matchupJob(villain, board, options);
-    return new Matchup(job, rangeEquity(loaded('bitval').bitval, job));
+    return new Matchup(job, await handEquity(bitval, job), bitval);
   }
 
   #matchupJob(villain, board, options) {
@@ -222,7 +215,7 @@ export class Range {
     return {
       hero, villain: villainRange,
       heroIds: hero.ids, villainIds: villainRange.ids, heroWeight: hero.weights, villainWeight: villainRange.weights,
-      board: boardNumbers, dead, iterations, both: true, seed: options.seed
+      board: boardNumbers, dead, iterations, workers: options.workers ?? false
     };
   }
 }
@@ -231,19 +224,18 @@ const cardStringOf = n => 'AKQJT98765432'[12 - (n >> 2)] + 'shdc'[n & 3];
 
 /** One side of a matchup: its range and every combo's result against the other side (indexed by combo id). */
 class Side {
-  constructor(range, ids, counts) {
+  // counts: poker-bitvaljs's per-hand rows by combo id (src/core/bitval-equity.js)
+  constructor(range, counts) {
     this.range = range;
-    this.win = new Float64Array(COMBO_COUNT);
-    this.tie = new Float64Array(COMBO_COUNT);
-    this.lose = new Float64Array(COMBO_COUNT);
-    /** Equity by combo id: (win + tie / 2) / total; NaN for combos not in the range or that can't be dealt. */
+    this.win = counts.win;
+    this.tie = counts.tie;
+    this.lose = counts.lose;
+    /** Equity by combo id: (win + tie / 2) / total; NaN for combos not in the range or that meet nothing. */
     this.equity = new Float64Array(COMBO_COUNT).fill(NaN);
-    ids.forEach((id, i) => {
-      const w = counts.win[i], t = counts.tie[i], l = counts.lose[i];
-      this.win[id] = w; this.tie[id] = t; this.lose[id] = l;
-      const total = w + t + l;
-      if (total > 0) this.equity[id] = (w + t / 2) / total;
-    });
+    for (const id of range.ids) {
+      const total = this.win[id] + this.tie[id] + this.lose[id];
+      if (total > 0) this.equity[id] = (this.win[id] + this.tie[id] / 2) / total;
+    }
   }
 
   /** The range's equity: each combo's counts times its weight. */
@@ -282,16 +274,17 @@ class Side {
 export class Matchup {
   #dead;
   #iterations;
-  #seed;
+  #workers;
+  #bitval;
 
-  constructor(job, result) {
+  constructor(job, result, bitval) {
     this.board = job.board.map(cardStringOf);
-    this.runouts = result.runouts;
-    this.hero = new Side(job.hero, job.heroIds, result.hero);
-    this.villain = new Side(job.villain, job.villainIds, result.villain);
+    this.hero = new Side(job.hero, result.hero);
+    this.villain = new Side(job.villain, result.villain);
     this.#dead = job.dead;
     this.#iterations = job.iterations;
-    this.#seed = job.seed;
+    this.#workers = job.workers;
+    this.#bitval = bitval;
   }
 
   // Board and dead cards, the board's classification (null preflop) and the analysis options
@@ -339,19 +332,17 @@ export class Matchup {
   /**
    * Compares hero's range with a reference range against the same villain and board: combos in common, missing and
    * extra, weighted overlap, both ranges' summaries (buckets, shape, capping) and the earth mover's distance between
-   * their equity distributions. One more engine pass, for the reference's equity.
+   * their equity distributions. One more poker-bitvaljs call, for the reference's equity.
    */
-  compareTo(reference, options = {}) {
+  async compareTo(reference, options = {}) {
     const { blocked, boardKey, classified, options: opts } = this.#context(options);
     const mine = this.hero.range;
     const ref = Range.from(reference, { dead: this.#dead.map(cardStringOf) });
-    const job = {
-      hero: ref, villain: this.villain.range, heroIds: ref.ids, villainIds: this.villain.range.ids,
-      heroWeight: ref.weights, villainWeight: this.villain.range.weights,
-      board: this.board.map(cardIndex), dead: this.#dead, iterations: this.#iterations, both: false, seed: this.#seed
-    };
-    const result = rangeEquity(loaded('bitval').bitval, job);
-    const refSide = sideOf(new Side(ref, ref.ids, result.hero));
+    const result = await handEquity(this.#bitval, {
+      heroIds: ref.ids, villainIds: this.villain.range.ids, heroWeight: ref.weights, villainWeight: this.villain.range.weights,
+      board: this.board, dead: this.#dead, iterations: this.#iterations, workers: this.#workers
+    });
+    const refSide = sideOf(new Side(ref, result.hero));
     const mySide = sideOf(this.hero);
     const villain = sideOf(this.villain);
     const rangeSummary = sideSummary(mySide, opts);

@@ -1,7 +1,8 @@
 // Range vs range reports from per-combo arrays: equity buckets, shapes, capping, effective nuts, hand classes, flags,
 // advantages and reference comparisons. Pure functions over combo ids (in the order results should list them) and
 // Float64Array(1326)s indexed by combo id, shared by the core's Matchup/Board and the RangeManager API, so both
-// give the same numbers. Nothing here runs per runout: every report is a few passes over at most 1,326 combos.
+// give the same numbers. Equity comes from poker-bitvaljs (src/core/bitval-equity.js); every report here is a few
+// passes over its per-hand results, at most 1,326 combos.
 
 import { COMBO_COUNT, COMBO_LO, COMBO_HI, HAND_STRINGS, RANK_CHARS } from './cards.js';
 import { hasFlagAt } from './flags.js';
@@ -111,14 +112,15 @@ export function sideSummary(side, { bands, enough = 0.1, minDominant = 0.5, pare
     bucket.count = bucket.combos.length;
     bucket.share = totalWeight ? bucket.weight / totalWeight : 0;
   }
-  const runouts = tw + tt + tl;
+  // The range's equity: poker-bitvaljs's per-hand counts summed by weight (its own totals formula)
+  const counted = tw + tt + tl;
   const contiguity = contiguityOf(side, parent);
   const mean = totalWeight ? sum / totalWeight : 0;
   const variance = totalWeight ? Math.max(0, sumSquares / totalWeight - mean * mean) : 0;
   return {
     combos: live,
     weight: totalWeight,
-    equity: runouts ? (tw + tt / 2) / runouts : null,
+    equity: counted ? (tw + tt / 2) / counted : null,
     buckets,
     shape: live ? shapeOf(buckets, bands, contiguity, enough, minDominant, mean, variance) : null
   };
