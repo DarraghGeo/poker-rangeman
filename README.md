@@ -97,7 +97,23 @@ board.strongest(hero, 0.2);                               // by made-hand score
 | `board.strongest(range, share, { ties })` / `board.weakest(...)` | As `RangeManager`'s: `ties: 'split'` for exactly the share, default `'keep'` keeps the whole tied group |
 
 A `Matchup` has `hero` and `villain` sides, each with `range`, `win`, `tie`, `lose` and `equity` (all
-`Float64Array(1326)`, by combo id), plus `total()`, `between(min, max)`, `above(min)`, `below(max)` and `byHand()`. A
+`Float64Array(1326)`, by combo id), plus `total()`, `between(min, max)`, `above(min)`, `below(max)` and `byHand()`.
+
+**Slices by equity and blockers.** `side.strongest(share, { ties })` and `side.weakest(share, { ties })` give the
+strongest or weakest share of a side's weight, ordered by its equity in the matchup (not by made hand, which differs
+before the river and with card removal), as a `Range` whose `weights` is the slice's weight vector. With
+`ties: 'split'`, combos of equal equity share the last slot pro rata, so the slice holds exactly the share; combos that
+can't be dealt are left out. `sliceByEquity(weights, equity, share, { from, ties })` does the same on any pair of
+vectors by combo id and returns the weight vector. `blockedShare(ids, weights)` gives, for each combo, the share of a
+weight vector's total held by combos sharing a card with it (exactly 0 when it blocks nothing). All are synchronous:
+
+```javascript
+await ready();
+const spot = Range.from(hero).vsSync(villain, turn);
+const value = spot.villain.strongest(0.25, { ties: 'split' });   // villain's strongest 25% by equity
+const vsValue = Range.from(hero).vsSync(value, turn);            // hero's equity against it
+const blocks = blockedShare(spot.hero.range.ids, value.weights); // how much of it each hero combo blocks
+``` A
 `Board` has every combo's poker-extval flag bits (`lo`, `hi`), `strength` and `score`, and `has(id, flag)`,
 `matching(range, criteria)`, `rank(range)`, `strongest(range, share)` and `weakest(range, share)`. Card numbers are
 `rank * 4 + suit` (`'2s'` = 0 … `'Ac'` = 51), as in poker-extval; `HAND_STRINGS[id]` and `idOfHand(hand)` convert
@@ -184,8 +200,9 @@ that inspected internals. What changed:
   `isBackdoorStraightDraw` and `isBackdoorComboDraw` appear in `getObject()`/`evaluateHand()` evaluations,
   `breakdown()` and `compare().flags`, and work as criteria ('Nut Flush Draw', 'Nut Backdoor Flush Draw',
   'Double Gutshot', 'Backdoor Straight Draw', 'Backdoor Combo Draw'). Nothing else in those results changes.
-- **Dependencies**: poker-extval 6.0.0-beta.5 (prerelease, pinned exactly: prerelease ranges can pull in breaking
-  betas) and poker-bitvaljs 1.12.
+- **Dependencies**: poker-bitvaljs 1.12, and poker-extval as a **peer dependency** (`^6.0.0-beta.5`), so an app has
+  one copy of it. npm 7+ installs it automatically; with other package managers, install `poker-extval@next` yourself.
+  poker-rangeman reads its flags through poker-extval's own `hasFlag()`, so later betas' layout changes don't break it.
 
 ## Installation
 

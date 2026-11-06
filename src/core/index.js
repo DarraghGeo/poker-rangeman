@@ -2,6 +2,7 @@
 export { Range, Board, Matchup } from './range.js';
 export { ready, terminateWorkers } from './load.js';
 export { handEquity, handEquitySync } from './bitval-equity.js';
+export { sliceByEquity, blockedShare } from './slices.js';
 export { COMBO_COUNT, HAND_STRINGS, CARD_STRINGS, cardIndex, cardString, idOfHand, idOfAnyHand, comboOf } from './cards.js';
 export { parseWeighted, normalizeNotation, normalizeHand, weightedNotation } from './notation.js';
 export { CRITERIA_MAPPING, criterionFlag } from './criteria.js';

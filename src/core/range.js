@@ -5,6 +5,7 @@ import { COMBO_COUNT, COMBO_LO, COMBO_HI, HAND_STRINGS, idOfAnyHand, cardIndex }
 import { parseWeighted, expandCards, isValidCard, isValidConcreteCard, isValidSuit, weightedNotation, classNotation } from './notation.js';
 import { criterionFlag, VALID_CRITERIA } from './criteria.js';
 import { handEquity, handEquitySync } from './bitval-equity.js';
+import { sliceByEquity } from './slices.js';
 import { loadBitVal, loadExtVal, loaded } from './load.js';
 import { flagLayout, hasFlagAt, flagMasks } from './flags.js';
 import { classifyBoard } from './classify.js';
@@ -264,6 +265,20 @@ class Side {
   }
 
   above(min) { return this.between(min); }
+
+  /**
+   * The strongest share of the range by its equity in this matchup (not by made hand), as a Range: `.weights` is the
+   * Float64Array(1326) weight vector. options.ties: 'keep' (default) or 'split' (exactly the share). Combos that can't be
+   * dealt are left out. See sliceByEquity.
+   */
+  strongest(share, options = {}) {
+    return new Range(sliceByEquity(this.range.weights, this.equity, share, { ...options, from: 'top' }));
+  }
+
+  /** The weakest share of the range by its equity in this matchup; options as strongest(). */
+  weakest(share, options = {}) {
+    return new Range(sliceByEquity(this.range.weights, this.equity, share, { ...options, from: 'bottom' }));
+  }
   below(max) { return this.range.filter(id => this.equity[id] < max); }
 
   /** { hand: equity } for the combos that can be dealt. */

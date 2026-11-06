@@ -93,6 +93,10 @@ export interface Side {
   /** Combos with equity from min (inclusive) to max (exclusive; inclusive when max is 1). */
   between(min: number, max?: number): Range;
   above(min: number): Range;
+  /** The strongest share by equity in this matchup (not made hand); `.weights` is the weight vector by combo id. */
+  strongest(share: number, options?: { ties?: 'keep' | 'split' }): Range;
+  /** The weakest share by equity in this matchup. */
+  weakest(share: number, options?: { ties?: 'keep' | 'split' }): Range;
   below(max: number): Range;
   byHand(): Record<Hand, number>;
 }
@@ -205,5 +209,13 @@ export function handEquity(bitval: unknown, job: {
   heroIds: ArrayLike<ComboId>; heroWeight: Float64Array; villainIds: ArrayLike<ComboId>; villainWeight: Float64Array;
   board: Array<number | Card>; dead?: Array<number | Card>; iterations?: number; workers?: boolean;
 }): Promise<{ hero: HandCounts; villain: HandCounts; total: { win: number; tie: number; lose: number } }>;
+/**
+ * The strongest (from 'top', default) or weakest share of a weighted range by an equity vector, both Float64Array(1326)
+ * by combo id; NaN-equity and zero-weight combos are left out. ties 'split' gives exactly the share. Returns the slice's
+ * weight vector by combo id.
+ */
+export function sliceByEquity(weights: Float64Array, equity: Float64Array, share: number, options?: { from?: 'top' | 'bottom'; ties?: 'keep' | 'split' }): Float64Array;
+/** For each combo in ids, the share of the weight vector's total held by combos sharing a card with it (exactly 0 if none). */
+export function blockedShare(ids: ArrayLike<ComboId>, weights: Float64Array): Float64Array;
 /** handEquity() synchronously (compareRangeHandsSync). */
 export function handEquitySync(bitval: unknown, job: Parameters<typeof handEquity>[1]): Awaited<ReturnType<typeof handEquity>>;
