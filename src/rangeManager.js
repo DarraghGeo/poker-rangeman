@@ -4,6 +4,7 @@ const RANK_VALUES = { A: 14, K: 13, Q: 12, J: 11, T: 10, 9: 9, 8: 8, 7: 7, 6: 6,
 
 import { rangeEquity } from './core/equity.js';
 import { COMBO_COUNT, COMBO_LO, COMBO_HI, idOfHand, cardIndex } from './core/cards.js';
+import * as notation from './core/notation.js';
 
 // poker-extval and poker-bitvaljs are loaded lazily on first use (see _loadEvaluator, _loadBitVal)
 let extval = null;
@@ -83,16 +84,6 @@ const VILLAIN_DRAWS = [
   'isFlushDraw', 'isBackdoorFlushDraw', 'isOpenEndedStraightDraw', 'isInsideStraightDraw', 'isStraightDraw', 'isComboDraw'
 ];
 
-const buildNonPairPatterns = suffix => ({
-  plus: new RegExp(`^([AKQJT2-9])([AKQJT2-9])${suffix}\\+$`),
-  range: new RegExp(`^([AKQJT2-9])([AKQJT2-9])${suffix}-([AKQJT2-9])([AKQJT2-9])${suffix}$`),
-  single: new RegExp(`^([AKQJT2-9])([AKQJT2-9])${suffix}$`)
-});
-const NON_PAIR_PATTERNS = { s: buildNonPairPatterns('s'), o: buildNonPairPatterns('o') };
-// Suited and offsuit together: 'AK', 'AT+', 'AK-AT'
-const ANY_SUIT_PATTERN = /^([AKQJT2-9])([AKQJT2-9])(\+?)$|^([AKQJT2-9])([AKQJT2-9])-([AKQJT2-9])([AKQJT2-9])$/;
-
-const parsedNotation = new Map();
 
 // poker-extval 6's core: every combo's strict-mode flags on a board, as two Int32Arrays indexed by combo id
 const classifiedBoards = new Map();
@@ -224,46 +215,8 @@ export class RangeManager {
     return high + low;
   }
 
-  _normalizeHandSegment(segment) {
-    return this._normalizeCard(segment.substring(0, 2)) + this._normalizeCard(segment.substring(2, 4));
-  }
-
-  _normalizeSegment(segment) {
-    const trimmed = segment.trim();
-    if (trimmed.length === 4 && this._isValidHand(trimmed, true)) return this._normalizeHandSegment(trimmed);
-    if (trimmed.includes('-')) {
-      const parts = trimmed.split('-');
-      return parts.map(p => {
-        const lastChar = p.slice(-1).toLowerCase();
-        return (lastChar === 's' || lastChar === 'o') ? p.slice(0, -1).toUpperCase() + lastChar : p.toUpperCase();
-      }).join('-');
-    }
-    const lastChar = trimmed.slice(-1).toLowerCase();
-    const secondLastChar = trimmed.length > 1 ? trimmed.slice(-2, -1).toLowerCase() : '';
-    if (lastChar === '+' && secondLastChar === 's') return trimmed.slice(0, -2).toUpperCase() + 's+';
-    if (lastChar === '+' && secondLastChar === 'o') return trimmed.slice(0, -2).toUpperCase() + 'o+';
-    if (lastChar === 's' || lastChar === 'o') return trimmed.slice(0, -1).toUpperCase() + lastChar;
-    return trimmed.toUpperCase();
-  }
-
-  normalizeNotation(notation) {
-    if (typeof notation !== 'string') return notation;
-    const trimmed = notation.trim().replace(/\s+/g, ' ');
-    // A segment may carry a weight after a colon: 'AKs:0.5'
-    const normalizeEntry = entry => {
-      const [range, weight] = this._splitWeight(entry);
-      return weight === undefined ? this._normalizeSegment(range) : `${this._normalizeSegment(range)}:${weight.trim()}`;
-    };
-    if (trimmed.includes(',')) {
-      return trimmed.split(',').map(normalizeEntry).join(',');
-    }
-    return normalizeEntry(trimmed);
-  }
-
-  // 'AKs:0.5' -> ['AKs', '0.5']; 'AKs' -> ['AKs', undefined]
-  _splitWeight(entry) {
-    const index = entry.indexOf(':');
-    return index === -1 ? [entry, undefined] : [entry.slice(0, index), entry.slice(index + 1)];
+  normalizeNotation(input) {
+    return notation.normalizeNotation(input);
   }
 
   // A combo weight: a number from 0 to 1 (or a numeric string)
@@ -291,14 +244,6 @@ export class RangeManager {
     return 0;
   }
 
-  _getAllRanksBetween(startRank, endRank) {
-    const startIdx = VALID_RANKS.indexOf(startRank);
-    const endIdx = VALID_RANKS.indexOf(endRank);
-    if (startIdx === -1 || endIdx === -1) return [];
-    if (startIdx <= endIdx) return VALID_RANKS.slice(startIdx, endIdx + 1);
-    return VALID_RANKS.slice(endIdx, startIdx + 1).reverse();
-  }
-
   _getRankBelow(rank) {
     // Returns the rank that is one rank below the given rank
     // For 'A', returns 'K'
@@ -315,75 +260,9 @@ export class RangeManager {
     return handCards[0][0].toUpperCase() === handCards[1][0].toUpperCase();
   }
 
-  _getAllSuits() {
-    return ['c', 'd', 'h', 's'];
-  }
-
   // ============================================================================
   // PATTERN DETECTION METHODS
   // ============================================================================
-
-  _isPairNotation(segment) {
-    if (!segment || typeof segment !== 'string') return false;
-    if (/^([AKQJT2-9])\1\+$/.test(segment)) return true;
-    if (/^([AKQJT2-9])\1$/.test(segment)) return true;
-    if (!segment.includes('-')) return false;
-    const parts = segment.split('-');
-    if (parts.length !== 2) return false;
-    return /^([AKQJT2-9])\1$/.test(parts[0]) && /^([AKQJT2-9])\1$/.test(parts[1]);
-  }
-
-  _isSuitedNotation(segment) {
-    if (!segment || typeof segment !== 'string') return false;
-    if (/^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}s\+$/.test(segment)) return true;
-    if (/^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}s-[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}s$/.test(segment)) return true;
-    return /^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}s$/.test(segment);
-  }
-
-  _isOffsuitNotation(segment) {
-    if (!segment || typeof segment !== 'string') return false;
-    if (/^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}o\+$/.test(segment)) return true;
-    if (/^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}o-[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}o$/.test(segment)) return true;
-    return /^[AKQJT2-9]{1,2}[AKQJT2-9]{1,2}o$/.test(segment);
-  }
-
-  _isRankXNotation(segment) {
-    if (!segment || typeof segment !== 'string' || segment.length !== 3) return false;
-    const rank = segment[0];
-    const middle = segment[1];
-    const suffix = segment[2];
-    return this._isValidRank(rank) && (middle === 'X' || middle === 'x') && (suffix === 'o' || suffix === 's');
-  }
-
-  _isAnySuitNotation(segment) {
-    if (!segment || typeof segment !== 'string') return false;
-    const match = segment.match(ANY_SUIT_PATTERN);
-    if (!match) return false;
-    // 'AA' is a pair; 'AK-AT' needs distinct ranks on both ends
-    if (match[1]) return match[1] !== match[2];
-    return match[4] !== match[5] && match[6] !== match[7];
-  }
-
-  _isWildcardNotation(segment) {
-    if (!segment || typeof segment !== 'string' || segment.length !== 4) return false;
-    return segment.includes('x') || segment.includes('X');
-  }
-
-  _isSpecificHandNotation(segment) {
-    if (!segment || typeof segment !== 'string' || segment.length !== 4) return false;
-    return this._isValidHand(segment);
-  }
-
-  _detectNotationType(segment) {
-    if (this._isPairNotation(segment)) return 'pair';
-    if (this._isRankXNotation(segment)) return 'rankX';  // Check this BEFORE suited/offsuit
-    if (this._isAnySuitNotation(segment)) return 'anySuit';
-    if (this._isSuitedNotation(segment)) return 'suited';
-    if (this._isOffsuitNotation(segment)) return 'offsuit';
-    if (this._isWildcardNotation(segment)) return 'wildcard';
-    if (this._isSpecificHandNotation(segment)) return 'specific';
-    return null;
-  }
 
   // ============================================================================
   // EXTRACTION METHODS
@@ -394,246 +273,13 @@ export class RangeManager {
     return [hand.substring(0, 2), hand.substring(2, 4)];
   }
 
-  _extractPairRanks(range) {
-    if (!range || typeof range !== 'string') return [null, null];
-    if (range.endsWith('+')) {
-      const rank = range[0];
-      return [rank, 'A'];
-    }
-      const parts = range.split('-');
-    if (parts.length === 1) {
-      const rank = parts[0][0];
-      return [rank, rank];
-    }
-    return [parts[0][0], parts[1][0]];
-  }
-
-  // Extracts ranks from suited/offsuit notation: 'AKs', 'A2s+', 'A2s-A5s' (suffix is 's' or 'o')
-  _extractNonPairRanks(range, suffix) {
-    if (!range) return null;
-    const patterns = NON_PAIR_PATTERNS[suffix];
-    let match = range.match(patterns.plus);
-    if (match) return { rank1: match[1], rank2: match[2], isPlus: true };
-    match = range.match(patterns.range);
-    if (match) return { rank1: match[1], rank2: match[2], endRank1: match[3], endRank2: match[4] };
-    match = range.match(patterns.single);
-    return match ? { rank1: match[1], rank2: match[2], isPlus: false } : null;
-  }
-
-  _extractCard1Wildcard(card1, result) {
-    if (card1[1].toLowerCase() === 'x') {
-      result.card1SuitWildcard = true;
-      // 'AxKh' means offsuit with Kh: card1 takes every suit except card2's suit
-      result.card1ExcludeSuit = result.card2SuitWildcard ? null : result.card2Suit;
-    } else {
-      result.card1Suit = card1[1].toLowerCase();
-    }
-  }
-
-  _extractCard2Wildcard(card2, card1, result) {
-    if (card2[0] === 'X') {
-      result.card2RankWildcard = true;
-      result.card2ExcludeRank = card1[0];
-      if (card2[1].toLowerCase() === 'x') result.card2SuitWildcard = true;
-      else result.card2Suit = card2[1].toLowerCase();
-    } else {
-      result.card2Rank = card2[0];
-      result.card2Suit = card2[1].toLowerCase();
-    }
-  }
-
-  _extractWildcardHand(hand) {
-    if (!hand || hand.length !== 4) return null;
-    let card1 = hand.substring(0, 2);
-    let card2 = hand.substring(2, 4);
-    // A rank wildcard is only supported on card2: 'XsKh' is treated as 'KhXs'
-    if (card1[0] === 'X') [card1, card2] = [card2, card1];
-    if (card1[0] === 'X') return null;
-    const result = { card1Rank: card1[0] };
-    // card2 is extracted first because card1's excluded suit depends on it
-    this._extractCard2Wildcard(card2, card1, result);
-    this._extractCard1Wildcard(card1, result);
-    return result;
-  }
-
   // ============================================================================
   // GENERATION METHODS
   // ============================================================================
 
-  _generatePairCombos(rank, suits) {
-    const combos = [];
-    for (let i = 0; i < suits.length; i++) {
-      for (let j = i + 1; j < suits.length; j++) {
-        combos.push(this._normalizeHand(rank + suits[i] + rank + suits[j]));
-      }
-    }
-    return combos;
-  }
-
-  _generatePairCombinations(rank) {
-    return this._generatePairCombos(rank, this._getAllSuits());
-  }
-
-  _generatePairRange(startRank, endRank) {
-    const ranks = this._getAllRanksBetween(startRank, endRank);
-    const hands = [];
-    ranks.forEach(rank => {
-      hands.push(...this._generatePairCombinations(rank));
-    });
-    return hands;
-  }
-
-  _generateSuitedRange(rank1, rank2) {
-    const suits = this._getAllSuits();
-    return suits.map(suit => this._normalizeHand(rank1 + suit + rank2 + suit));
-  }
-
-  _generateOffsuitCombos(rank1, rank2, suits) {
-    const hands = [];
-    suits.forEach(suit1 => {
-      suits.forEach(suit2 => {
-        if (suit1 !== suit2) hands.push(this._normalizeHand(rank1 + suit1 + rank2 + suit2));
-      });
-    });
-    return hands;
-  }
-
-  _generateOffsuitRange(rank1, rank2) {
-    return this._generateOffsuitCombos(rank1, rank2, this._getAllSuits());
-  }
-
-  _getCard1Suits(info) {
-    return info.card1SuitWildcard ? VALID_SUITS.filter(s => s !== info.card1ExcludeSuit) : [info.card1Suit];
-  }
-
-  _getCard2Ranks(info) {
-    if (info.card2RankWildcard && info.card2SuitWildcard) return VALID_RANKS;
-    return info.card2RankWildcard ? VALID_RANKS.filter(r => r !== info.card2ExcludeRank) : [info.card2Rank];
-  }
-
-  _getCard2Suits(info) {
-    return info.card2SuitWildcard ? VALID_SUITS : [info.card2Suit];
-  }
-
-  _generateCombosFromWildcard(info, card1Suits, card2Ranks, card2Suits) {
-    const hands = [];
-    card1Suits.forEach(s1 => {
-      card2Ranks.forEach(r2 => {
-        card2Suits.forEach(s2 => {
-          const card2 = r2 + s2;
-          const card1Full = info.card1Rank + s1;
-          if (card2 === card1Full) return;
-          const combo = info.card1Rank + s1 + card2;
-          if (!this._isValidHand(combo)) return;
-          hands.push(this._normalizeHand(combo));
-        });
-      });
-    });
-    return hands;
-  }
-
-  _generateWildcardCombinations(hand) {
-    const info = this._extractWildcardHand(hand);
-    if (!info) return [];
-    const card1Suits = this._getCard1Suits(info);
-    const card2Ranks = this._getCard2Ranks(info);
-    const card2Suits = this._getCard2Suits(info);
-    return this._deduplicateHands(this._generateCombosFromWildcard(info, card1Suits, card2Ranks, card2Suits));
-  }
-
-  _generateRankXHands(rank, isOffsuit) {
-    const hands = [];
-    const allRanks = VALID_RANKS.filter(r => r !== rank);
-    allRanks.forEach(otherRank => {
-      if (isOffsuit) {
-        hands.push(...this._generateOffsuitRange(rank, otherRank));
-      } else {
-        hands.push(...this._generateSuitedRange(rank, otherRank));
-      }
-    });
-    if (isOffsuit) {
-      hands.push(...this._generatePairCombinations(rank));
-    }
-    return this._deduplicateHands(hands);
-  }
-
   // ============================================================================
   // PARSING METHODS
   // ============================================================================
-
-  _parseSpecificHand(hand) {
-    if (!this._isValidHand(hand)) throw new Error(`Invalid hand: ${hand}`);
-    return this._normalizeHand(hand);
-  }
-
-  _parseWildcardHand(hand) {
-    const hands = this._generateWildcardCombinations(hand);
-    if (hands.length === 0) throw new Error(`Invalid wildcard hand: ${hand}`);
-    return hands;
-  }
-
-  _parsePairRange(range) {
-    const [start, end] = this._extractPairRanks(range);
-    if (!start || !end) throw new Error(`Invalid pair range: ${range}`);
-    return this._generatePairRange(start, end);
-  }
-
-  _parseNonPairRange(range, suffix) {
-    const label = suffix === 's' ? 'suited' : 'offsuit';
-    const generate = suffix === 's'
-      ? (r1, r2) => this._generateSuitedRange(r1, r2)
-      : (r1, r2) => this._generateOffsuitRange(r1, r2);
-    const info = this._extractNonPairRanks(range, suffix);
-    if (!info) throw new Error(`Invalid ${label} range: ${range}`);
-    let ranks;
-    if (info.isPlus) {
-      // '+' runs the second rank up to one rank below the first rank
-      const targetRank = this._getRankBelow(info.rank1);
-      if (!targetRank) return [];
-      ranks = this._getAllRanksBetween(info.rank2, targetRank).filter(r => r !== info.rank1);
-    } else if (info.endRank2) {
-      if (info.rank1 !== info.endRank1) throw new Error(`Invalid ${label} range: ${range}`);
-      ranks = this._getAllRanksBetween(info.rank2, info.endRank2);
-    } else {
-      ranks = [info.rank2];
-    }
-    return ranks.flatMap(rank => generate(info.rank1, rank));
-  }
-
-  _parseSuitedRange(range) {
-    return this._parseNonPairRange(range, 's');
-  }
-
-  _parseOffsuitRange(range) {
-    return this._parseNonPairRange(range, 'o');
-  }
-
-  // 'AK' = 'AKs,AKo'; 'AT+' = 'ATs+,ATo+'; 'AK-AT' = 'AKs-ATs,AKo-ATo'
-  _parseAnySuitRange(segment) {
-    const withSuffix = suffix => segment.includes('-')
-      ? segment.split('-').map(part => part + suffix).join('-')
-      : segment.replace(/^(..)(\+?)$/, `$1${suffix}$2`);
-    return [...this._parseSuitedRange(withSuffix('s')), ...this._parseOffsuitRange(withSuffix('o'))];
-  }
-
-  _parseRankXNotation(segment) {
-    const rank = segment[0].toUpperCase();
-    const isOffsuit = segment[2].toLowerCase() === 'o';
-    if (!this._isValidRank(rank)) throw new Error(`Invalid rank in notation: ${segment}`);
-    return this._generateRankXHands(rank, isOffsuit);
-  }
-
-  _parseSegment(segment) {
-    const type = this._detectNotationType(segment);
-    if (type === 'pair') return this._parsePairRange(segment);
-    if (type === 'suited') return this._parseSuitedRange(segment);
-    if (type === 'offsuit') return this._parseOffsuitRange(segment);
-    if (type === 'rankX') return this._parseRankXNotation(segment);
-    if (type === 'anySuit') return this._parseAnySuitRange(segment);
-    if (type === 'wildcard') return this._parseWildcardHand(segment);
-    if (type === 'specific') return [this._parseSpecificHand(segment)];
-    throw new Error(`Unrecognized notation: ${segment}`);
-  }
 
   // Parses notation, an array or an object into { hands, weights }. Later entries override earlier ones, and a
   // weight of 0 removes the combo. weights holds only combos whose weight is not 1.
@@ -641,59 +287,7 @@ export class RangeManager {
   //   array:  exact combos, each 'AhKh', 'AhKh:0.4' or ['AhKh', 0.4]
   //   object: { AhKh: 0.4, AsKs: 1 } (exact combos)
   _parseWeighted(input) {
-    if (typeof input !== 'string') return this._parseWeightedUncached(input);
-    // Notation strings are parsed once and remembered (the last 256); callers get their own copies
-    let parsed = parsedNotation.get(input);
-    if (!parsed) {
-      parsed = this._parseWeightedUncached(input);
-      if (parsedNotation.size >= 256) parsedNotation.delete(parsedNotation.keys().next().value);
-      parsedNotation.set(input, parsed);
-    }
-    return { hands: parsed.hands.slice(), weights: { ...parsed.weights } };
-  }
-
-  _parseWeightedUncached(input) {
-    const entries = new Map();
-    const set = (hands, weight) => hands.forEach(hand => { entries.delete(hand); entries.set(hand, weight); });
-    const exactHand = (hand, where) => {
-      if (!this._isValidHand(hand)) throw new Error(`Invalid hand in ${where}: ${hand}`);
-      return this._normalizeHand(hand);
-    };
-    if (typeof input === 'string') {
-      const normalized = this.normalizeNotation(input);
-      normalized.split(',').map(s => s.trim()).filter(s => s).forEach(entry => {
-        const [range, weight] = this._splitWeight(entry);
-        set(this._parseSegment(range.trim()), weight === undefined ? 1 : this._parseWeight(weight, range));
-      });
-    } else if (Array.isArray(input)) {
-      if (input.length === 0) throw new Error('Array cannot be empty');
-      input.forEach(item => {
-        if (Array.isArray(item)) {
-          set([exactHand(item[0], 'array')], this._parseWeight(item[1], item[0]));
-        } else if (this._isPlainObject(item) && typeof item.hand === 'string') {
-          set([exactHand(item.hand, 'array')], item.weight === undefined ? 1 : this._parseWeight(item.weight, item.hand));
-        } else if (typeof item === 'string' && item.includes(':')) {
-          const [hand, weight] = this._splitWeight(item);
-          set([exactHand(hand.trim(), 'array')], this._parseWeight(weight, hand));
-        } else {
-          set([exactHand(item, 'array')], 1);
-        }
-      });
-    } else if (this._isPlainObject(input)) {
-      const items = Object.entries(input);
-      if (items.length === 0) throw new Error('Object cannot be empty');
-      items.forEach(([hand, weight]) => set([exactHand(hand, 'object')], this._parseWeight(weight, hand)));
-    } else {
-      throw new Error('Input must be a string, array or object');
-    }
-    const hands = [];
-    const weights = {};
-    for (const [hand, weight] of entries) {
-      if (weight === 0) continue;
-      hands.push(hand);
-      if (weight !== 1) weights[hand] = weight;
-    }
-    return { hands, weights };
+    return notation.parseWeighted(input);
   }
 
   _parse(input) {
@@ -712,11 +306,6 @@ export class RangeManager {
     // evaluationCache is shared by reference: entries are deterministic per (hand, board, strict),
     // so derived instances can safely reuse and extend each other's evaluations
     return newInstance;
-  }
-
-  _normalizeInputToHands(input) {
-    if (typeof input === 'string' || Array.isArray(input) || this._isPlainObject(input)) return this._parse(input);
-    throw new Error('Input must be range notation, an array of hands or an object of weights');
   }
 
   // { hands, weights } from an input to include/exclude/intersect/setWeight; a RangeManager gives its own
@@ -2249,89 +1838,23 @@ export class RangeManager {
   }
 
   toString() {
-    return this._byWeight(hands => this._groupHandsIntoNotation(hands));
+    return notation.weightedNotation(this.filteredHands, hand => this._weight(hand), notation.classNotation);
   }
 
   /** Abbreviated notation; weighted combos get their weight after a colon: 'QQ+,AKs:0.5'. */
   toNotation() {
     // Instances don't change after they are made, so the notation is worked out once per hand list and weights
     if (this._notationSource !== this.filteredHands || this._notationWeights !== this.handWeights) {
-      this._notation = this._byWeight(hands => this._abbreviatedNotation(hands));
+      this._notation = notation.weightedNotation(this.filteredHands, hand => this._weight(hand));
       this._notationSource = this.filteredHands;
       this._notationWeights = this.handWeights;
     }
     return this._notation;
   }
 
-  // Applies a notation writer to each group of equal weight, weight 1 first, then heavier weights first. A hand
-  // class (AKs, QQ) whose combos in the range have different weights is written as exact combos, so that the
-  // output parses back to the same weights.
-  _byWeight(write) {
-    const roundWeight = hand => Math.round(this._weight(hand) * 10000) / 10000;
-    const classWeights = new Map();
-    for (const hand of this.filteredHands) {
-      const cls = this._categorizeHand(hand).notation;
-      if (!classWeights.has(cls)) classWeights.set(cls, new Set());
-      classWeights.get(cls).add(roundWeight(hand));
-    }
-    const groups = new Map();
-    for (const hand of this.filteredHands) {
-      const weight = roundWeight(hand);
-      if (!groups.has(weight)) groups.set(weight, []);
-      groups.get(weight).push(hand);
-    }
-    return [...groups.entries()]
-      .sort((a, b) => b[0] - a[0])
-      .map(([weight, hands]) => {
-        const mixed = hand => classWeights.get(this._categorizeHand(hand).notation).size > 1;
-        const parts = [write(hands.filter(hand => !mixed(hand))), ...hands.filter(mixed)].filter(Boolean).join(',');
-        if (!parts || weight === 1) return parts;
-        return parts.split(',').map(part => `${part}:${weight}`).join(',');
-      })
-      .filter(Boolean)
-      .join(',');
-  }
-
-  _abbreviatedNotation(hands) {
-    const notation = this._groupHandsIntoNotation(hands);
-    if (!notation) return '';
-    const parts = notation.split(',');
-    return [...this._abbreviatePairs(parts.filter(p => /^([AKQJT2-9])\1$/.test(p))), ...this._abbreviateSuited(parts.filter(p => /^[AKQJT2-9]{2}s$/.test(p))), ...this._abbreviateOffsuit(parts.filter(p => /^[AKQJT2-9]{2}o$/.test(p)))].join(',');
-  }
-
   // ============================================================================
   // INTERNAL HELPER METHODS
   // ============================================================================
-
-  _deduplicateHands(hands) {
-    return [...new Set(hands)];
-  }
-
-  _categorizeHand(hand) {
-    const [c1, c2] = this._extractCardsFromHand(hand);
-    const [high, low] = this._normalizeCardOrder(c1, c2);
-    if (high[0] === low[0]) return { type: 'pair', notation: high[0] + low[0] };
-    if (high[1] === low[1]) return { type: 'suited', notation: high[0] + low[0] + 's' };
-    return { type: 'offsuit', notation: high[0] + low[0] + 'o' };
-  }
-
-  _buildNotationParts(categories) {
-    const parts = [];
-    if (categories.pairs.length > 0) parts.push([...new Set(categories.pairs)].join(','));
-    if (categories.suited.length > 0) parts.push([...new Set(categories.suited)].join(','));
-    if (categories.offsuit.length > 0) parts.push([...new Set(categories.offsuit)].join(','));
-    return parts.join(',');
-  }
-
-  _groupHandsIntoNotation(hands) {
-    if (hands.length === 0) return '';
-    const categories = { pairs: [], suited: [], offsuit: [] };
-    hands.forEach(hand => {
-      const cat = this._categorizeHand(hand);
-      categories[cat.type === 'pair' ? 'pairs' : cat.type === 'suited' ? 'suited' : 'offsuit'].push(cat.notation);
-    });
-    return this._buildNotationParts(categories);
-  }
 
   _findConsecutiveSequences(ranks) {
     if (ranks.length === 0) return [];
@@ -2343,20 +1866,6 @@ export class RangeManager {
       else { sequences.push({ start, end }); start = end = sorted[i]; }
     }
     return [...sequences, { start, end }];
-  }
-
-  _processPairSequence(seq) {
-    // seq.start is the lowest rank and seq.end the highest (sequences are consecutive)
-    if (seq.start === seq.end) return seq.start + seq.start;
-    if (seq.end === 'A') return seq.start + seq.start + '+';
-    return seq.end + seq.end + '-' + seq.start + seq.start;
-  }
-
-  _abbreviatePairs(pairs) {
-    if (pairs.length === 0) return [];
-    const ranks = [...new Set(pairs)].map(p => p[0]);
-    const sequences = this._findConsecutiveSequences(ranks);
-    return sequences.map(seq => this._processPairSequence(seq)).sort((a, b) => this._getRankValue(b[0]) - this._getRankValue(a[0]));
   }
 
   _groupByFirstRank(notations) {
@@ -2388,17 +1897,11 @@ export class RangeManager {
     return result;
   }
 
-  _abbreviateSuited(suited) {
-    if (suited.length === 0) return [];
-    return this._abbreviateGroup(this._groupByFirstRank(suited), 's');
-  }
-
   _abbreviateOffsuit(offsuit) {
     if (offsuit.length === 0) return [];
     return this._abbreviateGroup(this._groupByFirstRank(offsuit), 'o');
   }
 }
-
 
 // ============================================================================
 // CHAINABLE ASYNC FILTERS
