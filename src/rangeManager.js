@@ -66,6 +66,24 @@ function classifiedBoard(board, street) {
   return result;
 }
 
+// The flags set for a combo, in poker-extval's evaluation key order, plus the derived isMiddlingPair
+function strictFlagsOf(classified, id, hand) {
+  const flags = [];
+  for (const [name, index] of Object.entries(extval.FLAGS)) {
+    const on = index < 32 ? (classified.lo[id] & (1 << index)) !== 0 : (classified.hi[id] & (1 << (index - 32))) !== 0;
+    if (on) flags.push(name);
+  }
+  if (flags.includes('isMiddlePair') && hand[0] === hand[2]) flags.push('isMiddlingPair');
+  return flags;
+}
+
+// { flag: true } for a combo's set flags, with usesHoleCards true (for boards where no made hand is the board's)
+function flagObject(classified, id, hand) {
+  const object = { usesHoleCards: true };
+  for (const flag of strictFlagsOf(classified, id, hand)) object[flag] = true;
+  return object;
+}
+
 // Flag criteria as bit masks over classifiedBoard's lo (flags 0-31) and hi (32+) words
 function criteriaMasks(criteria) {
   const { FLAGS } = extval;
@@ -1055,17 +1073,10 @@ export class RangeManager {
     return ranked.sort((a, b) => b.value - a.value);
   }
 
-  // The made hand's strength as one integer (poker-bitvaljs's evaluateSuits): higher beats lower, equal ties.
-  // Orders hands exactly as extval's rank arrays do, about 40x faster. Needs _loadBitVal() first.
+  // The made hand's strength as one integer (poker-bitvaljs's evaluateSuits value, which poker-extval's core
+  // returns for every combo of a board at once): higher beats lower, equal ties. Needs _loadEvaluator() first.
   _handValue(hand, board) {
-    const key = `masks|${board.join(',')}`;
-    let masks = this.evaluationCache.get(key);
-    if (!masks) {
-      masks = bitval.toSuitMasks(board);
-      this.evaluationCache.set(key, masks);
-    }
-    const [s, h, d, c] = bitval.toSuitMasks(this._extractCardsFromHand(hand));
-    return bitval.evaluateSuits(s | masks[0], h | masks[1], d | masks[2], c | masks[3]);
+    return classifiedBoard(board, null).score[idOfHand(hand)];
   }
 
   // Synchronous, cached: the made hand of one combo on the board. Needs _loadEvaluator() first.
@@ -1122,15 +1133,15 @@ export class RangeManager {
     const boardSet = new Set(board);
     const boardKey = board.join(',');
     const combosByFlag = new Map();
+    const classified = classifiedBoard(board, street);
     let total = 0;
     let totalWeight = 0;
     for (const hand of this.filteredHands) {
       if (this._extractCardsFromHand(hand).some(c => boardSet.has(c))) continue;
       total++;
       totalWeight += this._weight(hand);
-      const [evalObj] = this._getCachedOrEvaluate(hand, board, boardKey, true, street);
-      for (const [flag, value] of Object.entries(evalObj)) {
-        if (value !== true || !flag.startsWith('is')) continue;
+      // The strict evaluation's flags, in its key order, read from poker-extval's core bits
+      for (const flag of strictFlagsOf(classified, idOfHand(hand), hand)) {
         if (!combosByFlag.has(flag)) combosByFlag.set(flag, []);
         combosByFlag.get(flag).push(hand);
       }
@@ -1387,7 +1398,7 @@ export class RangeManager {
     const villainEquity = await this._villainEquityByHand();
     const hero = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, parentHands, shapeEnough, minDominant, this.handWeights, parentWeights);
     const villain = this._sideSummary(villainEquity, villainHands, bands, null, shapeEnough, minDominant, villainWeights);
-    await this._loadBitVal();
+    await this._loadEvaluator();
     hero.capped = this._cappedFor(this.filteredHands, villainHands, board, deadCards, topEnd, this.handWeights, villainWeights);
     villain.capped = this._cappedFor(villainHands, this.filteredHands, board, deadCards, topEnd, villainWeights, this.handWeights);
     const { nutsMinEquity } = this.matchup;
@@ -1452,11 +1463,12 @@ export class RangeManager {
     const absKey = `abs-top|${board.join(',')}|${[...deadCards].sort().join(',')}|${topEnd}`;
     let abs = this.evaluationCache.get(absKey);
     if (!abs) {
-      const deck = VALID_RANKS.flatMap(r => VALID_SUITS.map(suit => r + suit)).filter(c => !blocked.has(c));
+      // Every combo id without a board or dead card, scored at once by poker-extval's core
+      const { score } = classifiedBoard(board, null);
+      const blockedNumbers = new Uint8Array(52);
+      for (const card of blocked) blockedNumbers[cardIndex(card)] = 1;
       const ranks = [];
-      for (let i = 0; i < deck.length; i++) {
-        for (let j = i + 1; j < deck.length; j++) ranks.push(rankOf(this._normalizeHand(deck[i] + deck[j])));
-      }
+      for (let id = 0; id < COMBO_COUNT; id++) if (!blockedNumbers[COMBO_LO[id]] && !blockedNumbers[COMBO_HI[id]]) ranks.push(score[id]);
       ranks.sort((a, b) => b - a);
       const cutoff = ranks[Math.max(1, Math.ceil(topEnd * ranks.length - 1e-9)) - 1];
       const share = ranks.filter(rank => rank >= cutoff).length / ranks.length;
@@ -1485,6 +1497,8 @@ export class RangeManager {
     const boardKey = board.join(',');
     const boardRanks = [...new Set(board.map(c => c[0]))].sort((a, b) => this._getRankValue(b) - this._getRankValue(a));
     const classes = Object.fromEntries(HAND_CLASSES.map(name => [name, { count: 0, weight: 0, share: 0, combos: [] }]));
+    const noBoardPlays = board.length <= 4 && boardRanks.length === board.length;
+    const classified = noBoardPlays ? classifiedBoard(board, street) : null;
     let total = 0;
     let totalWeight = 0;
     for (const hand of this.filteredHands) {
@@ -1493,7 +1507,9 @@ export class RangeManager {
       total++;
       const weight = this._weight(hand);
       totalWeight += weight;
-      const [evalObj] = this._getCachedOrEvaluate(hand, board, boardKey, true, street);
+      // On an unpaired board of 3-4 cards every made hand uses a hole card, so poker-extval's core flag bits are
+      // all that's needed; otherwise (usesHoleCards can be false) build the evaluation
+      const evalObj = noBoardPlays ? flagObject(classified, idOfHand(hand), hand) : this._getCachedOrEvaluate(hand, board, boardKey, true, street)[0];
       const entry = classes[this._handClassOf(cards, evalObj, boardRanks, highCards)];
       entry.combos.push(hand);
       entry.weight += weight;
@@ -1658,7 +1674,7 @@ export class RangeManager {
     const referenceSummary = this._sideSummary(
       referenceWithEquity.handEquity, referenceWithEquity.filteredHands, bands, null, shapeEnough, minDominant, referenceWithEquity.handWeights
     );
-    await this._loadBitVal();
+    await this._loadEvaluator();
     rangeSummary.capped = this._cappedFor(this.filteredHands, villainHands, board, deadCards, topEnd, this.handWeights, villainWeights);
     referenceSummary.capped = this._cappedFor(referenceWithEquity.filteredHands, villainHands, board, deadCards, topEnd, referenceWithEquity.handWeights, villainWeights);
     const equities = (byHand, hands, range) => hands.filter(hand => byHand[hand].equity !== null).map(hand => [byHand[hand].equity, range._weight(hand)]);

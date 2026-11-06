@@ -14,8 +14,9 @@ const [LANE_S, LANE_H, LANE_D, LANE_C] = COMBO_LANE;
 
 // Scratch buffers, reused across calls (single-threaded; each worker has its own module instance)
 const valueById = new Int32Array(COMBO_COUNT);
-const keysA = new Float64Array(COMBO_COUNT);
-const keysB = new Float64Array(COMBO_COUNT);
+const sortedA = { ids: new Uint16Array(COMBO_COUNT), values: new Int32Array(COMBO_COUNT) };
+const sortedB = { ids: new Uint16Array(COMBO_COUNT), values: new Int32Array(COMBO_COUNT) };
+const sortedC = { ids: new Uint16Array(COMBO_COUNT), values: new Int32Array(COMBO_COUNT) };
 const less = new Float64Array(52);
 const lessEq = new Float64Array(52);
 const all = new Float64Array(52);
@@ -55,7 +56,9 @@ export function rangeEquity(bv, job) {
   const heroPos = positions(heroIds);
   const villainPos = both ? positions(villainIds) : null;
   if (heroLive.length === 0 || villainLive.length === 0) return { hero, villain, runouts: 0 };
-  const heroLiveW = both ? liveIds(heroIds, onBoard, heroWeight) : null;
+  let heroLiveW = both ? liveIds(heroIds, onBoard, heroWeight) : null;
+  // Usually every hero combo has weight: then villain's sweep can reuse hero's sorted list
+  if (heroLiveW && heroLiveW.length === heroLive.length) heroLiveW = heroLive;
 
   // Union of combos to score on each runout
   const scored = new Uint8Array(COMBO_COUNT);
@@ -84,12 +87,12 @@ export function rangeEquity(bv, job) {
         valueById[id] = bv.evaluateSuits(s | LANE_S[id], h | LANE_H[id], d | LANE_D[id], cl | LANE_C[id]);
       }
     }
-    const nh = sortByValue(heroLive, keysA);
-    const nv = sortByValue(villainLive, keysB);
-    sweep(keysA, nh, heroIds.length ? heroPos : null, keysB, nv, villainWeight, hero);
+    const nh = sortByValue(heroLive, sortedA);
+    const nv = sortByValue(villainLive, sortedB);
+    sweep(sortedA, nh, heroPos, sortedB, nv, villainWeight, hero);
     if (both) {
-      const nhw = heroLiveW === heroLive ? nh : sortByValue(heroLiveW, keysA);
-      sweep(keysB, nv, villainPos, keysA, nhw, heroWeight, villain);
+      if (heroLiveW === heroLive) sweep(sortedB, nv, villainPos, sortedA, nh, heroWeight, villain);
+      else sweep(sortedB, nv, villainPos, sortedC, sortByValue(heroLiveW, sortedC), heroWeight, villain);
     }
   };
 
@@ -192,24 +195,49 @@ function addCard(s, h, d, c, card) {
   }
 }
 
-// Packs the live combos of a side as value * 2048 + id, sorted ascending; returns how many
-function sortByValue(ids, keys) {
+// Radix sort buffers: values are poker-bitvaljs scores (24 bits), sorted 8 bits per pass
+const tmpValues = new Int32Array(COMBO_COUNT);
+const tmpIds = new Uint16Array(COMBO_COUNT);
+const counts = new Int32Array(256);
+
+// Sorts a side's live combos by value (ascending) into out.ids / out.values; returns how many
+function sortByValue(ids, out) {
   let n = 0;
+  const values = out.values, outIds = out.ids;
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
     const v = valueById[id];
-    if (v >= 0) keys[n++] = v * 2048 + id;
+    if (v >= 0) { values[n] = v; outIds[n] = id; n++; }
   }
-  keys.subarray(0, n).sort();
+  // LSD radix sort, three passes of 8 bits: out -> tmp -> out -> tmp, then copy back
+  let srcV = values, srcI = outIds, dstV = tmpValues, dstI = tmpIds;
+  for (let shift = 0; shift < 24; shift += 8) {
+    counts.fill(0);
+    for (let i = 0; i < n; i++) counts[(srcV[i] >>> shift) & 255]++;
+    let sum = 0;
+    for (let b = 0; b < 256; b++) { const c = counts[b]; counts[b] = sum; sum += c; }
+    for (let i = 0; i < n; i++) {
+      const pos = counts[(srcV[i] >>> shift) & 255]++;
+      dstV[pos] = srcV[i];
+      dstI[pos] = srcI[i];
+    }
+    [srcV, dstV] = [dstV, srcV];
+    [srcI, dstI] = [dstI, srcI];
+  }
+  // After three passes the sorted data is in the tmp buffers
+  values.set(srcV.subarray(0, n));
+  outIds.set(srcI.subarray(0, n));
   return n;
 }
 
-// For each combo of side A (sorted keys), adds its win/tie/lose weight against side B (sorted keys, weights by id)
-function sweep(keysA, na, posA, keysB, nb, weightB, out) {
+// For each combo of side A (sorted), adds its win/tie/lose weight against side B (sorted, weights by id). B's
+// cumulative weight overall and per card, below and up to A's value, gives wins and ties by inclusion-exclusion.
+function sweep(a, na, posA, b, nb, weightB, out) {
   less.fill(0); lessEq.fill(0); all.fill(0);
+  const idsA = a.ids, valuesA = a.values, idsB = b.ids, valuesB = b.values;
   let total = 0;
   for (let k = 0; k < nb; k++) {
-    const id = keysB[k] % 2048;
+    const id = idsB[k];
     const w = weightB[id];
     total += w;
     all[COMBO_LO[id]] += w;
@@ -219,30 +247,29 @@ function sweep(keysA, na, posA, keysB, nb, weightB, out) {
   let j = 0, k = 0;
   const { win, tie, lose } = out;
   for (let i = 0; i < na; i++) {
-    const key = keysA[i];
-    const id = key % 2048;
-    const value = (key - id) / 2048;
-    while (j < nb && Math.floor(keysB[j] / 2048) < value) {
-      const vid = keysB[j] % 2048;
+    const id = idsA[i];
+    const value = valuesA[i];
+    while (j < nb && valuesB[j] < value) {
+      const vid = idsB[j];
       const w = weightB[vid];
       lessTotal += w; less[COMBO_LO[vid]] += w; less[COMBO_HI[vid]] += w;
       j++;
     }
-    while (k < nb && Math.floor(keysB[k] / 2048) <= value) {
-      const vid = keysB[k] % 2048;
+    while (k < nb && valuesB[k] <= value) {
+      const vid = idsB[k];
       const w = weightB[vid];
       lessEqTotal += w; lessEq[COMBO_LO[vid]] += w; lessEq[COMBO_HI[vid]] += w;
       k++;
     }
     const lo = COMBO_LO[id], hi = COMBO_HI[id];
-    // The same combo on B's side shares both cards: it was subtracted twice from the tie and total sums
-    const same = valueById[id] >= 0 ? (weightB[id] || 0) : 0;
     const w = lessTotal - less[lo] - less[hi];
+    // The same combo on B's side shares both cards: subtracted twice from the tie and total sums
+    const same = valueById[id] >= 0 ? (weightB[id] || 0) : 0;
     const t = lessEqTotal - lessEq[lo] - lessEq[hi] + same - w;
-    const all2 = total - all[lo] - all[hi] + same;
+    const totalLive = total - all[lo] - all[hi] + same;
     const p = posA[id];
     win[p] += w;
     tie[p] += t;
-    lose[p] += all2 - w - t;
+    lose[p] += totalLive - w - t;
   }
 }

@@ -304,8 +304,20 @@ function parseWildcard(hand) {
   return [...new Set(hands)];
 }
 
-/** The hands of one notation segment ('TT+', 'AKs', 'AxKh', 'AhKd'). */
+const parsedSegments = new Map();
+
+/** The hands of one notation segment ('TT+', 'AKs', 'AxKh', 'AhKd'). Remembered (the last 4096); don't modify. */
 export function parseSegment(segment) {
+  let hands = parsedSegments.get(segment);
+  if (!hands) {
+    hands = parseSegmentUncached(segment);
+    if (parsedSegments.size >= 4096) parsedSegments.delete(parsedSegments.keys().next().value);
+    parsedSegments.set(segment, hands);
+  }
+  return hands;
+}
+
+function parseSegmentUncached(segment) {
   const type = detectNotationType(segment);
   if (type === 'pair') return parsePairRange(segment);
   if (type === 'suited') return parseNonPairRange(segment, 's');
