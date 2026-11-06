@@ -136,9 +136,11 @@ The worker starts with `new Worker(new URL('../worker.js', import.meta.url), { t
 webpack 5 bundle on their own. With other bundlers, bundle `poker-rangeman/src/core/worker.js` as a separate file and
 pass its URL to `setWorkerUrl(url)`, or use `workers: false`.
 
-Bundle size: the esbuild test bundle is about 500 KB unminified, of which poker-extval 6.0.0-beta.1 is 242 KB. Its
-ES-module build embeds its own copies of poker-bitvaljs and poker-rangeman 3 (for its range parsing, which version 4
-never calls), so bitval is included twice; that will shrink once poker-extval's build leaves them as imports.
+Bundle size: the esbuild test bundle is about 640 KB unminified. poker-extval 6.0.0-beta.2's ES-module build (105 KB)
+imports poker-rangeman by name for its own range parsing (which version 4 never calls). Its dependency asks for
+poker-rangeman 3, so bundlers include a copy of 3.8.0 (110 KB), which in turn brings poker-extval 5.2 (88 KB) and a second,
+CommonJS copy of poker-bitvaljs. Those copies go away once poker-extval accepts poker-rangeman 4 (or makes it optional)
+and poker-rangeman 3 accepts poker-extval 6.
 
 ### Breaking changes
 
@@ -159,8 +161,8 @@ inspected internals. What changed:
   `isBackdoorStraightDraw` and `isBackdoorComboDraw` appear in `getObject()`/`evaluateHand()` evaluations,
   `breakdown()` and `compare().flags`, and work as criteria ('Nut Flush Draw', 'Nut Backdoor Flush Draw',
   'Double Gutshot', 'Backdoor Straight Draw', 'Backdoor Combo Draw'). Nothing else in those results changes.
-- **Dependencies**: poker-extval 6.0.0-beta.1 (prerelease, pinned exactly: prerelease ranges can pull in breaking
-  betas) and poker-bitvaljs 1.9.
+- **Dependencies**: poker-extval 6.0.0-beta.2 (prerelease, pinned exactly: prerelease ranges can pull in breaking
+  betas) and poker-bitvaljs 1.10.
 
 ## Installation
 

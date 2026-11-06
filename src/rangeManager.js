@@ -474,17 +474,22 @@ export class RangeManager {
     await this._loadEvaluator();
     const boardSet = new Set(board);
     const boardKey = board.join(',');
-    if (options.strict && !options.excludeBoardPlays && board.length >= 3 && board.length <= 5) {
-      // Fast path: poker-extval's core classifies every combo on the board at once, as flag bits
-      const { lo, hi } = classifyBoard(board, options.street);
-      const masks = criteriaMasks(normalizedCriteria);
+    if (options.strict && board.length >= 3 && board.length <= 5) {
+      // Fast path: poker-extval's core classifies every combo on the board at once, as flag bits. With
+      // excludeBoardPlays a made hand counts only when it uses a hole card (the core's usesHoleCards)
+      const classified = classifyBoard(board, options.street);
+      const { lo, hi } = classified;
+      const made = criteriaMasks(normalizedCriteria.filter(c => MADE_HANDS.has(c)));
+      const other = criteriaMasks(normalizedCriteria.filter(c => !MADE_HANDS.has(c)));
       const filtered = this.filteredHands.filter(hand => {
         const handCards = this._extractCardsFromHand(hand);
         if (handCards.some(card => boardSet.has(card))) return false;
         this.evaluatedKeys.add(this._cacheKey(hand, boardKey, true, options.street));
         const id = idOfHand(hand);
-        if ((lo[id] & masks.lo) !== 0 || (hi[id] & masks.hi) !== 0) return true;
-        return masks.middling && ((lo[id] & masks.middlePair.lo) !== 0 || (hi[id] & masks.middlePair.hi) !== 0) && hand[0] === hand[2];
+        if ((lo[id] & other.lo) !== 0 || (hi[id] & other.hi) !== 0) return true;
+        if (other.middling && ((lo[id] & other.middlePair.lo) !== 0 || (hi[id] & other.middlePair.hi) !== 0) && hand[0] === hand[2]) return true;
+        if ((lo[id] & made.lo) === 0 && (hi[id] & made.hi) === 0) return false;
+        return !options.excludeBoardPlays || classified.usesHoleCards(id);
       });
       return this._createEvaluatedInstance(filtered, board, normalizedCriteria, options);
     }

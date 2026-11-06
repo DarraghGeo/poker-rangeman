@@ -260,32 +260,6 @@ export function cappedOf(mine, theirs, score, blocked, topEnd, boardKey) {
 }
 
 /**
- * A classified board for the reports: { cards (numbers), lo, hi, score, layout, five(id) }. five(id) is the best
- * five card numbers of a combo, needed only to tell whether a made hand uses a hole card where the board can play.
- */
-
-// Whether the combo's made hand uses a hole card: a hole card is among the cards that define it in the best five
-// (every card for high card, straights, flushes and full houses), as poker-extval's usesHoleCards
-function usesHoleCards(classified, id, strength) {
-  const five = classified.five(id);
-  let keyRanks = 0x1fff;
-  if (strength === 8 || strength === 4 || strength === 3 || strength === 2) {
-    const counts = new Uint8Array(13);
-    for (const c of five) counts[c >> 2]++;
-    const n = strength === 8 ? 4 : strength === 4 ? 3 : 2;
-    keyRanks = 0;
-    if (strength === 3) {
-      for (let r = 0; r < 13; r++) if (counts[r] === 2) keyRanks |= 1 << r;
-    } else {
-      for (let r = 12; r >= 0; r--) if (counts[r] === n) { keyRanks = 1 << r; break; }
-    }
-  }
-  const h0 = COMBO_LO[id], h1 = COMBO_HI[id];
-  for (const c of five) if ((c === h0 || c === h1) && ((keyRanks >> (c >> 2)) & 1)) return true;
-  return false;
-}
-
-/**
  * Each combo in exactly one hand class: { total, weight, classes: { name: { count, weight, share, combos } } }.
  * A made hand counts only when it uses a hole card. highCards false counts ace-high and king-high as air.
  */
@@ -318,8 +292,8 @@ export function handClassesOf(ids, weight, classified, { highCards = true } = {}
     const made = MADE_ORDER.find(flag => has(id, flag));
     const r1 = COMBO_HI[id] >> 2, r2 = COMBO_LO[id] >> 2;
     const pocketPair = r1 === r2;
-    const strength = classified.strength[id];
-    const usesHole = !boardCanPlay || made === 'isHighCard' || usesHoleCards(classified, id, strength);
+    // A pair or better on an unpaired board of 3-4 cards always uses a hole card; elsewhere ask poker-extval
+    const usesHole = !boardCanPlay || made === 'isHighCard' || classified.usesHoleCards(id);
     if (usesHole) {
       if (made === 'isRoyalFlush' || made === 'isStraightFlush') return 'straightFlush';
       if (made === 'isFourOfAKind') return 'quads';
