@@ -1085,9 +1085,13 @@ export class RangeManager {
     return result;
   }
 
-  // The given share of hands from one end of the ranking; hands tied with the last one taken are kept too
+  // The given share of hands (by weight) from one end of the ranking. options.ties: 'keep' (default) keeps every hand
+  // tied with the last one taken, so the result can exceed the share by the whole tied group; 'split' gives each
+  // tied hand the same fraction of its weight, so the result holds exactly the share.
   async _takeByStrength(portion, boardCards, options, fromTop) {
     const share = this._parseShare(portion, 'Portion');
+    const ties = options?.ties ?? 'keep';
+    if (ties !== 'keep' && ties !== 'split') throw new Error(`ties must be 'keep' or 'split', got ${ties}`);
     const ranked = await this.rankHands(boardCards, options);
     if (fromTop === false) ranked.reverse();
     // By weight: take hands from this end until they hold the given share of the range's weight
@@ -1099,9 +1103,15 @@ export class RangeManager {
       cumulative += r.weight;
       if (cumulative >= target - 1e-9) { cutoff = r.value; break; }
     }
-    const kept = new Set(ranked
-      .filter(r => (fromTop ? r.value >= cutoff : r.value <= cutoff))
-      .map(r => r.hand));
+    const beyond = r => (fromTop ? r.value > cutoff : r.value < cutoff);
+    if (ties === 'split') {
+      const above = ranked.filter(beyond).reduce((sum, r) => sum + r.weight, 0);
+      const group = ranked.filter(r => r.value === cutoff).reduce((sum, r) => sum + r.weight, 0);
+      const factor = Math.min(1, (target - above) / group);
+      const weights = new Map(ranked.map(r => [r.hand, beyond(r) ? r.weight : r.value === cutoff ? r.weight * factor : 0]));
+      return this._withWeightMap(this.filteredHands.filter(hand => weights.has(hand)).map(hand => [hand, weights.get(hand)]));
+    }
+    const kept = new Set(ranked.filter(r => beyond(r) || r.value === cutoff).map(r => r.hand));
     return this._createFilteredInstance(this.filteredHands.filter(hand => kept.has(hand)));
   }
 

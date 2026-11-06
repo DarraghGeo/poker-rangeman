@@ -92,6 +92,7 @@ board.strongest(hero, 0.2);                               // by made-hand score
 | `include`, `exclude`, `intersect`, `scale`, `setWeight` | Same weight rules as `RangeManager` |
 | `filter((id, weight) => …)`, `withoutCards`, `withSuit`, `suitedOf` | Filters |
 | `vs(villain, board, { dead, iterations, seed, workers })` | A `Matchup` (below); `vsSync` after `await ready()` |
+| `board.strongest(range, share, { ties })` / `board.weakest(...)` | As `RangeManager`'s: `ties: 'split'` for exactly the share, default `'keep'` keeps the whole tied group |
 
 A `Matchup` has `hero` and `villain` sides, each with `range`, `win`, `tie`, `lose` and `equity` (all
 `Float64Array(1326)`, by combo id), plus `total()`, `between(min, max)`, `above(min)`, `below(max)` and `byHand()`. A
@@ -773,12 +774,21 @@ Every hand in the range, strongest first, by made hand (draws do not count).
 
 #### `strongest(portion, boardCards, options?)` / `weakest(portion, boardCards, options?)`
 
-The strongest or weakest share of the range on this board (`0.2` or `'20%'`). Hands tied with the last hand taken are kept too. Returns a `RangeQuery` (await it, or keep chaining).
+The strongest or weakest share of the range on this board (`0.2` or `'20%'`), by made hand and by weight. The share is of the hands that can be dealt (hands sharing a card with the board are left out). Returns a `RangeQuery` (await it, or keep chaining).
+
+`options`: `{ street, ties }`.
+
+**Ties.** Hands of equal strength tie. By default (`ties: 'keep'`) every hand tied with the last hand taken is kept, so **the result can exceed the requested share by the whole tied group**, which can be large where many hands tie: when the board plays, or many hands make the same straight or the same overpair. With `ties: 'split'` the result holds exactly the requested share: each hand in the tied group keeps the same fraction of its weight (tied hands are equal in strength, so none is preferred).
 
 ```javascript
 const rm = new RangeManager('22+,AK,AQ,KQ');
 const top = await rm.strongest('20%', ['Kh', '9h', '4d']);
 const bottom = await rm.weakest(0.3, ['Kh', '9h', '4d']);
+
+// KK (3 sets), then 6 tied AA overpairs, then 6 tied QQ: 15 combos, so 25% is 3.75
+const sets = new RangeManager('AA,KK,QQ');
+(await sets.strongest('25%', ['Kh', '9h', '4c'])).toNotation();                    // 'KK+': 9 combos, the whole AA group
+(await sets.strongest('25%', ['Kh', '9h', '4c'], { ties: 'split' })).toNotation(); // 'KK,AA:0.125': exactly 3.75
 ```
 
 #### `breakdown(boardCards, options?)`

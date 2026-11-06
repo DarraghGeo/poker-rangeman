@@ -149,6 +149,18 @@ describe('Board', () => {
     }
   });
 
+  it("splits tied groups like RangeManager with ties: 'split'", async () => {
+    const weighted = '22+:0.5,A2s+,KTo+:0.75,QJs';
+    for (const board of [['Kh', '9h', '4c'], ['As', 'Ks', 'Qs', 'Js', 'Ts']]) {
+      const b = await Board.from(board);
+      for (const share of [0.1, 0.25, 0.5]) {
+        sameSet(b.strongest(Range.from(weighted), share, { ties: 'split' }), await new RangeManager(weighted).strongest(share, board, { ties: 'split' }));
+        sameSet(b.weakest(Range.from(weighted), share, { ties: 'split' }), await new RangeManager(weighted).weakest(share, board, { ties: 'split' }));
+      }
+    }
+    expect(() => (Board.fromSync(FLOP)).strongest(Range.from('AA'), 0.5, { ties: 'all' })).toThrow("ties must be 'keep' or 'split'");
+  });
+
   it('ranks like strongest() and weakest()', async () => {
     const b = await Board.from(RIVER);
     const r = Range.from(OPENER);

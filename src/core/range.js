@@ -360,13 +360,18 @@ export class Board {
     return ids.sort((a, b) => this.score[b] - this.score[a]);
   }
 
-  /** The strongest share of the range by weight (hands tied with the last one are kept). */
-  strongest(range, share) { return this.#take(range, share, true); }
+  /**
+   * The strongest share of the range by weight. options.ties: 'keep' (default) keeps every combo tied with the last
+   * one taken, so the result can exceed the share by the whole tied group; 'split' gives each tied combo the same
+   * fraction of its weight, so the result holds exactly the share.
+   */
+  strongest(range, share, options = {}) { return this.#take(range, share, true, options.ties ?? 'keep'); }
 
-  /** The weakest share of the range by weight. */
-  weakest(range, share) { return this.#take(range, share, false); }
+  /** The weakest share of the range by weight; options.ties as in strongest(). */
+  weakest(range, share, options = {}) { return this.#take(range, share, false, options.ties ?? 'keep'); }
 
-  #take(range, share, top) {
+  #take(range, share, top, ties) {
+    if (ties !== 'keep' && ties !== 'split') throw new Error(`ties must be 'keep' or 'split', got ${ties}`);
     const ranked = this.rank(range);
     if (!top) ranked.reverse();
     const w = range.weights;
@@ -377,7 +382,20 @@ export class Board {
       cumulative += w[id];
       if (cumulative >= target - 1e-9) { cutoff = this.score[id]; break; }
     }
-    return range.filter(id => !this.blocked[id] && (top ? this.score[id] >= cutoff : this.score[id] <= cutoff));
+    const beyond = id => (top ? this.score[id] > cutoff : this.score[id] < cutoff);
+    if (ties === 'keep') return range.filter(id => !this.blocked[id] && (beyond(id) || this.score[id] === cutoff));
+    let above = 0, group = 0;
+    for (const id of ranked) {
+      if (beyond(id)) above += w[id];
+      else if (this.score[id] === cutoff) group += w[id];
+    }
+    const factor = Math.min(1, (target - above) / group);
+    const out = new Float64Array(w.length);
+    for (const id of ranked) {
+      if (beyond(id)) out[id] = w[id];
+      else if (this.score[id] === cutoff) out[id] = w[id] * factor;
+    }
+    return new Range(out);
   }
 }
 

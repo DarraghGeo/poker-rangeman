@@ -105,6 +105,11 @@ async function check(): Promise<void> {
   const coreBoard: Board = await Board.from(board, { street: 'flop' });
   const topPairs: Range = coreBoard.matching(coreHero, ['Top Pair', 'isOverPair']);
   const rankedIds: number[] = coreBoard.rank(coreHero);
+  const exactShare: Range = coreBoard.strongest(coreHero, 0.25, { ties: 'split' });
+  const exactCompat: RangeManager = await rm.strongest('25%', board, { ties: 'split', street: 'flop' });
+  // @ts-expect-error: ties is 'keep' or 'split'
+  coreBoard.weakest(coreHero, 0.25, { ties: 'half' });
+  void [exactShare, exactCompat];
   await ready();
   const synced: number | null = coreHero.vsSync('QQ', board).hero.total().equity;
   terminateWorkers();

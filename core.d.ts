@@ -133,8 +133,13 @@ export class Board {
   matching(range: Range, criteria: string | string[], options?: { all?: boolean }): Range;
   /** Combo ids that can be dealt, strongest made hand first. */
   rank(range: Range): ComboId[];
-  strongest(range: Range, share: number): Range;
-  weakest(range: Range, share: number): Range;
+  /**
+   * The strongest share of the range by weight. ties: 'keep' (default) keeps every combo tied with the last one taken,
+   * so the result can exceed the share by the whole tied group; 'split' gives each tied combo the same fraction of its
+   * weight, so the result holds exactly the share.
+   */
+  strongest(range: Range, share: number, options?: { ties?: 'keep' | 'split' }): Range;
+  weakest(range: Range, share: number, options?: { ties?: 'keep' | 'split' }): Range;
 }
 
 /** Loads the evaluators; afterwards Board.fromSync and Range#vsSync work. */

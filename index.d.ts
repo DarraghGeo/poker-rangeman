@@ -322,6 +322,14 @@ export interface BluffOptions extends BetOptions {
   value?: string | string[];
 }
 
+export interface StrengthShareOptions extends StreetOptions {
+  /**
+   * Hands tied with the last hand taken: 'keep' (default) keeps them all, so the result can exceed the share by the
+   * whole tied group; 'split' gives each the same fraction of its weight, so the result holds exactly the share.
+   */
+  ties?: 'keep' | 'split';
+}
+
 export interface StreetOptions {
   street?: Street | null;
 }
@@ -472,8 +480,9 @@ export class RangeManager {
 
   // Strength, breakdown and blockers (board: 3-5 cards)
   rankHands(boardCards: Card[], options?: StreetOptions): Promise<RankedHand[]>;
-  strongest(portion: Share, boardCards: Card[], options?: StreetOptions): RangeQuery;
-  weakest(portion: Share, boardCards: Card[], options?: StreetOptions): RangeQuery;
+  /** ties: 'keep' (default) keeps every hand tied with the last one taken; 'split' takes exactly the share. */
+  strongest(portion: Share, boardCards: Card[], options?: StrengthShareOptions): RangeQuery;
+  weakest(portion: Share, boardCards: Card[], options?: StrengthShareOptions): RangeQuery;
   breakdown(boardCards: Card[], options?: StreetOptions): Promise<Breakdown>;
   /** Each combo in exactly one hand class on the board; shares add up to 1. */
   handClasses(boardCards: Card[], options?: HandClassesOptions): Promise<HandClassesResult>;
