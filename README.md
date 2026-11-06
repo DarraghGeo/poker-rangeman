@@ -181,6 +181,11 @@ the app's copy.
 The public `RangeManager` API keeps 3.8's methods and options, and the 3.8 unit tests pass unchanged apart from two
 that inspected internals. What changed:
 
+- **Key and kicker cards** are poker-extval's for the board followed by the hole cards (its core's order). When the
+  board and the hand share a rank, the listed card can differ from 3.8's, which evaluated the hole cards first: for
+  example J-T-9-8-7 with `Jc` in hand and `Jd` on the board lists the board's `Jd`. `getObject()`/`evaluateHand()`,
+  `hitsHand`/`hitsHandBoth` and `hasKicker`/`hasKeyCard`/`getKeyCards` all use this order; strict `hitsHand` and the
+  key-card filters now read poker-extval's core (about 40x faster).
 - **Straight draws** follow poker-extval 6's corrected outs: an out counts only when its straight beats the board's own
   straight with the same card, so a few draws 3.8 reported (on poker-extval 5.2), such as 4-2 on 7-9-6-8, are gone
   (about 0.2% of hands). This affects straight-draw criteria, `breakdown()` flags and the oesd/gutshot hand classes.

@@ -6,7 +6,7 @@ import { handEquity, handEquitySync } from './core/bitval-equity.js';
 import { COMBO_COUNT, COMBO_LO, COMBO_HI, idOfHand, cardIndex } from './core/cards.js';
 import * as notation from './core/notation.js';
 import { loadBitVal, loadExtVal, loaded } from './core/load.js';
-import { flagLayout, flagMasks } from './core/flags.js';
+import { flagLayout, flagMasks, hasFlagAt } from './core/flags.js';
 import { classifyBoard } from './core/classify.js';
 import {
   resolveBands, parseShare, bandOf, sideSummary, cappedOf, nutsOf, handClassesOf, breakdownOf,
@@ -417,7 +417,9 @@ export class RangeManager {
   // The hand is passed as hole cards, so board-relative labels, draws and usesHoleCards are the hand's own.
   _evaluateSync(hand, boardCards, strict, street = null) {
     const handCards = this._extractCardsFromHand(hand);
-    const cards = [...handCards, ...boardCards];
+    // Board first, then the hole cards: the order poker-extval's core classifies in, so every path lists the same key
+    // and kicker cards (with a rank on both the board and in the hand, the order decides which card is listed)
+    const cards = [...boardCards, ...handCards];
     if (cards.length < 5) {
       throw new Error(`Need at least 5 unique cards total (hand + board). Got ${cards.length} unique cards from hand [${handCards.join(', ')}] and board [${boardCards.join(', ')}]`);
     }
@@ -577,6 +579,27 @@ export class RangeManager {
     await this._loadEvaluator();
     const boardSet = new Set(board);
     const boardKey = board.join(',');
+    if (options.strict && board.length <= 5) {
+      // Fast path: flags, usesHoleCards and key cards from poker-extval's core, which lists the same key cards as
+      // evaluateHand with the board first
+      const classified = classifyBoard(board, options.street);
+      const layout = flagLayout(extval);
+      const filtered = this.filteredHands.filter(hand => {
+        const handCards = this._extractCardsFromHand(hand);
+        if (handCards.some(card => boardSet.has(card))) return false;
+        this.evaluatedKeys.add(this._cacheKey(hand, boardKey, true, options.street));
+        const id = idOfHand(hand);
+        return normalizedCriteria.some(criterion => {
+          const middling = criterion === 'isMiddlingPair';
+          const flag = middling ? 'isMiddlePair' : criterion;
+          if (!hasFlagAt(layout, classified, id, flag) || (middling && hand[0] !== hand[2])) return false;
+          if (options.excludeBoardPlays && MADE_HANDS.has(criterion) && !classified.usesHoleCards(id)) return false;
+          const keys = classified.keyCards(id, flag);
+          return handCards.filter(card => keys.includes(card)).length >= minHandCards;
+        });
+      });
+      return this._createEvaluatedInstance(filtered, board, normalizedCriteria, options);
+    }
     // filteredHands never contain dead cards: _createFilteredInstance and the constructor remove them
     const filtered = this.filteredHands.filter(hand => {
       const handCards = this._extractCardsFromHand(hand);
@@ -604,11 +627,24 @@ export class RangeManager {
       const key = this._cacheKey(hand, boardKey, this.lastStrict, street);
       const cached = this.evaluationCache.get(key);
       if (cached) return cached;
-      // Covered by makesHand's fast path: build the evaluation now
-      return this.evaluatedKeys.has(key) ? this._getCachedOrEvaluate(hand, boardCards, boardKey, this.lastStrict, street) : null;
+      if (!this.evaluatedKeys.has(key)) return null;
+      // Covered by a fast path (strict): key and kicker cards straight from poker-extval's core
+      return [this._coreKeyCards(hand, boardCards, street)];
     }
     return this.evaluationCache.get(this._cacheKey(hand, boardKey, true, street))
       || this.evaluationCache.get(this._cacheKey(hand, boardKey, false, street)) || null;
+  }
+
+  // { keyCards, kickerCards } for every flag (plus the derived isMiddlingPair), from poker-extval's core
+  _coreKeyCards(hand, boardCards, street) {
+    const classified = classifyBoard(boardCards, street);
+    const id = idOfHand(hand);
+    const keyCards = { ...classified.keyCards(id) };
+    const kickerCards = { ...classified.kickerCards(id) };
+    const middling = keyCards.isMiddlePair.length > 0 && hand[0] === hand[2];
+    keyCards.isMiddlingPair = middling ? [...keyCards.isMiddlePair] : [];
+    kickerCards.isMiddlingPair = middling ? [...kickerCards.isMiddlePair] : [];
+    return { keyCards, kickerCards };
   }
 
   _parseSingleCard(card) {
