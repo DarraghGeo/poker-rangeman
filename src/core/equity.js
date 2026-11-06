@@ -32,7 +32,8 @@ const all = new Float64Array(52);
  * @param {number} [job.iterations=10000]        Boards sampled preflop
  * @param {boolean} [job.both=false]             Also villain's results against hero
  * @param {number} [job.seed]                    Preflop sampling seed
- * @param {number[]} [job.runouts]               Only these runout indexes (for splitting work across workers)
+ * @param {number} [job.from=0]                  First runout index to enumerate (for splitting work across workers)
+ * @param {number} [job.to=Infinity]             Runout index to stop before
  * @returns {{ hero: {win, tie, lose}, villain?: {win, tie, lose}, runouts: number }} Float64Arrays aligned with the
  *   id lists. A combo holding a board card gets 0 everywhere.
  */
@@ -93,7 +94,8 @@ export function rangeEquity(bv, job) {
   };
 
   let runouts = 0;
-  const only = job.runouts ? new Set(job.runouts) : null;
+  const from = job.from ?? 0;
+  const to = job.to ?? Infinity;
   if (missing === 0) {
     runout(-1, -1, -1, -1, -1, bs, bh, bd, bc);
     runouts = 1;
@@ -103,7 +105,7 @@ export function rangeEquity(bv, job) {
     const n = deck.length;
     if (missing === 1) {
       for (let i = 0; i < n; i++, index++) {
-        if (only && !only.has(index)) continue;
+        if (index < from || index >= to) continue;
         const a = deck[i];
         const [s, h, d, cl] = addCard(bs, bh, bd, bc, a);
         runout(a, -1, -1, -1, -1, s, h, d, cl);
@@ -114,7 +116,7 @@ export function rangeEquity(bv, job) {
         const a = deck[i];
         const [s1, h1, d1, c1] = addCard(bs, bh, bd, bc, a);
         for (let j = i + 1; j < n; j++, index++) {
-          if (only && !only.has(index)) continue;
+          if (index < from || index >= to) continue;
           const b = deck[j];
           const [s, h, d, cl] = addCard(s1, h1, d1, c1, b);
           runout(a, b, -1, -1, -1, s, h, d, cl);

@@ -1,0 +1,38 @@
+// Lazy loaders for the evaluators. Loading on first use keeps importing poker-rangeman cheap; `ready()` loads both
+// up front so the core's board and equity calls can then run synchronously.
+
+let bitval = null;
+let extval = null;
+let pending = null;
+
+/** The poker-bitvaljs instance (fast evaluator, compareRange). */
+export async function loadBitVal() {
+  if (!bitval) {
+    const mod = await import('poker-bitvaljs');
+    const BitVal = mod.default || mod;
+    bitval = new BitVal();
+  }
+  return bitval;
+}
+
+/** poker-extval's functions (evaluateHand, evaluate, board, FLAGS). */
+export async function loadExtVal() {
+  if (!extval) {
+    const mod = await import('poker-extval');
+    // poker-extval is CommonJS: Node exposes its functions as named exports, some bundlers only on default
+    const pick = name => mod[name] || (mod.default && mod.default[name]);
+    extval = { evaluateHand: pick('evaluateHand'), evaluate: pick('evaluate'), board: pick('board'), FLAGS: pick('FLAGS') };
+  }
+  return extval;
+}
+
+/** Loads both evaluators. After it resolves, Board.from and Range#vs work synchronously (see the *Sync methods). */
+export function ready() {
+  pending ||= Promise.all([loadBitVal(), loadExtVal()]).then(() => undefined);
+  return pending;
+}
+
+export function loaded() {
+  if (!bitval || !extval) throw new Error('Call `await ready()` first: the evaluators load asynchronously');
+  return { bitval, extval };
+}

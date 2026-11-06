@@ -8,6 +8,10 @@
     ".": {
       "types": "./index.d.ts",
       "default": "./src/rangeManager.js"
+    },
+    "./core": {
+      "types": "./core.d.ts",
+      "default": "./src/core/index.js"
     }
   },
   "files": [
@@ -59,5 +63,11 @@
   "engines": {
     "node": "^20.19.0 || >=22.13.0"
   },
-  "types": "index.d.ts"
+  "types": "index.d.ts",
+  "imports": {
+    "#pool-backend": {
+      "node": "./src/core/backend/node.js",
+      "default": "./src/core/backend/browser.js"
+    }
+  }
 }

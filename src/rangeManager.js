@@ -5,49 +5,13 @@ const RANK_VALUES = { A: 14, K: 13, Q: 12, J: 11, T: 10, 9: 9, 8: 8, 7: 7, 6: 6,
 import { rangeEquity } from './core/equity.js';
 import { COMBO_COUNT, COMBO_LO, COMBO_HI, idOfHand, cardIndex } from './core/cards.js';
 import * as notation from './core/notation.js';
+import { loadBitVal, loadExtVal } from './core/load.js';
+import { CRITERIA_MAPPING, CRITERIA_LOOKUP, VALID_CRITERIA, MADE_HANDS } from './core/criteria.js';
 
 // poker-extval and poker-bitvaljs are loaded lazily on first use (see _loadEvaluator, _loadBitVal)
 let extval = null;
 let bitval = null;
 
-const CRITERIA_MAPPING = {
-  // Made Hands
-  'Pair': 'isPair', 'Two Pair': 'isTwoPair', 'Three of a Kind': 'isThreeOfAKind',
-  'Straight': 'isStraight', 'Flush': 'isFlush', 'Full House': 'isFullHouse',
-  'Four of a Kind': 'isFourOfAKind', 'Straight Flush': 'isStraightFlush', 'Royal Flush': 'isRoyalFlush',
-  'High Card': 'isHighCard',
-  // Pair Categorization
-  'Top Pair': 'isTopPair', 'Middle Pair': 'isMiddlePair', 'Bottom Pair': 'isBottomPair',
-  'Overpair': 'isOverPair', 'Over Pair': 'isOverPair', 'Underpair': 'isUnderPair', 'Under Pair': 'isUnderPair',
-  'Middling Pair': 'isMiddlingPair',
-  // Two Pair Categorization
-  'Top And Middle Pair': 'isTopAndMiddlePair', 'Top And Bottom Pair': 'isTopAndBottomPair', 'Middle And Bottom Pair': 'isMiddleAndBottomPair',
-  // Three of a Kind Categorization
-  'Top Three Of A Kind': 'isTopThreeOfAKind', 'Middle Three Of A Kind': 'isMiddleThreeOfAKind', 'Bottom Three Of A Kind': 'isBottomThreeOfAKind',
-  // Draws
-  'Flush Draw': 'isFlushDraw', 'Backdoor Flush Draw': 'isBackdoorFlushDraw',
-  'Open Ended Straight Draw': 'isOpenEndedStraightDraw', 'Inside Straight Draw': 'isInsideStraightDraw',
-  'Straight Draw': 'isStraightDraw', 'Combo Draw': 'isComboDraw',
-  // Wheel Straight Support
-  'Straight Wheel': 'isStraightWheel', 'Open Ended Straight Draw Wheel': 'isOpenEndedStraightDrawWheel',
-  'Inside Straight Draw Wheel': 'isInsideStraightDrawWheel',
-  // Hole cards against the board
-  'Overcard': 'isOvercard', 'Two Overcards': 'isTwoOvercards',
-  'Overcard And Middle Card': 'isOvercardAndMiddleCard', 'Overcard And Undercard': 'isOvercardAndUndercard',
-  'Two Middle Cards': 'isTwoMiddleCards', 'Middle And Undercard': 'isMiddleAndUndercard',
-  'Two Undercards': 'isTwoUndercards'
-};
-
-// Flag names accepted from earlier versions of this library
-const CRITERION_ALIASES = { isOverpair: 'isOverPair' };
-
-// Map lookups avoid matching inherited Object properties (e.g. 'toString')
-const CRITERIA_LOOKUP = new Map([...Object.entries(CRITERIA_MAPPING), ...Object.entries(CRITERION_ALIASES)]);
-const VALID_CRITERIA = new Set(Object.values(CRITERIA_MAPPING));
-const MADE_HANDS = new Set([
-  'isRoyalFlush', 'isStraightFlush', 'isFourOfAKind', 'isFullHouse', 'isFlush',
-  'isStraight', 'isThreeOfAKind', 'isTwoPair', 'isPair', 'isHighCard'
-]);
 const STREETS = new Set(['flop', 'turn', 'river']);
 // Equity buckets (hand vs range equity, highest band first; a hand belongs to the first band whose min it reaches).
 // 'acevedo' is Modern Poker Theory's Equity Buckets (Ch. 10, PDF p. 597): Strong >= 75%, Good >= 50%, Weak >= 33%.
@@ -469,24 +433,15 @@ export class RangeManager {
   }
 
   async _loadEvaluator() {
-    if (!extval) {
-      const mod = await import('poker-extval');
-      // poker-extval is CommonJS: Node exposes its functions as named exports, some bundlers only on default
-      const pick = name => mod[name] || (mod.default && mod.default[name]);
-      // Only functions that take exact cards: poker-extval's range functions load poker-rangeman itself
-      extval = { evaluateHand: pick('evaluateHand'), evaluate: pick('evaluate'), board: pick('board'), FLAGS: pick('FLAGS') };
-    }
+    extval = await loadExtVal();
     return extval;
   }
 
   async _loadBitVal() {
-    if (!bitval) {
-      const mod = await import('poker-bitvaljs');
-      const BitVal = mod.default || mod;
-      bitval = new BitVal();
-    }
+    bitval = await loadBitVal();
     return bitval;
   }
+
 
   // Accepts the positional `strict` boolean used by earlier versions, or an options object
   _parseEvaluationOptions(strictOrOptions) {
@@ -1978,3 +1933,7 @@ for (const name of VALUE_METHODS) {
     return this.then(range => range[name](...args));
   };
 }
+
+// The core API: ranges as typed arrays, boards classified once, per-combo equity for both sides (also available
+// as 'poker-rangeman/core')
+export { Range, Board, Matchup, ready, terminateWorkers } from './core/index.js';
