@@ -21,7 +21,8 @@
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
     "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "test:jest": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:types": "tsc --noEmit --strict --target es2020 --module nodenext --moduleResolution nodenext tests/types.ts"
+    "test:types": "tsc --noEmit --strict --target es2020 --module nodenext --moduleResolution nodenext tests/types.ts",
+    "bench": "node bench/run.mjs"
   },
   "keywords": [
     "poker",

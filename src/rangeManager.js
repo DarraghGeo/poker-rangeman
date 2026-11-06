@@ -2,6 +2,9 @@ const VALID_RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3',
 const VALID_SUITS = ['s', 'h', 'd', 'c'];
 const RANK_VALUES = { A: 14, K: 13, Q: 12, J: 11, T: 10, 9: 9, 8: 8, 7: 7, 6: 6, 5: 5, 4: 4, 3: 3, 2: 2 };
 
+import { rangeEquity } from './core/equity.js';
+import { COMBO_COUNT, COMBO_LO, COMBO_HI, idOfHand, cardIndex } from './core/cards.js';
+
 // poker-extval and poker-bitvaljs are loaded lazily on first use (see _loadEvaluator, _loadBitVal)
 let extval = null;
 let bitval = null;
@@ -89,6 +92,38 @@ const NON_PAIR_PATTERNS = { s: buildNonPairPatterns('s'), o: buildNonPairPattern
 // Suited and offsuit together: 'AK', 'AT+', 'AK-AT'
 const ANY_SUIT_PATTERN = /^([AKQJT2-9])([AKQJT2-9])(\+?)$|^([AKQJT2-9])([AKQJT2-9])-([AKQJT2-9])([AKQJT2-9])$/;
 
+const parsedNotation = new Map();
+
+// poker-extval 6's core: every combo's strict-mode flags on a board, as two Int32Arrays indexed by combo id
+const classifiedBoards = new Map();
+let MIDDLE_PAIR_BIT = 0;
+function classifiedBoard(board, street) {
+  const key = `${board.join(',')}|${street ?? ''}`;
+  let result = classifiedBoards.get(key);
+  if (!result) {
+    const pairs = new Uint8Array(COMBO_COUNT * 2);
+    for (let id = 0; id < COMBO_COUNT; id++) { pairs[id * 2] = COMBO_LO[id]; pairs[id * 2 + 1] = COMBO_HI[id]; }
+    const all = extval.board(board, street ? { street } : undefined).classifyAll(pairs);
+    result = { lo: all.lo, hi: all.hi, strength: all.strength, score: all.score, blocked: all.blocked };
+    if (classifiedBoards.size >= 64) classifiedBoards.delete(classifiedBoards.keys().next().value);
+    classifiedBoards.set(key, result);
+  }
+  return result;
+}
+
+// Flag criteria as bit masks over classifiedBoard's lo (flags 0-31) and hi (32+) words
+function criteriaMasks(criteria) {
+  const { FLAGS } = extval;
+  MIDDLE_PAIR_BIT = 1 << FLAGS.isMiddlePair;
+  const masks = { lo: 0, hi: 0, middling: false };
+  for (const criterion of criteria) {
+    if (criterion === 'isMiddlingPair') { masks.middling = true; continue; }
+    const flag = FLAGS[criterion];
+    if (flag < 32) masks.lo |= 1 << flag; else masks.hi |= 1 << (flag - 32);
+  }
+  return masks;
+}
+
 export class RangeManager {
   constructor(input, deadCards = []) {
     this.rawInput = input;
@@ -99,6 +134,9 @@ export class RangeManager {
     this.lastStrict = null;
     this.lastStreet = null;
     this.evaluationCache = new Map();
+    // Evaluation keys a filter has covered without building the evaluation objects (see makesHand's fast path);
+    // shared like evaluationCache, so later key-card lookups build them on demand
+    this.evaluatedKeys = new Set();
     this.equityCache = new Map();
     // Per-hand equity stored by getEquity(), read by the equity filters
     this.handEquity = null;
@@ -603,6 +641,18 @@ export class RangeManager {
   //   array:  exact combos, each 'AhKh', 'AhKh:0.4' or ['AhKh', 0.4]
   //   object: { AhKh: 0.4, AsKs: 1 } (exact combos)
   _parseWeighted(input) {
+    if (typeof input !== 'string') return this._parseWeightedUncached(input);
+    // Notation strings are parsed once and remembered (the last 256); callers get their own copies
+    let parsed = parsedNotation.get(input);
+    if (!parsed) {
+      parsed = this._parseWeightedUncached(input);
+      if (parsedNotation.size >= 256) parsedNotation.delete(parsedNotation.keys().next().value);
+      parsedNotation.set(input, parsed);
+    }
+    return { hands: parsed.hands.slice(), weights: { ...parsed.weights } };
+  }
+
+  _parseWeightedUncached(input) {
     const entries = new Map();
     const set = (hands, weight) => hands.forEach(hand => { entries.delete(hand); entries.set(hand, weight); });
     const exactHand = (hand, where) => {
@@ -835,7 +885,7 @@ export class RangeManager {
       // poker-extval is CommonJS: Node exposes its functions as named exports, some bundlers only on default
       const pick = name => mod[name] || (mod.default && mod.default[name]);
       // Only functions that take exact cards: poker-extval's range functions load poker-rangeman itself
-      extval = { evaluateHand: pick('evaluateHand'), evaluate: pick('evaluate') };
+      extval = { evaluateHand: pick('evaluateHand'), evaluate: pick('evaluate'), board: pick('board'), FLAGS: pick('FLAGS') };
     }
     return extval;
   }
@@ -847,15 +897,6 @@ export class RangeManager {
       bitval = new BitVal();
     }
     return bitval;
-  }
-
-  // Runs out the board for every hero/villain matchup (the same call poker-extval's equity() makes).
-  // Exact on the flop and turn; preflop it uses a table or Monte Carlo. Clashing combos are skipped.
-  async _computeEquity(heroHands, villainHands, board, deadCards, iterations) {
-    const bv = await this._loadBitVal();
-    const result = await bv.compareRange(heroHands, villainHands, board, deadCards, 5, iterations, true, null, 100, false);
-    const total = result.win + result.tie + result.lose;
-    return { win: result.win, tie: result.tie, lose: result.lose, equity: total ? (result.win + result.tie / 2) / total : null };
   }
 
   // Accepts the positional `strict` boolean used by earlier versions, or an options object
@@ -934,6 +975,20 @@ export class RangeManager {
     await this._loadEvaluator();
     const boardSet = new Set(board);
     const boardKey = board.join(',');
+    if (options.strict && !options.excludeBoardPlays && board.length >= 3 && board.length <= 5) {
+      // Fast path: poker-extval's core classifies every combo on the board at once, as flag bits
+      const { lo, hi } = classifiedBoard(board, options.street);
+      const masks = criteriaMasks(normalizedCriteria);
+      const filtered = this.filteredHands.filter(hand => {
+        const handCards = this._extractCardsFromHand(hand);
+        if (handCards.some(card => boardSet.has(card))) return false;
+        this.evaluatedKeys.add(this._cacheKey(hand, boardKey, true, options.street));
+        const id = idOfHand(hand);
+        if ((lo[id] & masks.lo) !== 0 || (hi[id] & masks.hi) !== 0) return true;
+        return masks.middling && (lo[id] & MIDDLE_PAIR_BIT) !== 0 && hand[0] === hand[2];
+      });
+      return this._createEvaluatedInstance(filtered, board, normalizedCriteria, options);
+    }
     const filtered = this.filteredHands.filter(hand => {
       const handCards = this._extractCardsFromHand(hand);
       if (handCards.some(card => boardSet.has(card))) return false;
@@ -1042,7 +1097,11 @@ export class RangeManager {
     const street = this.lastStreet ?? null;
     // Use the strict mode and street of the evaluation that produced this instance; fall back to trying both modes
     if (this.lastStrict !== null && this.lastStrict !== undefined) {
-      return this.evaluationCache.get(this._cacheKey(hand, boardKey, this.lastStrict, street)) || null;
+      const key = this._cacheKey(hand, boardKey, this.lastStrict, street);
+      const cached = this.evaluationCache.get(key);
+      if (cached) return cached;
+      // Covered by makesHand's fast path: build the evaluation now
+      return this.evaluatedKeys.has(key) ? this._getCachedOrEvaluate(hand, boardCards, boardKey, this.lastStrict, street) : null;
     }
     return this.evaluationCache.get(this._cacheKey(hand, boardKey, true, street))
       || this.evaluationCache.get(this._cacheKey(hand, boardKey, false, street)) || null;
@@ -1218,12 +1277,6 @@ export class RangeManager {
     throw new Error('Villain must be range notation, an array of hands, an object of weights, or a RangeManager');
   }
 
-  // Equity between two weighted ranges in one bitval call: each pair counts heroWeight x villainWeight
-  async _weightedEquity(heroHands, heroWeights, villainHands, villainWeights, board, deadCards, iterations) {
-    const entries = (hands, weights) => hands.map(hand => (weights[hand] === undefined ? hand : { hand, weight: weights[hand] }));
-    return this._computeEquity(entries(heroHands, heroWeights), entries(villainHands, villainWeights), board, deadCards, iterations);
-  }
-
   _weightKey(hands, weights) {
     return hands.map(hand => (weights[hand] === undefined ? hand : `${hand}:${weights[hand]}`)).sort().join(',');
   }
@@ -1271,7 +1324,11 @@ export class RangeManager {
     }
     const { board, villainHands, villainWeights, deadCards, iterations } = this._prepareEquity(villain, boardCards, options);
     if (this.filteredHands.length === 0 || villainHands.length === 0) return { win: 0, tie: 0, lose: 0, equity: null };
-    return this._weightedEquity(this.filteredHands, this.handWeights, villainHands, villainWeights, board, deadCards, iterations);
+    // A range total needs no per-hand counts: poker-bitvaljs's whole-range call is the fastest way to it
+    const bv = await this._loadBitVal();
+    const entries = (hands, weights) => hands.map(hand => (weights[hand] === undefined ? hand : { hand, weight: weights[hand] }));
+    const result = await bv.compareRange(entries(this.filteredHands, this.handWeights), entries(villainHands, villainWeights), board, deadCards, 5, iterations, true, null, 100, false);
+    return this._equityResult(result.win, result.tie, result.lose);
   }
 
   /**
@@ -1285,24 +1342,45 @@ export class RangeManager {
       return Object.fromEntries(this.filteredHands.map(hand => [hand, handEquity[hand]]));
     }
     const prepared = this._prepareEquity(villain, boardCards, options);
-    const results = {};
-    for (const hand of this.filteredHands) {
-      results[hand] = await this._handEquity(hand, prepared);
-    }
-    return results;
+    await this._fillHandEquity(this.filteredHands, prepared);
+    return Object.fromEntries(this.filteredHands.map(hand => [hand, this.equityCache.get(`${hand}|${prepared.key}`)]));
   }
 
-  async _handEquity(hand, { board, villainHands, villainWeights, deadCards, iterations, key }) {
-    const cacheKey = `${hand}|${key}`;
-    if (!this.equityCache.has(cacheKey)) {
-      const handCards = this._extractCardsFromHand(hand);
-      const blocked = handCards.some(c => board.includes(c) || deadCards.includes(c));
-      const result = blocked || villainHands.length === 0
-        ? { win: 0, tie: 0, lose: 0, equity: null }
-        : await this._weightedEquity([hand], {}, villainHands, villainWeights, board, deadCards, iterations);
-      this.equityCache.set(cacheKey, result);
-    }
-    return this.equityCache.get(cacheKey);
+  // Runs the equity engine: per-hand { win, tie, lose } arrays for hero (and villain against hero with both)
+  async _runEngine(heroHands, heroWeights, villainHands, villainWeights, board, deadCards, iterations, both) {
+    const bv = await this._loadBitVal();
+    const heroIds = heroHands.map(idOfHand);
+    const villainIds = villainHands.map(idOfHand);
+    const weightArray = (hands, ids, weights) => {
+      const array = new Float64Array(COMBO_COUNT);
+      hands.forEach((hand, i) => { array[ids[i]] += weights[hand] ?? 1; });
+      return array;
+    };
+    return rangeEquity(bv, {
+      heroIds, villainIds,
+      heroWeight: weightArray(heroHands, heroIds, heroWeights),
+      villainWeight: weightArray(villainHands, villainIds, villainWeights),
+      board: board.map(cardIndex), dead: deadCards.map(cardIndex), iterations, both
+    });
+  }
+
+  // Computes and caches the equity of every hand not cached yet, in one engine pass
+  async _fillHandEquity(hands, { board, villainHands, villainWeights, deadCards, iterations, key }) {
+    const missing = hands.filter(hand => !this.equityCache.has(`${hand}|${key}`));
+    if (missing.length === 0) return;
+    const blockedCards = new Set([...board, ...deadCards]);
+    const isBlocked = hand => this._extractCardsFromHand(hand).some(c => blockedCards.has(c));
+    const live = villainHands.length === 0 ? [] : missing.filter(hand => !isBlocked(hand));
+    const none = () => ({ win: 0, tie: 0, lose: 0, equity: null });
+    for (const hand of missing) this.equityCache.set(`${hand}|${key}`, none());
+    if (live.length === 0) return;
+    const { hero } = await this._runEngine(live, {}, villainHands, villainWeights, board, deadCards, iterations, false);
+    live.forEach((hand, i) => this.equityCache.set(`${hand}|${key}`, this._equityResult(hero.win[i], hero.tie[i], hero.lose[i])));
+  }
+
+  _equityResult(win, tie, lose) {
+    const total = win + tie + lose;
+    return { win, tie, lose, equity: total ? (win + tie / 2) / total : null };
   }
 
   /**
@@ -1320,10 +1398,9 @@ export class RangeManager {
     const minDominant = this._parseShare(options.shape?.minDominant ?? 0.5, 'shape.minDominant');
     const nutsMinEquity = this._parseShare(options.nuts?.minEquity ?? 0.9, 'nuts.minEquity');
     const prepared = this._prepareEquity(villain, boardCards, options);
+    await this._fillHandEquity(this.filteredHands, prepared);
     const handEquity = {};
-    for (const hand of this.filteredHands) {
-      handEquity[hand] = await this._handEquity(hand, prepared);
-    }
+    for (const hand of this.filteredHands) handEquity[hand] = this.equityCache.get(`${hand}|${prepared.key}`);
     const instance = this._createFilteredInstance(this.filteredHands);
     instance.handEquity = handEquity;
     // The matchup the stored equity belongs to, for the range vs range analysis methods
@@ -1634,12 +1711,13 @@ export class RangeManager {
     const cacheKey = `villain|${key}|${this._weightKey(heroHands, this.handWeights)}`;
     if (!this.equityCache.has(cacheKey)) {
       const results = {};
-      for (const hand of villainHands) {
-        const cards = this._extractCardsFromHand(hand);
-        const blocked = cards.some(c => board.includes(c) || deadCards.includes(c));
-        results[hand] = blocked || heroHands.length === 0
-          ? { win: 0, tie: 0, lose: 0, equity: null }
-          : await this._weightedEquity([hand], {}, heroHands, this.handWeights, board, deadCards, iterations);
+      const blockedCards = new Set([...board, ...deadCards]);
+      const live = heroHands.length === 0 ? [] : villainHands.filter(hand => !this._extractCardsFromHand(hand).some(c => blockedCards.has(c)));
+      for (const hand of villainHands) results[hand] = { win: 0, tie: 0, lose: 0, equity: null };
+      if (live.length) {
+        // Villain's hands against hero's current range, every hand in one engine pass
+        const { hero: side } = await this._runEngine(live, {}, heroHands, this.handWeights, board, deadCards, iterations, false);
+        live.forEach((hand, i) => { results[hand] = this._equityResult(side.win[i], side.tie[i], side.lose[i]); });
       }
       this.equityCache.set(cacheKey, results);
     }
@@ -2176,7 +2254,13 @@ export class RangeManager {
 
   /** Abbreviated notation; weighted combos get their weight after a colon: 'QQ+,AKs:0.5'. */
   toNotation() {
-    return this._byWeight(hands => this._abbreviatedNotation(hands));
+    // Instances don't change after they are made, so the notation is worked out once per hand list and weights
+    if (this._notationSource !== this.filteredHands || this._notationWeights !== this.handWeights) {
+      this._notation = this._byWeight(hands => this._abbreviatedNotation(hands));
+      this._notationSource = this.filteredHands;
+      this._notationWeights = this.handWeights;
+    }
+    return this._notation;
   }
 
   // Applies a notation writer to each group of equal weight, weight 1 first, then heavier weights first. A hand

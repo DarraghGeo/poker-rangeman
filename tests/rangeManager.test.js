@@ -2487,7 +2487,8 @@ describe('RangeManager regressions', () => {
       const hand = nonStrict.toArray()[0];
       const key = strict => nonStrict._cacheKey(hand, board.join(','), strict);
       expect(nonStrict.lastStrict).toBe(false);
-      expect(nonStrict.evaluationCache.has(key(true))).toBe(true);
+      // Strict entries are either built or recorded for building on demand (makesHand's fast path)
+      expect(nonStrict.evaluationCache.has(key(true)) || nonStrict.evaluatedKeys.has(key(true))).toBe(true);
       expect(nonStrict._getCachedOnly(hand, board)).toBe(nonStrict.evaluationCache.get(key(false)));
     });
   });
@@ -2860,11 +2861,11 @@ describe('chaining async steps', () => {
 
     it('runs equity once, then filters read the stored values', async () => {
       const rm = new RangeManager('AA,KK,QQ,22');
-      const spy = jest.spyOn(RangeManager.prototype, '_computeEquity');
+      const spy = jest.spyOn(RangeManager.prototype, '_runEngine');
       try {
         const withEquity = await rm.getEquity('JJ', turn);
         const runs = spy.mock.calls.length;
-        expect(runs).toBe(21); // one per hand that can be dealt: 6 AA, 3 KK (the Kh is on the board), 6 QQ, 6 22
+        expect(runs).toBe(1); // one engine pass for every hand that can be dealt
         expect(withEquity.equityAbove('80%').toNotation()).toBe('QQ+');
         expect(withEquity.equityBelow(0.2).toNotation()).toBe('22');
         expect(withEquity.equityBetween('70%', 0.97).equityAbove(0.9).toNotation()).toBe('AA,QQ');
