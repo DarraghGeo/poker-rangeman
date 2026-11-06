@@ -149,7 +149,32 @@ export function rangeEquity(bv, job) {
     }
     runouts = iterations;
   }
+  if (weighted(heroWeight, heroIds) || weighted(villainWeight, villainIds)) {
+    snap(hero);
+    if (villain) snap(villain);
+  }
   return { hero, villain, runouts };
+}
+
+// Fractional weights make the counts sums of weight x runouts, and the sweep adds them in its own order, so equal
+// hands can differ in the last bits (0.6 + 1.2 vs 1.2 + 0.6). The true counts sit on a grid as fine as the weights'
+// decimals; snapping to 1e-6 recovers them for weights of up to six decimals, so equal hands tie exactly.
+const SNAP = 1e6;
+function snap(side) {
+  for (const counts of [side.win, side.tie, side.lose]) {
+    for (let i = 0; i < counts.length; i++) {
+      const x = counts[i];
+      if (Math.abs(x) < 1e9) counts[i] = Math.round(x * SNAP) / SNAP;
+    }
+  }
+}
+
+function weighted(weight, ids) {
+  for (const id of ids) {
+    const w = weight[id];
+    if (w > 0 && w !== 1) return true;
+  }
+  return false;
 }
 
 /** The number of runouts rangeEquity enumerates on this board, or 0 when it samples (preflop). */

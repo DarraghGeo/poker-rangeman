@@ -47,6 +47,7 @@ const ops = [
   ['getEquity per hand, wide vs wide, flop', async RM => { await new RM(WIDE).getEquity(WIDE, FLOP); }],
   ['against + compare(), flop', async RM => { await (await new RM(OPENER).against(DEFENDER, FLOP)).compare(); }],
   ['against + compare(), turn', async RM => { await (await new RM(OPENER).against(DEFENDER, TURN)).compare(); }],
+  ['against + compare(), river', async RM => { await (await new RM(OPENER).against(DEFENDER, RIVER)).compare(); }],
   ['against + compare(), weighted, flop', async RM => { await (await new RM('66+:0.5,A9s+,KTs+:0.75,QTs+,JTs,T9s:0.25,ATo+,KJo+').against('22-88:0.6,A2s-A8s,K9s,Q9s+,J9s+:0.5,T8s+,97s+,87s,76s,A9o-AJo,KTo-KQo,QJo', FLOP)).compare(); }],
   ['compareTo, flop', async RM => { await (await new RM(OPENER).against(DEFENDER, FLOP)).compareTo('77+,ATs+,KQs,AJo+'); }],
   ['getEquity per hand, preflop (1,000 boards)', async RM => { await new RM('AA,KK,QQ,AKs').getEquity(DEFENDER, [], { iterations: 1000 }); }]

@@ -113,6 +113,43 @@ describe('Matchup', () => {
     expect(Board.fromSync(FLOP).matching(Range.from('AA,KK'), ['Three of a Kind']).size).toBe(3); // AA makes a set on an ace-high board
   });
 
+  // Reports from the core's arrays: the same numbers as RangeManager (combo lists may be in a different order)
+  // and sums in a different order, so numbers are compared to 1e-9
+  const sorted = report => JSON.parse(JSON.stringify(report, (key, value) => (
+    key === 'combos' && Array.isArray(value) ? [...value].sort() : typeof value === 'number' ? Math.round(value * 1e9) / 1e9 : value)));
+
+  it.each([['flop', FLOP], ['turn', TURN], ['river', RIVER], ['paired turn', ['8c', '8d', '3h', 'Jd']]])('compare() and buckets() match RangeManager on the %s', async (_, board) => {
+    const villain = '22-88:0.6,A2s-A8s,K9s,Q9s+,J9s+,T8s+,97s+,87s,76s,A9o-AJo,KTo-KQo,QJo';
+    const spot = await new RangeManager(OPENER).against(villain, board);
+    const m = await Range.from(OPENER).vs(villain, board, { workers: false });
+    expect(sorted(m.compare())).toEqual(sorted(await spot.compare()));
+    expect(sorted(m.buckets({ bands: 'quartiles' }))).toEqual(sorted(await (await new RangeManager(OPENER).against(villain, board, { bands: 'quartiles' })).buckets()));
+    const b = await Board.from(board);
+    expect(sorted(b.handClasses(Range.from(OPENER), { highCards: false }))).toEqual(sorted(await new RangeManager(OPENER).handClasses(board, { highCards: false })));
+    expect(sorted(b.breakdown(Range.from(villain)))).toEqual(sorted(await new RangeManager(villain).breakdown(board)));
+  });
+
+  it('compareTo() matches RangeManager', async () => {
+    const m = await Range.from(OPENER).vs(DEFENDER, TURN, { workers: false });
+    const core = m.compareTo('77+,ATs+,KQs,AJo+');
+    const compat = await (await new RangeManager(OPENER).against(DEFENDER, TURN)).compareTo('77+,ATs+,KQs,AJo+');
+    expect(core.overlap).toBeCloseTo(compat.overlap, 12);
+    expect(core.distance).toBeCloseTo(compat.distance, 12);
+    expect(core.equity.reference).toBeCloseTo(compat.equity.reference, 12);
+    expect(sorted(core.buckets)).toEqual(sorted(compat.buckets));
+    expect(core.missing.hands().sort()).toEqual([...compat.missing].sort());
+    expect(core.extra.hands().sort()).toEqual([...compat.extra].sort());
+    expect(core.combos).toEqual(compat.combos);
+  });
+
+  it('ties mathematically equal hands exactly with fractional weights', async () => {
+    // 5c5d and 5d5h are suit-isomorphic on this board against this villain: equal equity, to the last bit
+    const m = await Range.from('55').vs('Tx2c,7x2s:0.6,KK-JJ:0.6,52o:0.6', ['Jd', '8s', '3c'], { workers: false });
+    expect(m.hero.equity[idOfHand('5c5d')]).toBe(m.hero.equity[idOfHand('5d5h')]);
+    const spot = await new RangeManager('55').getEquity('Tx2c,7x2s:0.6,KK-JJ:0.6,52o:0.6', ['Jd', '8s', '3c']);
+    expect(spot.handEquity['5c5d'].equity).toBe(spot.handEquity['5d5h'].equity);
+  });
+
   it('samples preflop reproducibly with a seed', async () => {
     const a = await Range.from('AA,KK').vs('QQ', [], { workers: false, iterations: 5000, seed: 4 });
     const b = await Range.from('AA,KK').vs('QQ', [], { workers: false, iterations: 5000, seed: 4 });

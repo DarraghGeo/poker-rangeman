@@ -56,11 +56,12 @@ Version 4 keeps the `RangeManager` API (now the compatibility layer) and rewrite
 
 | Operation | 3.8.0 | 4.0 beta |
 | --- | --- | --- |
-| `getEquity` per hand, flop | 665 ms | 23 ms |
-| `getEquity` per hand, 600 vs 600 combos, flop | 6.2 s | 60 ms |
-| `against()` + `compare()`, flop | 1.4 s | 46 ms |
-| `makesHand`, flop | 34 ms | 0.65 ms |
-| `handClasses`, flop | 18.5 ms | 1.9 ms |
+| `getEquity` per hand, flop | 693 ms | 31 ms |
+| `getEquity` per hand, 600 vs 600 combos, flop | 6.1 s | 71 ms |
+| `against()` + `compare()`, flop | 1.4 s | 31 ms |
+| `against()` + `compare()`, river | 57 ms | 3.9 ms |
+| `makesHand`, flop | 21 ms | 0.4 ms |
+| `handClasses`, flop | 18 ms | 0.6 ms |
 
 ### Core API
 
@@ -101,8 +102,19 @@ A `Matchup` has `hero` and `villain` sides, each with `range`, `win`, `tie`, `lo
 `rank * 4 + suit` (`'2s'` = 0 … `'Ac'` = 51), as in poker-extval; `HAND_STRINGS[id]` and `idOfHand(hand)` convert
 combo ids. In the core, dead cards remove the combos that hold them from both ranges.
 
-The range-vs-range reports (`buckets`, `compare`, shapes, capping, advantages) are on `RangeManager` for now and run
-on the same engine.
+**Reports.** A `Matchup` gives the same reports as `RangeManager`, computed straight from its arrays: `buckets(options)`,
+`compare(options)` (advantages, shapes, capping, nuts, hand classes and flags side by side) and
+`compareTo(reference, options)` (its `common`, `missing` and `extra` are Ranges). A `Board` has `handClasses(range)` and
+`breakdown(range)`. Options and defaults are `RangeManager`'s (`bands`, `shape`, `nuts`, `street`). They cost about the
+same as `vs()` itself: on the river, `vs()` + `compare()` takes about 1.5 ms.
+
+```javascript
+const spot = await hero.vs(villain, ['Ad', '7c', '6h', '2s', 'Kd']);
+const report = spot.compare();            // same numbers as RangeManager's compare()
+report.advantage.nut;                     // hero's effective-nut share minus villain's
+report.hero.shape.dominant;               // 'linear', 'polarized', 'condensed' or null
+spot.compareTo('77+,ATs+,KQs,AJo+').distance;
+```
 
 ### Workers
 
@@ -136,8 +148,13 @@ inspected internals. What changed:
 
 - **Preflop per-hand equity** is still a Monte Carlo estimate, now from boards shared by every hand rather than
   separate samples per hand, so individual estimates differ from 3.8's by sampling noise. Postflop is exact, as before.
-- **Private methods** (`_computeEquity`, `_handEquity`, the notation parsers and similar) are gone or moved into
-  `src/core`.
+- **Exact ties with fractional weights.** Weighted counts are summed in a different order from 3.8, and then snapped to
+  a 1e-6 grid, which recovers the true values for weights with up to six decimals. Mathematically equal hands now tie
+  exactly. In 3.8 they could differ by rounding noise (0.6 + 1.2 vs 1.2 + 0.6), which decided ties at cut-offs: which of two
+  identical hands `bluffCandidates()` picked, whether tied hands made `defend({ by: 'mdf' })`'s cut or the contiguity
+  slice. Results can differ from 3.8 in those cases only; equities differ by less than 1e-9.
+- **Private methods** (`_computeEquity`, `_handEquity`, the notation parsers, the report helpers and similar) are gone
+  or moved into `src/core`.
 - **New draw flags** from poker-extval 6: `isNutFlushDraw`, `isNutBackdoorFlushDraw`, `isDoubleGutshot`,
   `isBackdoorStraightDraw` and `isBackdoorComboDraw` appear in `getObject()`/`evaluateHand()` evaluations,
   `breakdown()` and `compare().flags`, and work as criteria ('Nut Flush Draw', 'Nut Backdoor Flush Draw',
@@ -758,7 +775,7 @@ Each hand's equity, as `Promise<{ [hand]: { win, tie, lose, equity } }>`. With n
 
 `equity()` likewise totals the stored equity when called with no arguments.
 
-**Performance:** `getEquity()` runs one calculation per hand, so it grows with both ranges. The example above (198 hero combos against about 50 villain combos on the flop) takes about 0.2 s; turn and river boards are faster. Preflop uses Monte Carlo unless poker-bitvaljs has its preflop table loaded, so lower `iterations` for large ranges.
+**Performance:** `getEquity()` gives every hand its equity, and villain's hands theirs, in one pass of the equity engine (see [What changed](#what-changed)). The example above (198 hero combos against 50 villain combos on the flop) takes about 20 ms; turn and river boards take a few milliseconds. Preflop samples boards (`iterations`, default 10,000) shared by every hand: two ranges of about 570 combos take about 0.6 s, or less across worker threads with the [core API](#workers).
 
 ---
 
@@ -1022,7 +1039,7 @@ bluffs.size();             // 24 (60 strong combos x alpha 0.4)
 - `defend({ pot, bet, by?, realization? })`: your continuing range against villain's bet (villain being the betting range you gave `against()`). By default it keeps hands whose equity × `realization` reaches the pot odds; `by: 'mdf'` keeps the strongest MDF share instead. The book warns that MDF is only a rough guide before the river: on A-Q-3 against a 1/3-pot bet, MDF says defend 75%, but the solver defends 42%, because the defender's weakest hands don't have the equity to call. `realization` scales equity for how much of it a hand realizes; the book gives about 0.9 out of position and 1.1 in position for symmetric ranges. Realization itself needs a solver.
 - `bluffCandidates({ pot, bet, value? })`: as the bettor, bluffs to pair with your value hands (the bands in `value`, default the top band). The count is value combos × alpha, so bluffs make up the pot-odds share of the betting range. It takes the lowest-band hands first, preferring those that block more of villain's continuing range (villain hands with at least the pot odds), then lower equity. Async and chainable.
 
-**Performance:** `against()` runs one equity calculation per hand in your range; the first `buckets()` or `compare()` runs one per hand in villain's range. The example above takes about 1.5 s. Two full ranges of about 600 combos each on the flop take about 7 s for `against()` and 7 s more for `compare()`.
+**Performance:** `against()` computes both ranges' per-hand equity in one engine pass; `buckets()`, `compare()` and `compareTo()` then work from per-combo arrays (`src/core/reports.js`) and add one to three milliseconds. The example above takes about 28 ms for `against()` + `compare()` on the flop, 5 ms on the turn and 4 ms on the river (3.8: 1.5 s on the flop). Two ranges of about 570 combos each take about 75 ms on the flop. The [core API](#core-api)'s `vs()` + `compare()` skips the `RangeManager` layer: about 26 ms on the flop, 2.5 ms on the turn and 1.5 ms on the river, where the equity itself is 0.1 ms.
 
 ---
 

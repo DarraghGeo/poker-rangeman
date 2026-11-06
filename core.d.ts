@@ -1,4 +1,5 @@
 // Types for poker-rangeman/core (also exported from 'poker-rangeman').
+import type { BandsOption, BucketsReport, ComparisonReport, SideSummary, HandClassesResult, Breakdown } from './index.js';
 
 /** A card: rank (A K Q J T 9-2) and suit (s h d c), e.g. 'Ah'. */
 export type Card = string;
@@ -101,6 +102,30 @@ export interface Side {
   byHand(): Record<Hand, number>;
 }
 
+/** Options for the matchup reports; the defaults are RangeManager's. */
+export interface ReportOptions {
+  bands?: BandsOption;
+  shape?: { enough?: Share; minDominant?: Share; topEnd?: Share };
+  nuts?: { minEquity?: Share };
+  street?: 'flop' | 'turn' | 'river';
+}
+
+/** compareTo() in the core: the combo lists are Ranges. */
+export interface CoreCompareToReport {
+  combos: { range: number; reference: number };
+  common: Range;
+  /** In the reference only. */
+  missing: Range;
+  /** In hero's range only. */
+  extra: Range;
+  /** Weighted overlap: sum of the smaller weights / sum of the larger (1 = the same range). */
+  overlap: number;
+  equity: { range: number | null; reference: number | null };
+  buckets: { range: SideSummary; reference: SideSummary };
+  /** Earth mover's distance between the two equity distributions (0 = identical). */
+  distance: number | null;
+}
+
 export class Matchup {
   readonly board: Card[];
   /** Runouts counted (postflop) or boards sampled (preflop). */
@@ -108,6 +133,12 @@ export class Matchup {
   readonly hero: Side;
   /** Villain's combos against hero's range. */
   readonly villain: Side;
+  /** Equity buckets, shape, capping and effective nuts for both sides, as RangeManager's buckets(). */
+  buckets(options?: ReportOptions): BucketsReport;
+  /** The full range vs range report, as RangeManager's compare(). */
+  compare(options?: ReportOptions): ComparisonReport;
+  /** Hero's range against a reference range, against the same villain and board (one more engine pass). */
+  compareTo(reference: RangeSource | Range, options?: ReportOptions): CoreCompareToReport;
 }
 
 /** A board classified once (poker-extval's core); arrays are indexed by combo id. */
@@ -131,6 +162,10 @@ export class Board {
   has(id: ComboId, flag: string): boolean;
   /** The range's combos holding any of the criteria (all of them with { all: true }). */
   matching(range: Range, criteria: string | string[], options?: { all?: boolean }): Range;
+  /** Each combo of the range in exactly one hand class, as RangeManager's handClasses(). */
+  handClasses(range: Range, options?: { highCards?: boolean }): HandClassesResult;
+  /** Every flag the range's combos hold, as RangeManager's breakdown(). */
+  breakdown(range: Range): Breakdown;
   /** Combo ids that can be dealt, strongest made hand first. */
   rank(range: Range): ComboId[];
   /**

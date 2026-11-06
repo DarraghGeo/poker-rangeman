@@ -106,6 +106,13 @@ async function check(): Promise<void> {
   const topPairs: Range = coreBoard.matching(coreHero, ['Top Pair', 'isOverPair']);
   const rankedIds: number[] = coreBoard.rank(coreHero);
   const exactShare: Range = coreBoard.strongest(coreHero, 0.25, { ties: 'split' });
+  const coreReport: ComparisonReport = matchup.compare({ bands: 'quartiles', shape: { topEnd: '3%' } });
+  const coreBuckets: number = matchup.buckets().hero.buckets.strong.share;
+  const coreTo: number | null = matchup.compareTo('QQ+').distance;
+  const coreMissing: Range = matchup.compareTo(Range.from('AA')).missing;
+  const coreClasses: HandClassesResult = coreBoard.handClasses(coreHero, { highCards: false });
+  const coreFlags: Breakdown = coreBoard.breakdown(coreHero);
+  void [coreReport, coreBuckets, coreTo, coreMissing, coreClasses, coreFlags];
   const exactCompat: RangeManager = await rm.strongest('25%', board, { ties: 'split', street: 'flop' });
   // @ts-expect-error: ties is 'keep' or 'split'
   coreBoard.weakest(coreHero, 0.25, { ties: 'half' });

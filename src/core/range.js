@@ -8,6 +8,8 @@ import { rangeEquity } from './equity.js';
 import { loadBitVal, loadExtVal, loaded } from './load.js';
 import { flagLayout, hasFlagAt, flagMasks } from './flags.js';
 import { runPooled } from './pool.js';
+import { classifyBoard } from './classify.js';
+import { analysisOptions, compareReport, sideSummary, cappedOf, nutsOf, handClassesOf, breakdownOf, earthMoversDistance, equityPairs } from './reports.js';
 
 const SUIT_INDEX = { s: 0, h: 1, d: 2, c: 3 };
 
@@ -276,14 +278,112 @@ class Side {
   }
 }
 
-/** Both ranges' per-combo equity on one board. */
+/** Both ranges' per-combo equity on one board, and the range vs range reports built from it. */
 export class Matchup {
+  #dead;
+  #iterations;
+  #seed;
+
   constructor(job, result) {
     this.board = job.board.map(cardStringOf);
     this.runouts = result.runouts;
     this.hero = new Side(job.hero, job.heroIds, result.hero);
     this.villain = new Side(job.villain, job.villainIds, result.villain);
+    this.#dead = job.dead;
+    this.#iterations = job.iterations;
+    this.#seed = job.seed;
   }
+
+  // Board and dead cards, the board's classification (null preflop) and the analysis options
+  #context(options = {}) {
+    const blocked = new Uint8Array(52);
+    for (const card of this.board) blocked[cardIndex(card)] = 1;
+    for (const card of this.#dead) blocked[card] = 1;
+    return {
+      blocked,
+      boardKey: `${this.board.join(',')}|${[...this.#dead].sort((a, b) => a - b).join(',')}`,
+      classified: this.board.length >= 3 ? classifyBoard(this.board, options.street ?? null) : null,
+      options: analysisOptions(options)
+    };
+  }
+
+  /**
+   * Equity buckets, shape, capping and effective nuts for both sides: { bands, hero, villain }. options: { bands,
+   * shape: { enough, minDominant, topEnd }, nuts: { minEquity } } with the RangeManager defaults.
+   */
+  buckets(options = {}) {
+    const { blocked, boardKey, classified, options: opts } = this.#context(options);
+    const hero = sideOf(this.hero), villain = sideOf(this.villain);
+    const summary = side => sideSummary(side, opts);
+    const heroSummary = summary(hero), villainSummary = summary(villain);
+    heroSummary.capped = cappedOf(hero, villain, classified && classified.score, blocked, opts.topEnd, boardKey);
+    villainSummary.capped = cappedOf(villain, hero, classified && classified.score, blocked, opts.topEnd, boardKey);
+    heroSummary.nuts = nutsOf(hero, opts.nutsMinEquity);
+    villainSummary.nuts = nutsOf(villain, opts.nutsMinEquity);
+    return { bands: opts.bands, hero: heroSummary, villain: villainSummary };
+  }
+
+  /**
+   * The full range vs range report, as RangeManager's compare(): both sides' buckets, shape, capping and nuts;
+   * advantages (range, nut, polarization, per band and hand class); hand classes and flags side by side (postflop);
+   * the book's flop averages with the default bands. Same options as buckets(), plus { street }.
+   */
+  compare(options = {}) {
+    const { blocked, boardKey, classified, options: opts } = this.#context(options);
+    return compareReport({
+      hero: sideOf(this.hero), villain: sideOf(this.villain), classified, blocked, boardKey,
+      boardCards: this.board, options: opts
+    });
+  }
+
+  /**
+   * Compares hero's range with a reference range against the same villain and board: combos in common, missing and
+   * extra, weighted overlap, both ranges' summaries (buckets, shape, capping) and the earth mover's distance between
+   * their equity distributions. One more engine pass, for the reference's equity.
+   */
+  compareTo(reference, options = {}) {
+    const { blocked, boardKey, classified, options: opts } = this.#context(options);
+    const mine = this.hero.range;
+    const ref = Range.from(reference, { dead: this.#dead.map(cardStringOf) });
+    const job = {
+      hero: ref, villain: this.villain.range, heroIds: ref.ids, villainIds: this.villain.range.ids,
+      heroWeight: ref.weights, villainWeight: this.villain.range.weights,
+      board: this.board.map(cardIndex), dead: this.#dead, iterations: this.#iterations, both: false, seed: this.#seed
+    };
+    const result = rangeEquity(loaded('bitval').bitval, job);
+    const refSide = sideOf(new Side(ref, ref.ids, result.hero));
+    const mySide = sideOf(this.hero);
+    const villain = sideOf(this.villain);
+    const rangeSummary = sideSummary(mySide, opts);
+    const referenceSummary = sideSummary(refSide, opts);
+    rangeSummary.capped = cappedOf(mySide, villain, classified && classified.score, blocked, opts.topEnd, boardKey);
+    referenceSummary.capped = cappedOf(refSide, villain, classified && classified.score, blocked, opts.topEnd, boardKey);
+    const a = mine.weights, b = ref.weights;
+    let shared = 0, union = 0;
+    const common = [], missing = [], extra = [];
+    for (let id = COMBO_COUNT - 1; id >= 0; id--) {
+      shared += Math.min(a[id], b[id]);
+      union += Math.max(a[id], b[id]);
+      if (a[id] > 0 && b[id] > 0) common.push(id);
+      else if (b[id] > 0) missing.push(id);
+      else if (a[id] > 0) extra.push(id);
+    }
+    const asRange = ids => Range.fromIds(ids, ids.map(id => (a[id] > 0 ? a[id] : b[id])));
+    return {
+      combos: { range: mine.size, reference: ref.size },
+      common: asRange(common), missing: asRange(missing), extra: asRange(extra),
+      overlap: union ? shared / union : 1,
+      equity: { range: rangeSummary.equity, reference: referenceSummary.equity },
+      buckets: { range: rangeSummary, reference: referenceSummary },
+      distance: earthMoversDistance(equityPairs(mySide), equityPairs(refSide))
+    };
+  }
+}
+
+// A Side as the reports take it: ids (strongest card first, as Range#hands), weights and per-combo results
+function sideOf(side) {
+  const ids = Array.from(side.range.ids).reverse();
+  return { ids, weight: side.range.weights, win: side.win, tie: side.tie, lose: side.lose, equity: side.equity };
 }
 
 /**
@@ -292,6 +392,7 @@ export class Matchup {
  */
 export class Board {
   constructor(cards, street, classified, FLAGS, layout) {
+    this.classified = classified;
     this.cards = cards;
     this.street = street;
     this.lo = classified.lo;
@@ -318,15 +419,7 @@ export class Board {
       return card[0].toUpperCase() + card[1].toLowerCase();
     });
     if (new Set(normalized).size !== normalized.length) throw new Error('Board cards must be unique');
-    const key = `${normalized.join(',')}|${options.street ?? ''}`;
-    let classified = boardCache.get(key);
-    if (!classified) {
-      const pairs = new Uint8Array(COMBO_COUNT * 2);
-      for (let id = 0; id < COMBO_COUNT; id++) { pairs[id * 2] = COMBO_LO[id]; pairs[id * 2 + 1] = COMBO_HI[id]; }
-      classified = extval.board(normalized, options.street ? { street: options.street } : undefined).classifyAll(pairs);
-      if (boardCache.size >= 64) boardCache.delete(boardCache.keys().next().value);
-      boardCache.set(key, classified);
-    }
+    const classified = classifyBoard(normalized, options.street ?? null);
     return new Board(normalized, options.street ?? null, classified, extval.FLAGS, flagLayout(extval));
   }
 
@@ -352,6 +445,19 @@ export class Board {
       if (all) return flags.every(flag => hasFlagAt(this.layout, this, id, flag)) && (!middling || isMiddling(id));
       return (this.lo[id] & lo) !== 0 || (this.hi[id] & hi) !== 0 || (middling && isMiddling(id));
     });
+  }
+
+  /**
+   * Each combo of the range in exactly one hand class (Modern Poker Theory's order), as RangeManager's
+   * handClasses(): { total, weight, classes: { name: { count, weight, share, combos } } }. options: { highCards }.
+   */
+  handClasses(range, options = {}) {
+    return handClassesOf(Array.from(range.ids).reverse(), range.weights, this.classified, options);
+  }
+
+  /** Every flag the range's combos hold, as RangeManager's breakdown(): { total, weight, flags }. */
+  breakdown(range) {
+    return breakdownOf(Array.from(range.ids).reverse(), range.weights, this.classified);
   }
 
   /** The range's combos that can be dealt, strongest made hand first (combo ids). */
@@ -399,4 +505,3 @@ export class Board {
   }
 }
 
-const boardCache = new Map();

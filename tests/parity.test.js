@@ -31,7 +31,10 @@ function randomNotation(random, parts = 5) {
     else if (kind === 5) { const c = CARDS[Math.floor(random() * 52)]; let d = c; while (d === c) d = CARDS[Math.floor(random() * 52)]; token = c + d; }
     else if (kind === 6) token = `${rank()}x${rank()}${SUITS[Math.floor(random() * 4)]}`;
     else token = `${RANKS[a]}${RANKS[a]}-${RANKS[Math.min(12, a + 2)]}${RANKS[Math.min(12, a + 2)]}`;
-    if (random() < 0.3) token += `:${[0.25, 0.5, 0.75, 0.6][Math.floor(random() * 4)]}`;
+    // Weights that are binary fractions add up exactly in floating point, so neither version's results carry
+    // rounding noise: mathematically tied hands tie in both (3.8 could split ties like 0.6 + 1.2 vs 1.2 + 0.6 by
+    // noise; this version snaps weighted counts so they tie exactly, which tests/core.test.js checks)
+    if (random() < 0.3) token += `:${[0.25, 0.5, 0.75, 0.375][Math.floor(random() * 4)]}`;
     tokens.push(token);
   }
   return tokens.join(',');
@@ -181,14 +184,21 @@ describe('parity with 3.8.0', () => {
       const hero = randomNotation(random, 4), villain = randomNotation(random, 4);
       const { board } = randomBoard(random, 3 + (i % 3));
       const bands = i % 4 === 3 ? 'quartiles' : undefined;
-      await expectSame(`analysis ${hero} vs ${villain} on ${board}`, async RM => {
-        const spot = await new RM(hero).against(villain, board, bands ? { bands } : {});
+      // Some spots with an extra dead card (it leaves the deck; hero combos holding it stay in the range)
+      const deadCards = i % 3 === 1 ? [randomBoard(random, 1).board[0]].filter(c => !board.includes(c)) : undefined;
+      await expectSame(`analysis ${hero} vs ${villain} on ${board}${deadCards ? ` dead ${deadCards}` : ''}`, async RM => {
+        const spot = await new RM(hero).against(villain, board, { ...(bands ? { bands } : {}), ...(deadCards ? { deadCards } : {}) });
         return {
           compare: await spot.compare(), buckets: await spot.buckets(), bands: spot.bandsByHand(),
           good: plain(spot.bucket('good', 'strong')), above: plain(spot.equityAbove('60%')), between: plain(spot.equityBetween(0.3, 0.7)),
           compareTo: await spot.compareTo('TT+,AK'), math: spot.bettingMath({ pot: 10, bet: 7 }),
           defend: plain(spot.defend({ pot: 10, bet: 7 })), defendMdf: plain(spot.defend({ pot: 10, bet: 7, by: 'mdf' })),
-          bluffs: plain(await spot.bluffCandidates({ pot: 10, bet: 7 })),
+          // Bluffs tied exactly with another candidate (same band, blockers and equity) are interchangeable: 3.8
+          // broke such ties by floating-point noise. Compare how many, their weight and their equities
+          bluffs: (bluffs => ({
+            size: bluffs.size(), weight: Math.round(bluffs.weightedSize() * 1e9) / 1e9,
+            equities: bluffs.toArray().map(hand => Math.round(spot.handEquity[hand].equity * 1e9) / 1e9).sort((x, y) => x - y)
+          }))(await spot.bluffCandidates({ pot: 10, bet: 7 })),
           filtered: await spot.bucket('good', 'weak').compare()
         };
       });

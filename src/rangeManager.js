@@ -6,7 +6,12 @@ import { rangeEquity } from './core/equity.js';
 import { COMBO_COUNT, COMBO_LO, COMBO_HI, idOfHand, cardIndex } from './core/cards.js';
 import * as notation from './core/notation.js';
 import { loadBitVal, loadExtVal } from './core/load.js';
-import { flagLayout, hasFlagAt, flagMasks } from './core/flags.js';
+import { flagLayout, flagMasks } from './core/flags.js';
+import { classifyBoard } from './core/classify.js';
+import {
+  resolveBands, parseShare, bandOf, sideSummary, cappedOf, nutsOf, handClassesOf, breakdownOf,
+  compareReport, earthMoversDistance, equityPairs
+} from './core/reports.js';
 import { CRITERIA_MAPPING, CRITERIA_LOOKUP, VALID_CRITERIA, MADE_HANDS } from './core/criteria.js';
 
 // poker-extval and poker-bitvaljs are loaded lazily on first use (see _loadEvaluator, _loadBitVal)
@@ -14,72 +19,11 @@ let extval = null;
 let bitval = null;
 
 const STREETS = new Set(['flop', 'turn', 'river']);
-// Equity buckets (hand vs range equity, highest band first; a hand belongs to the first band whose min it reaches).
-// 'acevedo' is Modern Poker Theory's Equity Buckets (Ch. 10, PDF p. 597): Strong >= 75%, Good >= 50%, Weak >= 33%.
-const BAND_PRESETS = {
-  acevedo: [
-    { name: 'strong', min: 0.75 }, { name: 'good', min: 0.5 }, { name: 'weak', min: 0.33 }, { name: 'trash', min: 0 }
-  ],
-  quartiles: [
-    { name: 'strong', min: 0.75 }, { name: 'good', min: 0.5 }, { name: 'weak', min: 0.25 }, { name: 'trash', min: 0 }
-  ]
-};
-
-// Modern Poker Theory's average equity buckets over all 1,755 flops, BB defending against an in-position
-// opener with 20-40bb MTT ranges (PDF p. 600). A point of comparison only: it describes those ranges.
-const ACEVEDO_FLOP_AVERAGES = {
-  source: 'Acevedo, Modern Poker Theory, Ch. 10 (PDF p. 600): average over all 1,755 flops, BB vs in-position opener, 20-40bb MTT ranges',
-  bigBlind: { strong: 0.07, good: 0.25, weak: 0.23, trash: 0.45 },
-  inPosition: { strong: 0.22, good: 0.43, weak: 0.29, trash: 0.06 }
-};
-
-// Hand classes for handClasses(), in Modern Poker Theory's order (Ch. 1 "Post-flop Range Breakdown", Ch. 12):
-// each combo goes into the first class it fits, made hands before draws, flush draws before straight draws.
-// Pair positions count the board's distinct ranks from the top; the lowest is always bottomPair.
-const HAND_CLASSES = [
-  'straightFlush', 'quads', 'fullHouse', 'flush', 'straight', 'set', 'trips', 'twoPair',
-  'overpair', 'topPair', 'pocketPair12', 'secondPair', 'pocketPair23', 'thirdPair', 'pocketPair34', 'fourthPair',
-  'pocketPair45', 'bottomPair', 'underpair',
-  'flushDraw', 'oesd', 'gutshot', 'aceHigh', 'kingHigh', 'air'
-];
-const PAIR_POSITIONS = ['topPair', 'secondPair', 'thirdPair', 'fourthPair'];
-
 // Draws a villain combo can hold, for blockers()
 const VILLAIN_DRAWS = [
   'isFlushDraw', 'isBackdoorFlushDraw', 'isOpenEndedStraightDraw', 'isInsideStraightDraw', 'isStraightDraw', 'isComboDraw'
 ];
 
-
-// poker-extval 6's core: every combo's strict-mode flags on a board, as two Int32Arrays indexed by combo id
-const classifiedBoards = new Map();
-function classifiedBoard(board, street) {
-  const key = `${board.join(',')}|${street ?? ''}`;
-  let result = classifiedBoards.get(key);
-  if (!result) {
-    const pairs = new Uint8Array(COMBO_COUNT * 2);
-    for (let id = 0; id < COMBO_COUNT; id++) { pairs[id * 2] = COMBO_LO[id]; pairs[id * 2 + 1] = COMBO_HI[id]; }
-    const all = extval.board(board, street ? { street } : undefined).classifyAll(pairs);
-    result = { lo: all.lo, hi: all.hi, strength: all.strength, score: all.score, blocked: all.blocked };
-    if (classifiedBoards.size >= 64) classifiedBoards.delete(classifiedBoards.keys().next().value);
-    classifiedBoards.set(key, result);
-  }
-  return result;
-}
-
-// The flags set for a combo, in poker-extval's evaluation key order, plus the derived isMiddlingPair
-function strictFlagsOf(classified, id, hand) {
-  const layout = flagLayout(extval);
-  const flags = layout.names.filter(name => hasFlagAt(layout, classified, id, name));
-  if (flags.includes('isMiddlePair') && hand[0] === hand[2]) flags.push('isMiddlingPair');
-  return flags;
-}
-
-// { flag: true } for a combo's set flags, with usesHoleCards true (for boards where no made hand is the board's)
-function flagObject(classified, id, hand) {
-  const object = { usesHoleCards: true };
-  for (const flag of strictFlagsOf(classified, id, hand)) object[flag] = true;
-  return object;
-}
 
 // Flag criteria as bit masks over classifiedBoard's (lo, hi) words, in poker-extval's own layout
 function criteriaMasks(criteria) {
@@ -532,7 +476,7 @@ export class RangeManager {
     const boardKey = board.join(',');
     if (options.strict && !options.excludeBoardPlays && board.length >= 3 && board.length <= 5) {
       // Fast path: poker-extval's core classifies every combo on the board at once, as flag bits
-      const { lo, hi } = classifiedBoard(board, options.street);
+      const { lo, hi } = classifyBoard(board, options.street);
       const masks = criteriaMasks(normalizedCriteria);
       const filtered = this.filteredHands.filter(hand => {
         const handCards = this._extractCardsFromHand(hand);
@@ -838,16 +782,7 @@ export class RangeManager {
 
   // A share of 0-1, as a number (0.8) or a percentage string ('80%')
   _parseShare(value, label = 'Equity') {
-    let share = value;
-    if (typeof value === 'string') {
-      const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*%$/);
-      if (!match) throw new Error(`${label} must be a number from 0 to 1 or a percentage like '80%', got '${value}'`);
-      share = Number(match[1]) / 100;
-    }
-    if (typeof share !== 'number' || Number.isNaN(share) || share < 0 || share > 1) {
-      throw new Error(`${label} must be a number from 0 to 1 or a percentage like '80%', got ${value}`);
-    }
-    return share;
+    return parseShare(value, label);
   }
 
   _prepareEquity(villain, boardCards, options = {}) {
@@ -920,7 +855,9 @@ export class RangeManager {
   }
 
   // Computes and caches the equity of every hand not cached yet, in one engine pass
-  async _fillHandEquity(hands, { board, villainHands, villainWeights, deadCards, iterations, key }) {
+  // withVillain: when every hand is computed in this pass, also cache villain's per-hand equity against these hands
+  // (the engine gives both sides at once), as _villainEquityByHand() would compute it
+  async _fillHandEquity(hands, { board, villainHands, villainWeights, deadCards, iterations, key }, withVillain = false) {
     const missing = hands.filter(hand => !this.equityCache.has(`${hand}|${key}`));
     if (missing.length === 0) return;
     const blockedCards = new Set([...board, ...deadCards]);
@@ -929,8 +866,23 @@ export class RangeManager {
     const none = () => ({ win: 0, tie: 0, lose: 0, equity: null });
     for (const hand of missing) this.equityCache.set(`${hand}|${key}`, none());
     if (live.length === 0) return;
-    const { hero } = await this._runEngine(live, {}, villainHands, villainWeights, board, deadCards, iterations, false);
-    live.forEach((hand, i) => this.equityCache.set(`${hand}|${key}`, this._equityResult(hero.win[i], hero.tie[i], hero.lose[i])));
+    const both = withVillain && missing.length === hands.length;
+    // Villain's side plays against every hero hand off the board, including those holding an extra dead card
+    // (dead cards only leave the deck, as in _villainEquityByHand); hero's own results are kept for live hands
+    const onBoard = new Set(board);
+    const engineHands = both ? missing.filter(hand => !this._extractCardsFromHand(hand).some(c => onBoard.has(c))) : live;
+    const { hero, villain } = await this._runEngine(engineHands, this.handWeights, villainHands, villainWeights, board, deadCards, iterations, both);
+    const liveSet = new Set(live);
+    engineHands.forEach((hand, i) => {
+      if (liveSet.has(hand)) this.equityCache.set(`${hand}|${key}`, this._equityResult(hero.win[i], hero.tie[i], hero.lose[i]));
+    });
+    if (both) {
+      const results = {};
+      villainHands.forEach((hand, i) => {
+        results[hand] = isBlocked(hand) ? none() : this._equityResult(villain.win[i], villain.tie[i], villain.lose[i]);
+      });
+      this.equityCache.set(`villain|${key}|${this._weightKey(hands, this.handWeights)}`, results);
+    }
   }
 
   _equityResult(win, tie, lose) {
@@ -953,7 +905,8 @@ export class RangeManager {
     const minDominant = this._parseShare(options.shape?.minDominant ?? 0.5, 'shape.minDominant');
     const nutsMinEquity = this._parseShare(options.nuts?.minEquity ?? 0.9, 'nuts.minEquity');
     const prepared = this._prepareEquity(villain, boardCards, options);
-    await this._fillHandEquity(this.filteredHands, prepared);
+    // Villain's side comes out of the same engine pass, ready for buckets()/compare()
+    await this._fillHandEquity(this.filteredHands, prepared, true);
     const handEquity = {};
     for (const hand of this.filteredHands) handEquity[hand] = this.equityCache.get(`${hand}|${prepared.key}`);
     const instance = this._createFilteredInstance(this.filteredHands);
@@ -1069,7 +1022,7 @@ export class RangeManager {
   // The made hand's strength as one integer (poker-bitvaljs's evaluateSuits value, which poker-extval's core
   // returns for every combo of a board at once): higher beats lower, equal ties. Needs _loadEvaluator() first.
   _handValue(hand, board) {
-    return classifiedBoard(board, null).score[idOfHand(hand)];
+    return classifyBoard(board, null).score[idOfHand(hand)];
   }
 
   // Synchronous, cached: the made hand of one combo on the board. Needs _loadEvaluator() first.
@@ -1126,35 +1079,14 @@ export class RangeManager {
   }
 
   /**
-   * How the range hits the board: { total, flags: { isPair: { count, share, combos }, ... } } for every flag
+   * How the range hits the board: { total, weight, flags: { flag: { count, weight, share, combos } } }, every flag
    * held by at least one hand, most common first. Hands that share a card with the board are left out.
    */
   async breakdown(boardCards, options = {}) {
     const board = this._requireEvaluationBoard(boardCards);
     const street = this._validateStreet(options.street);
     await this._loadEvaluator();
-    const boardSet = new Set(board);
-    const boardKey = board.join(',');
-    const combosByFlag = new Map();
-    const classified = classifiedBoard(board, street);
-    let total = 0;
-    let totalWeight = 0;
-    for (const hand of this.filteredHands) {
-      if (this._extractCardsFromHand(hand).some(c => boardSet.has(c))) continue;
-      total++;
-      totalWeight += this._weight(hand);
-      // The strict evaluation's flags, in its key order, read from poker-extval's core bits
-      for (const flag of strictFlagsOf(classified, idOfHand(hand), hand)) {
-        if (!combosByFlag.has(flag)) combosByFlag.set(flag, []);
-        combosByFlag.get(flag).push(hand);
-      }
-    }
-    const flags = {};
-    [...combosByFlag.entries()]
-      .map(([flag, combos]) => [flag, combos, combos.reduce((sum, hand) => sum + this._weight(hand), 0)])
-      .sort((a, b) => b[2] - a[2])
-      .forEach(([flag, combos, weight]) => { flags[flag] = { count: combos.length, weight, share: weight / totalWeight, combos }; });
-    return { total, weight: totalWeight, flags };
+    return breakdownOf(this.filteredHands.map(idOfHand), this._weightArray(), classifyBoard(board, street));
   }
 
   /**
@@ -1209,21 +1141,8 @@ export class RangeManager {
   // RANGE VS RANGE ANALYSIS (needs against() or getEquity() first)
   // ============================================================================
 
-  // 'acevedo' (default), 'quartiles', or [{ name, min }, ...] with min from 0 to 1 (or '75%')
   _resolveBands(bands) {
-    if (bands === undefined || bands === null) return BAND_PRESETS.acevedo;
-    if (typeof bands === 'string') {
-      if (!Object.hasOwn(BAND_PRESETS, bands)) throw new Error(`Unknown bands preset: ${bands}. Use ${Object.keys(BAND_PRESETS).join(' or ')}, or an array of { name, min }`);
-      return BAND_PRESETS[bands];
-    }
-    if (!Array.isArray(bands) || bands.length === 0) throw new Error('bands must be a preset name or a non-empty array of { name, min }');
-    const resolved = bands.map(band => {
-      if (!band || typeof band.name !== 'string' || band.name === '') throw new Error('Each band needs a name');
-      return { name: band.name, min: this._parseShare(band.min, `Band ${band.name} min`) };
-    }).sort((a, b) => b.min - a.min);
-    if (new Set(resolved.map(b => b.name)).size !== resolved.length) throw new Error('Band names must be unique');
-    if (resolved[resolved.length - 1].min !== 0) throw new Error('The lowest band must start at 0 so every hand has a band');
-    return resolved;
+    return resolveBands(bands);
   }
 
   _requireMatchup() {
@@ -1232,7 +1151,7 @@ export class RangeManager {
   }
 
   _bandOf(equity, bands) {
-    return bands.find(band => equity >= band.min).name;
+    return bandOf(equity, bands);
   }
 
   /** The equity band of each hand against villain, e.g. { AcAd: 'strong', ... } (null when it cannot be dealt). */
@@ -1282,207 +1201,85 @@ export class RangeManager {
     return this.equityCache.get(cacheKey);
   }
 
-  // { combos, equity, buckets: { name: { count, share, combos } }, shape } for one side. parentHands: the
-  // range the hands were chosen from (for contiguity); null when the hands are the whole range.
-  // Shares are by weight: each combo counts its weight (1 unless the range is weighted).
-  _sideSummary(equityByHand, hands, bands, parentHands = null, enough = 0.1, minDominant = 0.5, weights = {}, parentWeights = {}) {
-    const live = hands.filter(hand => equityByHand[hand] && equityByHand[hand].equity !== null);
-    const weightOf = hand => weights[hand] ?? 1;
-    const totals = { win: 0, tie: 0, lose: 0 };
-    const buckets = Object.fromEntries(bands.map(band => [band.name, { count: 0, weight: 0, share: 0, combos: [] }]));
-    let totalWeight = 0;
-    let sum = 0;
-    let sumSquares = 0;
-    for (const hand of live) {
+  // The arrays the core's reports take (core/reports.js), for hands in the given order: ids, weights and per-combo
+  // results by combo id (equity NaN for hands that can't be dealt)
+  _reportSide(hands, weights, equityByHand) {
+    const weight = new Float64Array(COMBO_COUNT);
+    const win = new Float64Array(COMBO_COUNT), tie = new Float64Array(COMBO_COUNT), lose = new Float64Array(COMBO_COUNT);
+    const equity = new Float64Array(COMBO_COUNT).fill(NaN);
+    for (const hand in equityByHand || {}) {
       const result = equityByHand[hand];
-      const weight = weightOf(hand);
-      sum += result.equity * weight;
-      sumSquares += result.equity * result.equity * weight;
-      totals.win += result.win * weight; totals.tie += result.tie * weight; totals.lose += result.lose * weight;
-      const bucket = buckets[this._bandOf(result.equity, bands)];
-      bucket.combos.push(hand);
-      bucket.weight += weight;
-      totalWeight += weight;
+      if (!result || result.equity === null) continue;
+      const id = idOfHand(hand);
+      win[id] = result.win; tie[id] = result.tie; lose[id] = result.lose; equity[id] = result.equity;
     }
-    for (const bucket of Object.values(buckets)) {
-      bucket.count = bucket.combos.length;
-      bucket.share = totalWeight ? bucket.weight / totalWeight : 0;
-    }
-    const runouts = totals.win + totals.tie + totals.lose;
-    const contiguity = this._contiguity(live, parentHands, equityByHand, weightOf, hand => parentWeights[hand] ?? 1);
-    const mean = totalWeight ? sum / totalWeight : 0;
-    const variance = totalWeight ? Math.max(0, sumSquares / totalWeight - mean * mean) : 0;
-    return {
-      combos: live.length,
-      weight: totalWeight,
-      equity: runouts ? (totals.win + totals.tie / 2) / runouts : null,
-      buckets,
-      shape: live.length ? this._shapeOf(buckets, bands, contiguity, enough, minDominant, { mean, variance }) : null
-    };
+    const ids = hands.map(idOfHand);
+    hands.forEach((hand, i) => { weight[ids[i]] = weights[hand] ?? 1; });
+    return { ids, weight, win, tie, lose, equity };
   }
 
-  // Share of the hands that are among the parent range's top N hands by equity (N = the hands' count; hands
-  // tied with the Nth count too). 1 means no gaps: the hands are a top slice of what they were chosen from.
-  // By weight: the parent's top slice holds as much weight as the hands do.
-  _contiguity(live, parentHands, equityByHand, weightOf = () => 1, parentWeightOf = () => 1) {
-    if (!parentHands || live.length === 0) return 1;
-    const parent = parentHands
-      .filter(hand => equityByHand[hand] && equityByHand[hand].equity !== null)
-      .map(hand => ({ equity: equityByHand[hand].equity, weight: parentWeightOf(hand) }))
-      .sort((a, b) => b.equity - a.equity);
-    const mine = live.reduce((sum, hand) => sum + weightOf(hand), 0);
-    const parentTotal = parent.reduce((sum, p) => sum + p.weight, 0);
-    if (mine >= parentTotal - 1e-9) return 1;
-    let cumulative = 0;
-    let cutoff = parent[parent.length - 1].equity;
-    for (const p of parent) {
-      cumulative += p.weight;
-      if (cumulative >= mine - 1e-9) { cutoff = p.equity; break; }
-    }
-    return live.filter(hand => equityByHand[hand].equity >= cutoff).reduce((sum, hand) => sum + weightOf(hand), 0) / mine;
+  // This range's weights by combo id
+  _weightArray() {
+    const weight = new Float64Array(COMBO_COUNT);
+    for (const hand of this.filteredHands) weight[idOfHand(hand)] = this._weight(hand);
+    return weight;
   }
 
-  /**
-   * The three competing range shapes of Modern Poker Theory (Ch. 1, Range Morphology), each scored 0 to 1.
-   * The range's equity against villain is split into the top band (T), the bottom band (B) and the bands
-   * between (M). Each share is compared with an even spread across equity: density = share / band width
-   * (with the default bands 0.25, 0.42 and 0.33), so 1 means as many hands as an even spread would have.
-   * A part is hollow when it is thinner than its neighbours: hollow(part, than) = 1 - part / than, from 0 to 1.
-   * - polarized = Var(e) / (mean(e) x (1 - mean(e))), over each hand's equity e against villain (weighted).
-   *   By the Bhatia-Davis inequality this is 1 only when every hand has 0% or 100% equity (perfectly
-   *   polarized: nuts and air against this opponent) and 0 when every hand has the same equity. It needs no
-   *   bands, and doesn't depend on the range's average equity. A range with no spread at all scores 0.
-   * - linear    = enough(T) x hollow(bottom, middle) x contiguity: the top, then medium hands, without gaps
-   * - condensed = hollow(thicker end, middle): the top and bottom removed
-   * enough(x) = min(1, x / enough), default 10%. An even spread scores 0 on linear and condensed. The scores are
-   * independent and need not add up to 1. dominant is the highest when it reaches minDominant, else null.
-   */
-  _shapeOf(buckets, bands, contiguity, enough, minDominant = 0.5, { mean = 0, variance = 0 } = {}) {
-    const top = buckets[bands[0].name].share;
-    const bottom = bands.length > 1 ? buckets[bands[bands.length - 1].name].share : 0;
-    // Summed from the middle bands (not 1 - top - bottom) so an empty middle is exactly 0
-    const middle = bands.slice(1, -1).reduce((sum, band) => sum + buckets[band.name].share, 0);
-    const widths = this._bandWidths(bands);
-    const density = (share, width) => (width > 0 ? share / width : 0);
-    const dTop = density(top, widths.top);
-    const dMiddle = density(middle, widths.middle);
-    const dBottom = density(bottom, widths.bottom);
-    const present = share => Math.min(1, share / enough);
-    const hollow = (part, than) => (than <= 0 ? (part <= 0 ? 1 : 0) : Math.max(0, Math.min(1, 1 - part / than)));
-    const scores = {
-      // Rounded so floating-point noise doesn't turn a perfect 1 into 0.9999999999999999
-      polarized: mean > 0 && mean < 1 ? Math.round(Math.min(1, variance / (mean * (1 - mean))) * 1e12) / 1e12 : 0,
-      linear: present(top) * hollow(dBottom, dMiddle) * contiguity,
-      condensed: middle > 0 ? hollow(Math.max(dTop, dBottom), dMiddle) : 0
-    };
-    const best = Object.entries(scores).reduce((a, b) => (b[1] > a[1] ? b : a));
-    return {
-      ...scores,
-      dominant: best[1] > 0 && best[1] >= minDominant ? best[0] : null,
-      contiguity,
-      top,
-      middle,
-      bottom,
-      density: { top: dTop, middle: dMiddle, bottom: dBottom },
-      equity: { mean, sd: Math.sqrt(variance) }
-    };
+  // Hands and weights as the reports' { ids, weight }
+  _parentSide(hands, weights) {
+    const weight = new Float64Array(COMBO_COUNT);
+    const ids = hands.map(idOfHand);
+    hands.forEach((hand, i) => { weight[ids[i]] = weights[hand] ?? 1; });
+    return { ids, weight };
   }
 
-  // Equity width of the top band, the bands between, and the bottom band
-  _bandWidths(bands) {
-    const topMin = bands[0].min;
-    const bottomMax = bands.length > 1 ? bands[bands.length - 2].min : 0;
-    return { top: 1 - topMin, middle: Math.max(0, topMin - bottomMax), bottom: bottomMax };
-  }
+
+
 
   /** Equity bucket shares for both sides: { bands, hero, villain }, each { combos, equity, buckets, shape }. */
   async buckets() {
-    const { bands, board, deadCards, parentHands, parentWeights, shapeEnough, minDominant, topEnd, villainHands, villainWeights } = this._requireMatchup();
+    const { bands, board, deadCards, shapeEnough, minDominant, topEnd, nutsMinEquity } = this._requireMatchup();
     const villainEquity = await this._villainEquityByHand();
-    const hero = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, parentHands, shapeEnough, minDominant, this.handWeights, parentWeights);
-    const villain = this._sideSummary(villainEquity, villainHands, bands, null, shapeEnough, minDominant, villainWeights);
     await this._loadEvaluator();
-    hero.capped = this._cappedFor(this.filteredHands, villainHands, board, deadCards, topEnd, this.handWeights, villainWeights);
-    villain.capped = this._cappedFor(villainHands, this.filteredHands, board, deadCards, topEnd, villainWeights, this.handWeights);
-    const { nutsMinEquity } = this.matchup;
-    hero.nuts = this._nutsByEquity(this.handEquity, this.filteredHands, nutsMinEquity, this.handWeights);
-    villain.nuts = this._nutsByEquity(villainEquity, villainHands, nutsMinEquity, villainWeights);
-    return { bands, hero, villain };
+    const { hero, villain, parent } = this._reportSides(villainEquity);
+    const options = { bands, enough: shapeEnough, minDominant };
+    const heroSummary = sideSummary(hero, { ...options, parent });
+    const villainSummary = sideSummary(villain, options);
+    const { score, blocked, boardKey } = this._cappingContext(board, deadCards);
+    heroSummary.capped = cappedOf(hero, villain, score, blocked, topEnd, boardKey);
+    villainSummary.capped = cappedOf(villain, hero, score, blocked, topEnd, boardKey);
+    heroSummary.nuts = nutsOf(hero, nutsMinEquity);
+    villainSummary.nuts = nutsOf(villain, nutsMinEquity);
+    return { bands, hero: heroSummary, villain: villainSummary };
   }
 
-  // Effective nuts: hands with at least minEquity (default 90%) equity against the other range
-  _nutsByEquity(equityByHand, hands, minEquity, weights = {}) {
-    const live = hands.filter(hand => equityByHand[hand] && equityByHand[hand].equity !== null);
-    if (live.length === 0) return { count: 0, weight: 0, share: null };
-    const weightOf = hand => weights[hand] ?? 1;
-    const nuts = live.filter(hand => equityByHand[hand].equity >= minEquity);
-    const weight = nuts.reduce((sum, hand) => sum + weightOf(hand), 0);
-    const total = live.reduce((sum, hand) => sum + weightOf(hand), 0);
-    return { count: nuts.length, weight, share: weight / total };
+  // Both sides' report arrays for the stored matchup, and hero's parent range (for contiguity)
+  _reportSides(villainEquity) {
+    const { parentHands, parentWeights, villainHands, villainWeights } = this.matchup;
+    return {
+      hero: this._reportSide(this.filteredHands, this.handWeights, this.handEquity),
+      villain: this._reportSide(villainHands, villainWeights, villainEquity),
+      parent: this._parentSide(parentHands, parentWeights)
+    };
   }
 
-  /**
-   * How much of the top end a range is missing, 0 (uncapped) to 1 (capped), from made hands on the board:
-   * - relative: the top end is the strongest `topEnd` share (default 5%) of the combos in both ranges;
-   *   1 - min(1, the range's share of that top end / its share of all their combos)
-   * - absolute: the top end is the strongest `topEnd` share of every combo that can be dealt on the board;
-   *   1 - min(1, the share of the range in that top end / the share of all combos in it)
-   * Ties at the cut-off count as top end. null preflop (no board to rank on) or with no live combos.
-   */
+  // Made-hand scores of every combo on the board (null preflop), the board and dead cards, and a cache key
+  _cappingContext(board, deadCards) {
+    const blocked = new Uint8Array(52);
+    for (const card of [...board, ...deadCards]) blocked[cardIndex(card)] = 1;
+    return {
+      score: board.length >= 3 ? classifyBoard(board, null).score : null,
+      blocked,
+      boardKey: `${board.join(',')}|${[...deadCards].sort().join(',')}`
+    };
+  }
+
+
   _cappedFor(hands, otherHands, board, deadCards, topEnd, weights = {}, otherWeights = {}) {
-    return this._topEndFor(hands, otherHands, board, deadCards, topEnd, weights, otherWeights).capped;
+    const { score, blocked, boardKey } = this._cappingContext(board, deadCards);
+    return cappedOf(this._parentSide(hands, weights), this._parentSide(otherHands, otherWeights), score, blocked, topEnd, boardKey);
   }
 
-  // Capping from the made-hand top end, by weight; null preflop
-  _topEndFor(hands, otherHands, board, deadCards, topEnd, weights = {}, otherWeights = {}) {
-    const none = { capped: { relative: null, absolute: null } };
-    if (board.length < 3) return none;
-    const blocked = new Set([...board, ...deadCards]);
-    const live = list => list.filter(hand => !this._extractCardsFromHand(hand).some(c => blocked.has(c)));
-    const mine = live(hands);
-    if (mine.length === 0) return none;
-    const rankOf = hand => this._handValue(hand, board);
-    const ratioToCap = ratio => Math.max(0, 1 - ratio);
-
-    // Relative: both ranges' combos, each side counted separately, by weight
-    const theirs = live(otherHands);
-    const all = [
-      ...mine.map(hand => ({ rank: rankOf(hand), mine: true, weight: weights[hand] ?? 1 })),
-      ...theirs.map(hand => ({ rank: rankOf(hand), mine: false, weight: otherWeights[hand] ?? 1 }))
-    ].sort((a, b) => b.rank - a.rank);
-    const sum = list => list.reduce((total, x) => total + x.weight, 0);
-    const allWeight = sum(all);
-    let cumulative = 0;
-    let relCutoff = all[all.length - 1].rank;
-    for (const x of all) {
-      cumulative += x.weight;
-      if (cumulative >= topEnd * allWeight - 1e-9) { relCutoff = x.rank; break; }
-    }
-    const relTop = all.filter(x => x.rank >= relCutoff);
-    const mineWeight = sum(all.filter(x => x.mine));
-    const relative = ratioToCap((sum(relTop.filter(x => x.mine)) / sum(relTop)) / (mineWeight / allWeight));
-
-    // Absolute: every combo that can be dealt on this board
-    const absKey = `abs-top|${board.join(',')}|${[...deadCards].sort().join(',')}|${topEnd}`;
-    let abs = this.evaluationCache.get(absKey);
-    if (!abs) {
-      // Every combo id without a board or dead card, scored at once by poker-extval's core
-      const { score } = classifiedBoard(board, null);
-      const blockedNumbers = new Uint8Array(52);
-      for (const card of blocked) blockedNumbers[cardIndex(card)] = 1;
-      const ranks = [];
-      for (let id = 0; id < COMBO_COUNT; id++) if (!blockedNumbers[COMBO_LO[id]] && !blockedNumbers[COMBO_HI[id]]) ranks.push(score[id]);
-      ranks.sort((a, b) => b - a);
-      const cutoff = ranks[Math.max(1, Math.ceil(topEnd * ranks.length - 1e-9)) - 1];
-      const share = ranks.filter(rank => rank >= cutoff).length / ranks.length;
-      abs = { cutoff, share };
-      this.evaluationCache.set(absKey, abs);
-    }
-    const mineInTop = mine.filter(hand => rankOf(hand) >= abs.cutoff)
-      .reduce((total, hand) => total + (weights[hand] ?? 1), 0) / mineWeight;
-    const absolute = ratioToCap(mineInTop / abs.share);
-    return { capped: { relative, absolute } };
-  }
 
   /**
    * Splits the range into hand classes on the board, each combo in exactly one, so the shares add up to 1:
@@ -1494,127 +1291,35 @@ export class RangeManager {
   async handClasses(boardCards, options = {}) {
     const board = this._requireEvaluationBoard(boardCards);
     const street = this._validateStreet(options.street);
-    const highCards = options.highCards ?? true;
     await this._loadEvaluator();
-    const boardSet = new Set(board);
-    const boardKey = board.join(',');
-    const boardRanks = [...new Set(board.map(c => c[0]))].sort((a, b) => this._getRankValue(b) - this._getRankValue(a));
-    const classes = Object.fromEntries(HAND_CLASSES.map(name => [name, { count: 0, weight: 0, share: 0, combos: [] }]));
-    const noBoardPlays = board.length <= 4 && boardRanks.length === board.length;
-    const classified = noBoardPlays ? classifiedBoard(board, street) : null;
-    let total = 0;
-    let totalWeight = 0;
-    for (const hand of this.filteredHands) {
-      const cards = this._extractCardsFromHand(hand);
-      if (cards.some(c => boardSet.has(c))) continue;
-      total++;
-      const weight = this._weight(hand);
-      totalWeight += weight;
-      // On an unpaired board of 3-4 cards every made hand uses a hole card, so poker-extval's core flag bits are
-      // all that's needed; otherwise (usesHoleCards can be false) build the evaluation
-      const evalObj = noBoardPlays ? flagObject(classified, idOfHand(hand), hand) : this._getCachedOrEvaluate(hand, board, boardKey, true, street)[0];
-      const entry = classes[this._handClassOf(cards, evalObj, boardRanks, highCards)];
-      entry.combos.push(hand);
-      entry.weight += weight;
-    }
-    for (const entry of Object.values(classes)) {
-      entry.count = entry.combos.length;
-      entry.share = totalWeight ? entry.weight / totalWeight : 0;
-    }
-    return { total, weight: totalWeight, classes };
+    return handClassesOf(this.filteredHands.map(idOfHand), this._weightArray(), classifyBoard(board, street), { highCards: options.highCards ?? true });
   }
 
-  _handClassOf(cards, evalObj, boardRanks, highCards) {
-    const made = [...MADE_HANDS].find(flag => evalObj[flag]);
-    const usesHole = evalObj.usesHoleCards !== false;
-    const [r1, r2] = cards.map(c => c[0]);
-    const pocketPair = r1 === r2;
-    if (usesHole) {
-      if (made === 'isRoyalFlush' || made === 'isStraightFlush') return 'straightFlush';
-      if (made === 'isFourOfAKind') return 'quads';
-      if (made === 'isFullHouse') return 'fullHouse';
-      if (made === 'isFlush') return 'flush';
-      if (made === 'isStraight') return 'straight';
-      if (made === 'isThreeOfAKind') return pocketPair ? 'set' : 'trips';
-      if (made === 'isTwoPair') return 'twoPair';
-      if (made === 'isPair') {
-        if (pocketPair) {
-          const value = this._getRankValue(r1);
-          const above = boardRanks.filter(r => this._getRankValue(r) > value).length;
-          if (above === 0) return 'overpair';
-          if (above === boardRanks.length) return 'underpair';
-          return `pocketPair${above}${above + 1}`;
-        }
-        const paired = [r1, r2].find(r => boardRanks.includes(r));
-        const position = boardRanks.indexOf(paired);
-        if (position === 0) return 'topPair';
-        if (position === boardRanks.length - 1) return 'bottomPair';
-        return PAIR_POSITIONS[position];
-      }
-    }
-    if (evalObj.isFlushDraw) return 'flushDraw';
-    if (evalObj.isOpenEndedStraightDraw || evalObj.isOpenEndedStraightDrawWheel) return 'oesd';
-    if (evalObj.isInsideStraightDraw || evalObj.isInsideStraightDrawWheel) return 'gutshot';
-    if (highCards && (r1 === 'A' || r2 === 'A')) return 'aceHigh';
-    if (highCards && (r1 === 'K' || r2 === 'K')) return 'kingHigh';
-    return 'air';
-  }
 
   /**
    * Range vs range report: both sides' equity, buckets, shape, capping and effective nuts; advantage, each
    * hero minus villain: range (equity, Modern Poker Theory's "range vs range equity advantage"), nut (share of
    * effective nuts, hands with 90%+ equity against the other range: the book's "effective nut hands make up a
-   * larger portion of his range"), polarization
-   * (shape.polarized), and the share of each equity band and hand class (positive = hero has more of it);
-   * hand classes side by side, exclusive (handClasses, adding up to 1) and overlapping flags (flags), flop,
-   * turn or river only; capped (relative and absolute) per side; and the book's flop averages as a reference
-   * when the default bands are used.
+   * larger portion of his range"), polarization (shape.polarized), and the share of each equity band and hand
+   * class (positive = hero has more of it); hand classes side by side, exclusive (handClasses, adding up to 1)
+   * and overlapping flags (flags), flop, turn or river only; capped (relative and absolute) per side; and the
+   * book's flop averages as a reference when the default bands are used. Computed by core/reports.js from
+   * per-combo arrays.
    */
   async compare() {
-    const matchup = this._requireMatchup();
-    const { bands, board } = matchup;
-    const { hero, villain } = await this.buckets();
-    const report = {
-      board,
-      bands,
-      hero,
-      villain,
-      advantage: {
-        range: hero.equity !== null && villain.equity !== null ? hero.equity - villain.equity : null,
-        nut: hero.nuts.share !== null && villain.nuts.share !== null ? hero.nuts.share - villain.nuts.share : null,
-        polarization: hero.shape && villain.shape ? hero.shape.polarized - villain.shape.polarized : null,
-        bands: Object.fromEntries(bands.map(band => [band.name, hero.buckets[band.name].share - villain.buckets[band.name].share])),
-        classes: null
-      },
-      handClasses: null,
-      flags: null,
-      reference: bands === BAND_PRESETS.acevedo ? ACEVEDO_FLOP_AVERAGES : null
-    };
-    if (board.length >= 3) {
-      const heroExclusive = await this.handClasses(board);
-      const villainExclusive = await this._villainRange().handClasses(board);
-      report.handClasses = Object.fromEntries(HAND_CLASSES.map(name => [name, {
-        hero: heroExclusive.classes[name].share,
-        villain: villainExclusive.classes[name].share,
-        heroCount: heroExclusive.classes[name].count,
-        villainCount: villainExclusive.classes[name].count
-      }]));
-      report.advantage.classes = Object.fromEntries(HAND_CLASSES.map(name => [
-        name, heroExclusive.classes[name].share - villainExclusive.classes[name].share
-      ]));
-      const heroClasses = await this.breakdown(board);
-      const villainClasses = await this._villainRange().breakdown(board);
-      const flags = new Set([...Object.keys(heroClasses.flags), ...Object.keys(villainClasses.flags)]);
-      const rows = [...flags].map(flag => [flag, {
-        hero: heroClasses.flags[flag]?.share ?? 0,
-        villain: villainClasses.flags[flag]?.share ?? 0,
-        heroCount: heroClasses.flags[flag]?.count ?? 0,
-        villainCount: villainClasses.flags[flag]?.count ?? 0
-      }]);
-      rows.sort((a, b) => Math.max(b[1].hero, b[1].villain) - Math.max(a[1].hero, a[1].villain));
-      report.flags = Object.fromEntries(rows);
-    }
-    return report;
+    const { bands, board, deadCards, shapeEnough, minDominant, topEnd, nutsMinEquity, villainHands } = this._requireMatchup();
+    const villainEquity = await this._villainEquityByHand();
+    await this._loadEvaluator();
+    const { hero, villain, parent } = this._reportSides(villainEquity);
+    // Villain's hand classes and flags leave out combos holding a dead card
+    const dead = new Set(deadCards);
+    villain.classIds = villainHands.filter(hand => !this._extractCardsFromHand(hand).some(c => dead.has(c))).map(idOfHand);
+    const { blocked, boardKey } = this._cappingContext(board, deadCards);
+    return compareReport({
+      hero, villain, parent, blocked, boardKey, boardCards: board,
+      classified: board.length >= 3 ? classifyBoard(board, null) : null,
+      options: { bands, enough: shapeEnough, minDominant, topEnd, nutsMinEquity }
+    });
   }
 
   _villainRange() {
@@ -1622,24 +1327,6 @@ export class RangeManager {
     return new RangeManager(villainHands.map(hand => [hand, villainWeights[hand] ?? 1]), deadCards);
   }
 
-  // Area between two weighted equity CDFs on [0, 1]: 0 for identical distributions, up to 1. Each input is a
-  // list of equities or of [equity, weight] pairs.
-  _earthMoversDistance(a, b) {
-    if (a.length === 0 || b.length === 0) return null;
-    const pairs = list => list.map(x => (Array.isArray(x) ? x : [x, 1])).sort((x, y) => x[0] - y[0]);
-    const xs = pairs(a);
-    const ys = pairs(b);
-    const totalX = xs.reduce((sum, x) => sum + x[1], 0);
-    const totalY = ys.reduce((sum, y) => sum + y[1], 0);
-    const points = [...new Set([...xs, ...ys].map(p => p[0]))].sort((x, y) => x - y);
-    let i = 0; let j = 0; let cx = 0; let cy = 0; let area = 0;
-    for (let k = 0; k < points.length - 1; k++) {
-      while (i < xs.length && xs[i][0] <= points[k]) cx += xs[i++][1];
-      while (j < ys.length && ys[j][0] <= points[k]) cy += ys[j++][1];
-      area += Math.abs(cx / totalX - cy / totalY) * (points[k + 1] - points[k]);
-    }
-    return area;
-  }
 
   /**
    * Compares this range with a reference range (notation, hands or a RangeManager): combos in common,
@@ -1673,20 +1360,20 @@ export class RangeManager {
     const referenceWithEquity = await referenceRange.against(villainInput, board, {
       deadCards, iterations, bands, shape: { enough: shapeEnough, minDominant, topEnd }
     });
-    const rangeSummary = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, parentHands, shapeEnough, minDominant, this.handWeights, parentWeights);
-    const referenceSummary = this._sideSummary(
-      referenceWithEquity.handEquity, referenceWithEquity.filteredHands, bands, null, shapeEnough, minDominant, referenceWithEquity.handWeights
-    );
+    this._requireStoredEquity();
     await this._loadEvaluator();
-    rangeSummary.capped = this._cappedFor(this.filteredHands, villainHands, board, deadCards, topEnd, this.handWeights, villainWeights);
-    referenceSummary.capped = this._cappedFor(referenceWithEquity.filteredHands, villainHands, board, deadCards, topEnd, referenceWithEquity.handWeights, villainWeights);
-    const equities = (byHand, hands, range) => hands.filter(hand => byHand[hand].equity !== null).map(hand => [byHand[hand].equity, range._weight(hand)]);
+    const mySide = this._reportSide(this.filteredHands, this.handWeights, this.handEquity);
+    const ref = this._reportSide(referenceWithEquity.filteredHands, referenceWithEquity.handWeights, referenceWithEquity.handEquity);
+    const villain = this._parentSide(villainHands, villainWeights);
+    const summary = { bands, enough: shapeEnough, minDominant };
+    const rangeSummary = sideSummary(mySide, { ...summary, parent: this._parentSide(parentHands, parentWeights) });
+    const referenceSummary = sideSummary(ref, summary);
+    const { score, blocked, boardKey } = this._cappingContext(board, deadCards);
+    rangeSummary.capped = cappedOf(mySide, villain, score, blocked, topEnd, boardKey);
+    referenceSummary.capped = cappedOf(ref, villain, score, blocked, topEnd, boardKey);
     report.equity = { range: rangeSummary.equity, reference: referenceSummary.equity };
     report.buckets = { range: rangeSummary, reference: referenceSummary };
-    report.distance = this._earthMoversDistance(
-      equities(this.handEquity, this.filteredHands, this),
-      equities(referenceWithEquity.handEquity, referenceWithEquity.filteredHands, referenceWithEquity)
-    );
+    report.distance = earthMoversDistance(equityPairs(mySide), equityPairs(ref));
     return report;
   }
 
