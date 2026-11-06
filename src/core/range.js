@@ -4,7 +4,7 @@
 import { COMBO_COUNT, COMBO_LO, COMBO_HI, HAND_STRINGS, idOfAnyHand, cardIndex } from './cards.js';
 import { parseWeighted, expandCards, isValidCard, isValidConcreteCard, isValidSuit, weightedNotation, classNotation } from './notation.js';
 import { criterionFlag, VALID_CRITERIA } from './criteria.js';
-import { handEquity } from './bitval-equity.js';
+import { handEquity, handEquitySync } from './bitval-equity.js';
 import { loadBitVal, loadExtVal, loaded } from './load.js';
 import { flagLayout, hasFlagAt, flagMasks } from './flags.js';
 import { classifyBoard } from './classify.js';
@@ -195,6 +195,13 @@ export class Range {
     return new Matchup(job, await handEquity(bitval, job), bitval);
   }
 
+  /** vs() synchronously, from poker-bitvaljs's compareRangeHandsSync; needs `await ready()` first. No workers. */
+  vsSync(villain, board = [], options = {}) {
+    const { bitval } = loaded('bitval', 'extval');
+    const job = this.#matchupJob(villain, board, options);
+    return new Matchup(job, handEquitySync(bitval, job), bitval);
+  }
+
   #matchupJob(villain, board, options) {
     const boardCards = Array.isArray(board) ? board : board instanceof Board ? board.cards : null;
     if (!boardCards) throw new Error('Board must be an array of cards or a Board');
@@ -335,13 +342,31 @@ export class Matchup {
    * their equity distributions. One more poker-bitvaljs call, for the reference's equity.
    */
   async compareTo(reference, options = {}) {
-    const { blocked, boardKey, classified, options: opts } = this.#context(options);
-    const mine = this.hero.range;
-    const ref = Range.from(reference, { dead: this.#dead.map(cardStringOf) });
-    const result = await handEquity(this.#bitval, {
+    const ref = this.#reference(reference);
+    return this.#compareToWith(ref, await handEquity(this.#bitval, this.#referenceJob(ref)), options);
+  }
+
+  /** compareTo() synchronously, from poker-bitvaljs's compareRangeHandsSync. */
+  compareToSync(reference, options = {}) {
+    const ref = this.#reference(reference);
+    return this.#compareToWith(ref, handEquitySync(this.#bitval, this.#referenceJob(ref)), options);
+  }
+
+  #reference(reference) {
+    return Range.from(reference, { dead: this.#dead.map(cardStringOf) });
+  }
+
+  // The reference against the same villain, board and dead cards
+  #referenceJob(ref) {
+    return {
       heroIds: ref.ids, villainIds: this.villain.range.ids, heroWeight: ref.weights, villainWeight: this.villain.range.weights,
       board: this.board, dead: this.#dead, iterations: this.#iterations, workers: this.#workers
-    });
+    };
+  }
+
+  #compareToWith(ref, result, options) {
+    const { blocked, boardKey, classified, options: opts } = this.#context(options);
+    const mine = this.hero.range;
     const refSide = sideOf(new Side(ref, result.hero));
     const mySide = sideOf(this.hero);
     const villain = sideOf(this.villain);

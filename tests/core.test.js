@@ -127,6 +127,35 @@ describe('Matchup', () => {
     }
   });
 
+  it.each([['flop', FLOP], ['turn', TURN], ['river', RIVER]])('sync twins give the same results as the async methods on the %s', async (_, board) => {
+    await ready();
+    const villain = '22-88:0.6,A2s-A8s,K9s,Q9s+,J9s+:0.25,T8s+,97s+,87s,76s,A9o-AJo,KTo-KQo,QJo';
+    const options = { deadCards: ['Qs'] };
+    const asyncSpot = await new RangeManager(OPENER).against(villain, board, options);
+    const syncSpot = new RangeManager(OPENER).againstSync(villain, board, options);
+    expect(syncSpot.handEquity).toEqual(asyncSpot.handEquity);
+    expect(syncSpot.compareSync()).toEqual(await asyncSpot.compare());
+    expect(syncSpot.bucketsSync()).toEqual(await asyncSpot.buckets());
+    expect(syncSpot.compareToSync('77+,ATs+,KQs,AJo+')).toEqual(await asyncSpot.compareTo('77+,ATs+,KQs,AJo+'));
+    expect(syncSpot.bluffCandidatesSync({ pot: 10, bet: 7 }).toArray()).toEqual((await asyncSpot.bluffCandidates({ pot: 10, bet: 7 })).toArray());
+    expect(new RangeManager(OPENER).equitySync(villain, board, options)).toEqual(await new RangeManager(OPENER).equity(villain, board, options));
+    expect(new RangeManager(OPENER).equityByHandSync(villain, board)).toEqual(await new RangeManager(OPENER).equityByHand(villain, board));
+    expect(new RangeManager(OPENER).getEquitySync(villain, board).equityAbove(0.6).toArray()).toEqual((await new RangeManager(OPENER).getEquity(villain, board)).equityAbove(0.6).toArray());
+    const asyncMatchup = await Range.from(OPENER).vs(villain, board, { dead: ['Qs'] });
+    const syncMatchup = Range.from(OPENER).vsSync(villain, board, { dead: ['Qs'] });
+    expect(Array.from(syncMatchup.hero.win)).toEqual(Array.from(asyncMatchup.hero.win));
+    expect(Array.from(syncMatchup.villain.lose)).toEqual(Array.from(asyncMatchup.villain.lose));
+    expect(syncMatchup.compare()).toEqual(asyncMatchup.compare());
+    expect(syncMatchup.compareToSync('QQ+')).toEqual(await asyncMatchup.compareTo('QQ+'));
+  });
+
+  it('a blocked hand meets nothing through the sync path too', async () => {
+    await ready();
+    const villain = 'AhQh:0.123456789,KhJd:0.987654321,AhTs:0.333333333,Kh9c:0.1';
+    expect(new RangeManager('AhKh,QQ').equityByHandSync(villain, ['2c', '7d', '3s', '5d']).AhKh).toEqual({ win: 0, tie: 0, lose: 0, equity: null });
+    expect(Range.from('AhKh,QQ').vsSync(villain, ['2c', '7d', '3s']).hero.equity[idOfHand('AhKh')]).toBeNaN();
+  });
+
   it('loads the evaluators with ready()', async () => {
     await ready();
     expect(Board.fromSync(FLOP).matching(Range.from('AA,KK'), ['Three of a Kind']).size).toBe(3); // AA makes a set on an ace-high board

@@ -450,6 +450,15 @@ export class RangeManager {
   equity(villain?: Villain, boardCards?: Card[], options?: EquityOptions): Promise<EquityResult>;
   /** With no arguments, the equity stored by getEquity(). */
   equityByHand(villain?: Villain, boardCards?: Card[], options?: EquityOptions): Promise<Record<Hand, EquityResult>>;
+  // Synchronous twins (poker-bitvaljs's compareRangeHandsSync); call `await ready()` once first
+  equitySync(villain: Villain, boardCards?: Card[], options?: EquityOptions): EquityResult;
+  equityByHandSync(villain: Villain, boardCards?: Card[], options?: EquityOptions): Record<Hand, EquityResult>;
+  getEquitySync(villain: Villain, boardCards?: Card[], options?: AgainstOptions): RangeManager;
+  againstSync(villain: Villain, boardCards?: Card[], options?: AgainstOptions): RangeManager;
+  bucketsSync(): BucketsReport;
+  compareSync(): ComparisonReport;
+  compareToSync(reference: RangeInput | RangeManager): CompareToReport;
+  bluffCandidatesSync(options: BluffOptions): RangeManager;
   /** Filters on the equity stored by getEquity(). */
   equityAbove(min: Share): RangeManager;
   /** 3.6.0 form: runs getEquity(villain, boardCards, options) first. */

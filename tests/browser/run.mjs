@@ -6,7 +6,7 @@ import { readFile, rm, mkdir, writeFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { RangeManager, Range, Board, terminateWorkers } from '../../src/rangeManager.js';
+import { RangeManager, Range, Board, ready, terminateWorkers } from '../../src/rangeManager.js';
 import { scenarios } from './scenarios.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -17,9 +17,9 @@ await mkdir(path.join(out, 'bundle'), { recursive: true });
 // The page bundle
 const common = { bundle: true, format: 'esm', platform: 'browser', conditions: ['browser'], logLevel: 'error', target: 'es2022' };
 await writeFile(path.join(out, 'entry.js'), `
-  import { RangeManager, Range, Board } from ${JSON.stringify(path.join(here, '../../src/rangeManager.js'))};
+  import { RangeManager, Range, Board, ready } from ${JSON.stringify(path.join(here, '../../src/rangeManager.js'))};
   import { scenarios } from ${JSON.stringify(path.join(here, 'scenarios.js'))};
-  scenarios({ RangeManager, Range, Board }).then(r => { window.__result = r; }, e => { window.__error = String(e && e.stack || e); });
+  scenarios({ RangeManager, Range, Board, ready }).then(r => { window.__result = r; }, e => { window.__error = String(e && e.stack || e); });
 `);
 await build({ ...common, entryPoints: [path.join(out, 'entry.js')], outfile: path.join(out, 'bundle/app.js') });
 await writeFile(path.join(out, 'index.html'), '<!doctype html><meta charset="utf-8"><script type="module" src="bundle/app.js"></script>');
@@ -50,7 +50,7 @@ try {
   await page.waitForFunction(() => window.__result || window.__error, null, { timeout: 120000 });
   const { result, error } = await page.evaluate(() => ({ result: window.__result, error: window.__error }));
   if (error || errors.length) throw new Error(error || errors.join('\n'));
-  const expected = await scenarios({ RangeManager, Range, Board });
+  const expected = await scenarios({ RangeManager, Range, Board, ready });
   const a = JSON.stringify(result), b = JSON.stringify(expected);
   if (a !== b) {
     failed = true;

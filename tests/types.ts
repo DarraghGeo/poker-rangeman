@@ -119,6 +119,12 @@ async function check(): Promise<void> {
   void [exactShare, exactCompat];
   await ready();
   const synced: number | null = Board.fromSync(board).strongest(coreHero, 0.5).weightedSize;
+  const syncSpot: RangeManager = rm.againstSync('QQ+', board);
+  const syncReport: ComparisonReport = syncSpot.compareSync();
+  const syncTotal: number | null = rm.equitySync('QQ+', board).equity;
+  const syncMatchup: Matchup = coreHero.vsSync('QQ+', board, { iterations: 2000 });
+  const syncTo: number | null = syncMatchup.compareToSync('QQ+').distance;
+  void [syncReport, syncTotal, syncTo, rm.equityByHandSync('QQ', board), syncSpot.bucketsSync(), syncSpot.compareToSync('TT+'), syncSpot.bluffCandidatesSync({ pot: 10, bet: 5 }), rm.getEquitySync('QQ', board)];
   terminateWorkers();
   void [sameClass, perCombo, strongCore, topPairs, rankedIds, synced];
 

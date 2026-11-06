@@ -2,10 +2,10 @@ const VALID_RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3',
 const VALID_SUITS = ['s', 'h', 'd', 'c'];
 const RANK_VALUES = { A: 14, K: 13, Q: 12, J: 11, T: 10, 9: 9, 8: 8, 7: 7, 6: 6, 5: 5, 4: 4, 3: 3, 2: 2 };
 
-import { handEquity } from './core/bitval-equity.js';
+import { handEquity, handEquitySync } from './core/bitval-equity.js';
 import { COMBO_COUNT, COMBO_LO, COMBO_HI, idOfHand, cardIndex } from './core/cards.js';
 import * as notation from './core/notation.js';
-import { loadBitVal, loadExtVal } from './core/load.js';
+import { loadBitVal, loadExtVal, loaded } from './core/load.js';
 import { flagLayout, flagMasks } from './core/flags.js';
 import { classifyBoard } from './core/classify.js';
 import {
@@ -807,6 +807,15 @@ export class RangeManager {
    * With no arguments, totals the equity stored by getEquity() for the hands in the range.
    */
   async equity(villain, boardCards = [], options = {}) {
+    return this._runAsync(this._equityGen(villain, boardCards, options));
+  }
+
+  /** equity() synchronously (poker-bitvaljs's compareRangeHandsSync); needs `await ready()` first. */
+  equitySync(villain, boardCards = [], options = {}) {
+    return this._runSync(this._equityGen(villain, boardCards, options));
+  }
+
+  *_equityGen(villain, boardCards, options) {
     if (villain === undefined) {
       const handEquity = this._requireStoredEquity();
       const totals = { win: 0, tie: 0, lose: 0 };
@@ -819,10 +828,10 @@ export class RangeManager {
     }
     const { board, villainHands, villainWeights, deadCards, iterations } = this._prepareEquity(villain, boardCards, options);
     if (this.filteredHands.length === 0 || villainHands.length === 0) return { win: 0, tie: 0, lose: 0, equity: null };
-    // A range total needs no per-hand counts: poker-bitvaljs's whole-range call is the fastest way to it
-    const bv = await this._loadBitVal();
+    // A range total needs no per-hand counts: poker-bitvaljs's whole-range call (compareRange; synchronously, the
+    // totals of compareRangeHandsSync, which it documents as identical)
     const entries = (hands, weights) => hands.map(hand => (weights[hand] === undefined ? hand : { hand, weight: weights[hand] }));
-    const result = await bv.compareRange(entries(this.filteredHands, this.handWeights), entries(villainHands, villainWeights), board, deadCards, 5, iterations, true, null, 100, false);
+    const result = yield { type: 'total', hero: entries(this.filteredHands, this.handWeights), villain: entries(villainHands, villainWeights), board, deadCards, iterations };
     return this._equityResult(result.win, result.tie, result.lose);
   }
 
@@ -832,32 +841,91 @@ export class RangeManager {
    * With no arguments, returns the equity stored by getEquity() for the hands in the range.
    */
   async equityByHand(villain, boardCards = [], options = {}) {
+    return this._runAsync(this._equityByHandGen(villain, boardCards, options));
+  }
+
+  /** equityByHand() synchronously; needs `await ready()` first. */
+  equityByHandSync(villain, boardCards = [], options = {}) {
+    return this._runSync(this._equityByHandGen(villain, boardCards, options));
+  }
+
+  *_equityByHandGen(villain, boardCards, options) {
     if (villain === undefined) {
       const handEquity = this._requireStoredEquity();
       return Object.fromEntries(this.filteredHands.map(hand => [hand, handEquity[hand]]));
     }
     const prepared = this._prepareEquity(villain, boardCards, options);
-    await this._fillHandEquity(this.filteredHands, prepared);
+    yield* this._fillHandEquityGen(this.filteredHands, prepared);
     return Object.fromEntries(this.filteredHands.map(hand => [hand, this.equityCache.get(`${hand}|${prepared.key}`)]));
   }
 
-  // Per-hand { win, tie, lose } arrays for hero's hands (and villain's against hero), aligned with the hand lists,
-  // from one poker-bitvaljs compareRangeHands call
-  async _bitvalHandEquity(heroHands, heroWeights, villainHands, villainWeights, board, deadCards, iterations) {
-    const bv = await this._loadBitVal();
-    const ids = hands => hands.map(idOfHand);
+  // A request for per-hand { win, tie, lose } arrays for hero's hands (and villain's against hero), aligned with the
+  // hand lists, from one poker-bitvaljs compareRangeHands(Sync) call
+  _handsRequest(heroHands, heroWeights, villainHands, villainWeights, board, deadCards, iterations) {
     const weightArray = (hands, list, weights) => {
       const array = new Float64Array(COMBO_COUNT);
       hands.forEach((hand, i) => { array[list[i]] = weights[hand] ?? 1; });
       return array;
     };
-    const heroIds = ids(heroHands), villainIds = ids(villainHands);
-    const result = await handEquity(bv, {
-      heroIds, villainIds,
-      heroWeight: weightArray(heroHands, heroIds, heroWeights),
-      villainWeight: weightArray(villainHands, villainIds, villainWeights),
-      board, dead: deadCards, iterations
-    });
+    const heroIds = heroHands.map(idOfHand), villainIds = villainHands.map(idOfHand);
+    return {
+      type: 'hands', heroIds, villainIds,
+      job: {
+        heroIds, villainIds,
+        heroWeight: weightArray(heroHands, heroIds, heroWeights),
+        villainWeight: weightArray(villainHands, villainIds, villainWeights),
+        board, dead: deadCards, iterations
+      }
+    };
+  }
+
+  // Async and sync methods share one implementation, written as a generator that yields what it needs from the
+  // evaluators: { type: 'hands' } per-hand equity, { type: 'total' } a range total, { type: 'extval' } poker-extval
+  // loaded. _runAsync answers with poker-bitvaljs's async calls (loading the evaluators on first use); _runSync with
+  // compareRangeHandsSync, and needs `await ready()` first.
+  async _runAsync(generator) {
+    let step = generator.next();
+    while (!step.done) step = generator.next(await this._answerAsync(step.value));
+    return step.value;
+  }
+
+  _runSync(generator) {
+    let step = generator.next();
+    while (!step.done) step = generator.next(this._answerSync(step.value));
+    return step.value;
+  }
+
+  async _answerAsync(request) {
+    if (request.type === 'extval') return this._loadEvaluator();
+    const bv = await this._loadBitVal();
+    if (request.type === 'total') {
+      const { hero, villain, board, deadCards, iterations } = request;
+      return bv.compareRange(hero, villain, board, deadCards, 5, iterations, true, null, 100, false);
+    }
+    return this._bitvalHandEquity(request, bv);
+  }
+
+  _answerSync(request) {
+    if (request.type === 'extval') {
+      extval = loaded('extval').extval;
+      return extval;
+    }
+    const bv = loaded('bitval').bitval;
+    bitval = bv;
+    if (request.type === 'total') {
+      const { hero, villain, board, deadCards, iterations } = request;
+      const result = bv.compareRangeHandsSync(hero, villain, board, deadCards, 5, iterations, true);
+      return { win: result.win, tie: result.tie, lose: result.lose };
+    }
+    return this._alignHands(request, handEquitySync(bv, request.job));
+  }
+
+  // One poker-bitvaljs compareRangeHands call (async)
+  async _bitvalHandEquity(request, bv) {
+    return this._alignHands(request, await handEquity(bv, request.job));
+  }
+
+  _alignHands({ heroIds, villainIds }, result) {
     const aligned = (side, list) => ({
       win: Float64Array.from(list, id => side.win[id]),
       tie: Float64Array.from(list, id => side.tie[id]),
@@ -869,7 +937,7 @@ export class RangeManager {
   // Computes and caches the equity of every hand not cached yet, in one poker-bitvaljs call
   // withVillain: when every hand is computed in this pass, also cache villain's per-hand equity against these hands
   // (poker-bitvaljs gives both sides at once), as _villainEquityByHand() would compute it
-  async _fillHandEquity(hands, { board, villainHands, villainWeights, deadCards, iterations, key }, withVillain = false) {
+  *_fillHandEquityGen(hands, { board, villainHands, villainWeights, deadCards, iterations, key }, withVillain = false) {
     const missing = hands.filter(hand => !this.equityCache.has(`${hand}|${key}`));
     if (missing.length === 0) return;
     const blockedCards = new Set([...board, ...deadCards]);
@@ -883,7 +951,7 @@ export class RangeManager {
     // (dead cards only leave the deck, as in _villainEquityByHand); hero's own results are kept for live hands
     const onBoard = new Set(board);
     const bitvalHands = both ? missing.filter(hand => !this._extractCardsFromHand(hand).some(c => onBoard.has(c))) : live;
-    const { hero, villain } = await this._bitvalHandEquity(bitvalHands, this.handWeights, villainHands, villainWeights, board, deadCards, iterations);
+    const { hero, villain } = yield this._handsRequest(bitvalHands, this.handWeights, villainHands, villainWeights, board, deadCards, iterations);
     const liveSet = new Set(live);
     bitvalHands.forEach((hand, i) => {
       if (liveSet.has(hand)) this.equityCache.set(`${hand}|${key}`, this._equityResult(hero.win[i], hero.tie[i], hero.lose[i]));
@@ -908,6 +976,15 @@ export class RangeManager {
    * recomputing. Chainable: await rm.getEquity('QQ+', board).equityAbove('60%').hasSuit('s')
    */
   async getEquity(villain, boardCards = [], options = {}) {
+    return this._runAsync(this._getEquityGen(villain, boardCards, options));
+  }
+
+  /** getEquity() synchronously; needs `await ready()` first. Returns the RangeManager (not a RangeQuery). */
+  getEquitySync(villain, boardCards = [], options = {}) {
+    return this._runSync(this._getEquityGen(villain, boardCards, options));
+  }
+
+  *_getEquityGen(villain, boardCards, options) {
     if (villain === undefined) throw new Error('getEquity needs a villain range');
     const bands = this._resolveBands(options.bands);
     const shapeEnough = this._parseShare(options.shape?.enough ?? 0.1, 'shape.enough');
@@ -918,7 +995,7 @@ export class RangeManager {
     const nutsMinEquity = this._parseShare(options.nuts?.minEquity ?? 0.9, 'nuts.minEquity');
     const prepared = this._prepareEquity(villain, boardCards, options);
     // Villain's side comes out of the same poker-bitvaljs call, ready for buckets()/compare()
-    await this._fillHandEquity(this.filteredHands, prepared, true);
+    yield* this._fillHandEquityGen(this.filteredHands, prepared, true);
     const handEquity = {};
     for (const hand of this.filteredHands) handEquity[hand] = this.equityCache.get(`${hand}|${prepared.key}`);
     const instance = this._createFilteredInstance(this.filteredHands);
@@ -956,6 +1033,12 @@ export class RangeManager {
   async against(villain, boardCards = [], options = {}) {
     if (villain === undefined) throw new Error('against needs a villain range');
     return this.getEquity(villain, boardCards, options);
+  }
+
+  /** against() synchronously; needs `await ready()` first. Returns the RangeManager (not a RangeQuery). */
+  againstSync(villain, boardCards = [], options = {}) {
+    if (villain === undefined) throw new Error('against needs a villain range');
+    return this.getEquitySync(villain, boardCards, options);
   }
 
   _requireStoredEquity() {
@@ -1195,6 +1278,10 @@ export class RangeManager {
 
   // Villain's equity per hand against hero's current hands; cached per set of hero hands
   async _villainEquityByHand() {
+    return this._runAsync(this._villainEquityGen());
+  }
+
+  *_villainEquityGen() {
     const { villainHands, board, deadCards, iterations, key } = this._requireMatchup();
     const heroHands = this.filteredHands;
     const cacheKey = `villain|${key}|${this._weightKey(heroHands, this.handWeights)}`;
@@ -1205,7 +1292,7 @@ export class RangeManager {
       for (const hand of villainHands) results[hand] = { win: 0, tie: 0, lose: 0, equity: null };
       if (live.length) {
         // Villain's hands against hero's current range, every hand in one poker-bitvaljs call
-        const { hero: side } = await this._bitvalHandEquity(live, {}, heroHands, this.handWeights, board, deadCards, iterations);
+        const { hero: side } = yield this._handsRequest(live, {}, heroHands, this.handWeights, board, deadCards, iterations);
         live.forEach((hand, i) => { results[hand] = this._equityResult(side.win[i], side.tie[i], side.lose[i]); });
       }
       this.equityCache.set(cacheKey, results);
@@ -1250,9 +1337,18 @@ export class RangeManager {
 
   /** Equity bucket shares for both sides: { bands, hero, villain }, each { combos, equity, buckets, shape }. */
   async buckets() {
+    return this._runAsync(this._bucketsGen());
+  }
+
+  /** buckets() synchronously; needs `await ready()` first. */
+  bucketsSync() {
+    return this._runSync(this._bucketsGen());
+  }
+
+  *_bucketsGen() {
     const { bands, board, deadCards, shapeEnough, minDominant, topEnd, nutsMinEquity } = this._requireMatchup();
-    const villainEquity = await this._villainEquityByHand();
-    await this._loadEvaluator();
+    const villainEquity = yield* this._villainEquityGen();
+    yield { type: 'extval' };
     const { hero, villain, parent } = this._reportSides(villainEquity);
     const options = { bands, enough: shapeEnough, minDominant };
     const heroSummary = sideSummary(hero, { ...options, parent });
@@ -1319,9 +1415,18 @@ export class RangeManager {
    * per-combo arrays.
    */
   async compare() {
+    return this._runAsync(this._compareGen());
+  }
+
+  /** compare() synchronously; needs `await ready()` first. */
+  compareSync() {
+    return this._runSync(this._compareGen());
+  }
+
+  *_compareGen() {
     const { bands, board, deadCards, shapeEnough, minDominant, topEnd, nutsMinEquity, villainHands } = this._requireMatchup();
-    const villainEquity = await this._villainEquityByHand();
-    await this._loadEvaluator();
+    const villainEquity = yield* this._villainEquityGen();
+    yield { type: 'extval' };
     const { hero, villain, parent } = this._reportSides(villainEquity);
     // Villain's hand classes and flags leave out combos holding a dead card
     const dead = new Set(deadCards);
@@ -1347,6 +1452,15 @@ export class RangeManager {
    * earth mover's distance between their equity distributions (0 = identical shape).
    */
   async compareTo(reference) {
+    return this._runAsync(this._compareToGen(reference));
+  }
+
+  /** compareTo() synchronously; needs `await ready()` first. */
+  compareToSync(reference) {
+    return this._runSync(this._compareToGen(reference));
+  }
+
+  *_compareToGen(reference) {
     const referenceRange = reference instanceof RangeManager ? reference : new RangeManager(reference);
     const mine = new Set(this.filteredHands);
     const theirs = new Set(referenceRange.toArray());
@@ -1369,11 +1483,11 @@ export class RangeManager {
     if (!this.matchup) return report;
     const { villainHands, villainWeights, board, deadCards, iterations, bands, parentHands, parentWeights, shapeEnough, minDominant, topEnd } = this.matchup;
     const villainInput = villainHands.length ? villainHands.map(hand => [hand, villainWeights[hand] ?? 1]) : villainHands;
-    const referenceWithEquity = await referenceRange.against(villainInput, board, {
+    const referenceWithEquity = yield* referenceRange._getEquityGen(villainInput, board, {
       deadCards, iterations, bands, shape: { enough: shapeEnough, minDominant, topEnd }
     });
     this._requireStoredEquity();
-    await this._loadEvaluator();
+    yield { type: 'extval' };
     const mySide = this._reportSide(this.filteredHands, this.handWeights, this.handEquity);
     const ref = this._reportSide(referenceWithEquity.filteredHands, referenceWithEquity.handWeights, referenceWithEquity.handEquity);
     const villain = this._parentSide(villainHands, villainWeights);
@@ -1450,6 +1564,15 @@ export class RangeManager {
    * with at least the pot odds against this range), then lower equity.
    */
   async bluffCandidates(options = {}) {
+    return this._runAsync(this._bluffCandidatesGen(options));
+  }
+
+  /** bluffCandidates() synchronously; needs `await ready()` first. Returns the RangeManager (not a RangeQuery). */
+  bluffCandidatesSync(options = {}) {
+    return this._runSync(this._bluffCandidatesGen(options));
+  }
+
+  *_bluffCandidatesGen(options) {
     const { pot, bet } = this._parseBet(options);
     const { bands } = this._requireMatchup();
     const handEquity = this._requireStoredEquity();
@@ -1463,7 +1586,7 @@ export class RangeManager {
     // By weight: bluffs worth value weight x alpha (with weight 1, value combos x alpha, rounded)
     const target = value.reduce((sum, hand) => sum + this._weight(hand), 0) * alpha;
     if (target < 0.5) return this._createFilteredInstance([]);
-    const villainEquity = await this._villainEquityByHand();
+    const villainEquity = yield* this._villainEquityGen();
     const { villainWeights } = this.matchup;
     const continuing = this.matchup.villainHands.filter(hand => villainEquity[hand].equity !== null && villainEquity[hand].equity >= potOdds);
     const blocks = hand => {

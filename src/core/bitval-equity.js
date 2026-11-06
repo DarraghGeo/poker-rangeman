@@ -24,20 +24,37 @@ function byId(side) {
   return { win, tie, lose };
 }
 
+// The range entries for a job, or null when a side is empty (nothing to ask poker-bitvaljs)
+function request({ heroIds, heroWeight, villainIds, villainWeight, board, dead = [] }) {
+  const cards = list => list.map(card => (typeof card === 'number' ? cardString(card) : card));
+  const hero = entries(heroIds, heroWeight);
+  const villain = entries(villainIds, villainWeight);
+  return hero.length && villain.length ? { hero, villain, board: cards(board), dead: cards(dead) } : null;
+}
+
+function emptyResult() {
+  const empty = () => ({ win: new Float64Array(COMBO_COUNT), tie: new Float64Array(COMBO_COUNT), lose: new Float64Array(COMBO_COUNT) });
+  return { hero: empty(), villain: empty(), total: { win: 0, tie: 0, lose: 0 } };
+}
+
+const read = result => ({ hero: byId(result.hero), villain: byId(result.villain), total: { win: result.win, tie: result.tie, lose: result.lose } });
+
 /**
  * Every hero hand's win/tie/lose against the villain range, and every villain hand's against the hero range, from one
  * poker-bitvaljs compareRangeHands call. Each hand's counts are weighted by the other side's weights. Arrays are
  * Float64Array(1326) by combo id (zeros for hands not in the range, clashing with the board, or blocked by every
  * opposing combo). board / dead: card numbers or strings.
  */
-export async function handEquity(bitval, { heroIds, heroWeight, villainIds, villainWeight, board, dead = [], iterations = 10000, workers = false }) {
-  const cards = list => list.map(card => (typeof card === 'number' ? cardString(card) : card));
-  const hero = entries(heroIds, heroWeight);
-  const villain = entries(villainIds, villainWeight);
-  if (hero.length === 0 || villain.length === 0) {
-    const empty = () => ({ win: new Float64Array(COMBO_COUNT), tie: new Float64Array(COMBO_COUNT), lose: new Float64Array(COMBO_COUNT) });
-    return { hero: empty(), villain: empty(), total: { win: 0, tie: 0, lose: 0 } };
-  }
-  const result = await bitval.compareRangeHands(hero, villain, cards(board), cards(dead), 5, iterations, true, null, 100, Boolean(workers));
-  return { hero: byId(result.hero), villain: byId(result.villain), total: { win: result.win, tie: result.tie, lose: result.lose } };
+export async function handEquity(bitval, job) {
+  const req = request(job);
+  if (!req) return emptyResult();
+  const result = await bitval.compareRangeHands(req.hero, req.villain, req.board, req.dead, 5, job.iterations ?? 10000, true, null, 100, Boolean(job.workers));
+  return read(result);
+}
+
+/** handEquity() synchronously, from poker-bitvaljs's compareRangeHandsSync (no workers). */
+export function handEquitySync(bitval, job) {
+  const req = request(job);
+  if (!req) return emptyResult();
+  return read(bitval.compareRangeHandsSync(req.hero, req.villain, req.board, req.dead, 5, job.iterations ?? 10000, true));
 }

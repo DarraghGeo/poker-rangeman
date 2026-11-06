@@ -68,6 +68,8 @@ export class Range {
 
   /** Every combo's equity against villain, both sides, from one poker-bitvaljs compareRangeHands call. */
   vs(villain: RangeSource | Range | [Card, Card], board?: Card[] | Board, options?: VsOptions): Promise<Matchup>;
+  /** vs() synchronously (poker-bitvaljs's compareRangeHandsSync); needs `await ready()` first. No workers. */
+  vsSync(villain: RangeSource | Range | [Card, Card], board?: Card[] | Board, options?: Omit<VsOptions, 'workers'>): Matchup;
 }
 
 export interface EquityTotal {
@@ -130,6 +132,8 @@ export class Matchup {
   compare(options?: ReportOptions): ComparisonReport;
   /** Hero's range against a reference range, against the same villain and board (one more engine pass). */
   compareTo(reference: RangeSource | Range, options?: ReportOptions): Promise<CoreCompareToReport>;
+  /** compareTo() synchronously. */
+  compareToSync(reference: RangeSource | Range, options?: ReportOptions): CoreCompareToReport;
 }
 
 /** A board classified once (poker-extval's core); arrays are indexed by combo id. */
@@ -168,7 +172,7 @@ export class Board {
   weakest(range: Range, share: number, options?: { ties?: 'keep' | 'split' }): Range;
 }
 
-/** Loads the evaluators up front (otherwise on first use); afterwards Board.fromSync works. */
+/** Loads the evaluators up front (otherwise on first use); the *Sync methods and Board.fromSync need it. */
 export function ready(): Promise<void>;
 /** Stops the Web Workers poker-bitvaljs keeps between calls (they start again when needed). */
 export function terminateWorkers(): void;
@@ -201,3 +205,5 @@ export function handEquity(bitval: unknown, job: {
   heroIds: ArrayLike<ComboId>; heroWeight: Float64Array; villainIds: ArrayLike<ComboId>; villainWeight: Float64Array;
   board: Array<number | Card>; dead?: Array<number | Card>; iterations?: number; workers?: boolean;
 }): Promise<{ hero: HandCounts; villain: HandCounts; total: { win: number; tie: number; lose: number } }>;
+/** handEquity() synchronously (compareRangeHandsSync). */
+export function handEquitySync(bitval: unknown, job: Parameters<typeof handEquity>[1]): Awaited<ReturnType<typeof handEquity>>;

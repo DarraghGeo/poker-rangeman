@@ -14,6 +14,7 @@ A JavaScript library for parsing, managing, filtering and analysing poker hand r
   - [What changed](#what-changed)
   - [Core API](#core-api)
   - [Workers](#workers)
+  - [Synchronous equity](#synchronous-equity)
   - [Browsers and bundlers](#browsers-and-bundlers)
   - [Breaking changes](#breaking-changes)
 - [Installation](#installation)
@@ -123,6 +124,33 @@ spot.compareTo('77+,ATs+,KQs,AJo+').distance;
 are exact either way. poker-bitvaljs keeps its workers between calls; `terminateWorkers()` stops them. In Node,
 equity runs on the calling thread: a flop matchup takes about 20 ms.
 
+### Synchronous equity
+
+For code that can't `await`, the equity methods have synchronous twins, built on poker-bitvaljs 1.12's
+`compareRangeHandsSync`. Call `await ready()` once (it loads poker-bitvaljs and poker-extval); after that:
+
+```javascript
+import { RangeManager, Range, ready } from 'poker-rangeman';
+await ready();
+
+const spot = new RangeManager(opener).againstSync(defender, ['Ad', '7c', '6h']);
+spot.compareSync().advantage.nut;
+new RangeManager(opener).equitySync(defender, flop).equity;
+Range.from(opener).vsSync(defender, flop).compare();
+```
+
+| Async | Sync |
+| --- | --- |
+| `equity`, `equityByHand` | `equitySync`, `equityByHandSync` |
+| `getEquity`, `against` | `getEquitySync`, `againstSync` (return the `RangeManager`) |
+| `buckets`, `compare`, `compareTo` | `bucketsSync`, `compareSync`, `compareToSync` |
+| `bluffCandidates` | `bluffCandidatesSync` |
+| `Range#vs`, `Matchup#compareTo` | `Range#vsSync`, `Matchup#compareToSync` |
+
+The results are identical to the async methods, and each pair is one implementation. Synchronous calls run on the
+calling thread (no Web Workers) and block until done: a flop matchup takes about 20 ms. Before `ready()` they throw
+"Call `await ready()` first". `Board.fromSync` and the equity filters after `getEquity` were already synchronous.
+
 ### Browsers and bundlers
 
 Everything is browser-safe: poker-rangeman uses no Node built-ins. `npm run test:browser` bundles the package with
@@ -157,7 +185,7 @@ inspected internals. What changed:
   `breakdown()` and `compare().flags`, and work as criteria ('Nut Flush Draw', 'Nut Backdoor Flush Draw',
   'Double Gutshot', 'Backdoor Straight Draw', 'Backdoor Combo Draw'). Nothing else in those results changes.
 - **Dependencies**: poker-extval 6.0.0-beta.2 (prerelease, pinned exactly: prerelease ranges can pull in breaking
-  betas) and poker-bitvaljs 1.10.
+  betas) and poker-bitvaljs 1.12.
 
 ## Installation
 
