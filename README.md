@@ -2,8 +2,19 @@
 
 A JavaScript library for parsing, managing, filtering and analysing poker hand ranges: range notation, dead cards, how a range hits a board, equity against another range, hand strength rankings and blockers. Hand evaluation uses [poker-extval](https://github.com/DarraghGeo/poker-extval); equity uses [poker-bitvaljs](https://github.com/DarraghGeo/poker-bitvaljs).
 
+> **Version 4 beta.** A rewrite for speed with the same results as 3.8: per-hand equity and range-vs-range reports
+> 12-100× faster, board filters 10-50× faster, an optional worker pool, and a new typed-array [core API](#core-api).
+> The `RangeManager` API is unchanged and checked against 3.8.0 on random inputs. Install it with
+> `npm install poker-rangeman@beta`; see [Version 4](#version-4) and [BENCHMARKS.md](BENCHMARKS.md).
+
 ## Table of Contents
 
+- [Version 4](#version-4)
+  - [What changed](#what-changed)
+  - [Core API](#core-api)
+  - [Workers](#workers)
+  - [Browsers and bundlers](#browsers-and-bundlers)
+  - [Breaking changes](#breaking-changes)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [API Reference](#api-reference)
@@ -23,10 +34,115 @@ A JavaScript library for parsing, managing, filtering and analysing poker hand r
 - [TypeScript](#typescript)
 - [Releasing](#releasing)
 
+## Version 4
+
+### What changed
+
+Version 4 keeps the `RangeManager` API (now the compatibility layer) and rewrites what's underneath:
+
+- **Equity engine** (`src/core/equity.js`). 3.8 ran poker-bitvaljs once per hand. The engine instead scores every
+  combo once per runout, sorts both ranges by score, and in one sweep gives every combo its wins, ties and losses
+  against the other range, with exact card removal (each combo's cards are subtracted by inclusion-exclusion). Both
+  sides come out of the same pass, so `against()` + `compare()` costs about one 3.8 hand. Postflop counts match
+  poker-bitvaljs's `compareRange` exactly; preflop, sampled boards are shared by every combo.
+- **Hand classification** comes from [poker-extval 6](https://github.com/DarraghGeo/poker-extval)'s core, which
+  classifies all 1,326 combos on a board at once into flag bits. `makesHand`, `breakdown`, `handClasses`, ranking and
+  capping read those bits and scores instead of building an evaluation object per hand.
+- **Ranges** in the core are `Float64Array(1326)` weights indexed by combo id; set operations are single passes.
+- **Caching**: notation strings and segments are parsed once; `toNotation()` is worked out once per range.
+- **Workers**: big jobs (preflop, many matchups) can be split across threads; see [Workers](#workers).
+
+[BENCHMARKS.md](BENCHMARKS.md) has the full table (`npm run bench`). Highlights against 3.8.0:
+
+| Operation | 3.8.0 | 4.0 beta |
+| --- | --- | --- |
+| `getEquity` per hand, flop | 665 ms | 23 ms |
+| `getEquity` per hand, 600 vs 600 combos, flop | 6.2 s | 60 ms |
+| `against()` + `compare()`, flop | 1.4 s | 46 ms |
+| `makesHand`, flop | 34 ms | 0.65 ms |
+| `handClasses`, flop | 18.5 ms | 1.9 ms |
+
+### Core API
+
+The core works on combo ids and typed arrays, for engines that analyse many spots. It's exported from
+`poker-rangeman` and `poker-rangeman/core`.
+
+```javascript
+import { Range, Board } from 'poker-rangeman/core';
+
+const hero = Range.from('66+,A9s+,KTs+,QTs+,JTs,T9s,ATo+,KJo+');
+const villain = Range.from('22-88,A2s-A8s,K9s,Q9s+,J9s+,T8s+,97s+,87s,76s,A9o-AJo,KTo-KQo,QJo');
+
+const spot = await hero.vs(villain, ['Ad', '7c', '6h']);   // every combo, both sides, one pass
+spot.hero.total();                  // { win, tie, lose, equity: 0.600 }
+spot.hero.equity;                   // Float64Array(1326) by combo id (NaN when not in the range)
+spot.villain.equity;                // villain's combos against hero's range
+spot.hero.above(0.75).toNotation(); // a Range of hero's strong hands
+
+const board = await Board.from(['Ad', '7c', '6h']);
+board.matching(hero, ['Top Pair', 'Overpair']);           // flag bits, all combos at once
+board.strongest(hero, 0.2);                               // by made-hand score
+```
+
+| `Range` | |
+| --- | --- |
+| `Range.from(input, { dead })` | Notation, an array of exact hands, an object of weights, or a Range |
+| `weights`, `ids`, `size`, `weightedSize`, `isWeighted` | Weight by combo id (`Float64Array(1326)`), the ids in the range |
+| `has(hand)`, `weightOf(hand)`, `hands()`, `toObject()`, `toNotation()` | Hands as strings or ids |
+| `include`, `exclude`, `intersect`, `scale`, `setWeight` | Same weight rules as `RangeManager` |
+| `filter((id, weight) => …)`, `withoutCards`, `withSuit`, `suitedOf` | Filters |
+| `vs(villain, board, { dead, iterations, seed, workers })` | A `Matchup` (below); `vsSync` after `await ready()` |
+
+A `Matchup` has `hero` and `villain` sides, each with `range`, `win`, `tie`, `lose` and `equity` (all
+`Float64Array(1326)`, by combo id), plus `total()`, `between(min, max)`, `above(min)`, `below(max)` and `byHand()`. A
+`Board` has every combo's poker-extval flag bits (`lo`, `hi`), `strength` and `score`, and `has(id, flag)`,
+`matching(range, criteria)`, `rank(range)`, `strongest(range, share)` and `weakest(range, share)`. Card numbers are
+`rank * 4 + suit` (`'2s'` = 0 … `'Ac'` = 51), as in poker-extval; `HAND_STRINGS[id]` and `idOfHand(hand)` convert
+combo ids. In the core, dead cards remove the combos that hold them from both ranges.
+
+The range-vs-range reports (`buckets`, `compare`, shapes, capping, advantages) are on `RangeManager` for now and run
+on the same engine.
+
+### Workers
+
+`vs()` takes `workers`: `false` (this thread only), `true` (all cores but one), a number, or nothing (automatic). In
+automatic mode only jobs of about `AUTO_WORK` (3 million) combo evaluations or more use the pool, such as preflop runs
+with many boards; a flop matchup takes tens of milliseconds and stays on the calling thread. Postflop runouts (or preflop
+boards) are split between workers and the counts summed, so postflop results are identical to a single thread.
+
+The pool starts on first use and is reused. In Node it uses `worker_threads` and never keeps the process alive when
+idle; `terminateWorkers()` stops it.
+
+### Browsers and bundlers
+
+Everything is browser-safe: no Node built-ins outside the Node worker backend, which `package.json` `imports`
+(`#pool-backend`) only selects under the `node` condition. `npm run test:browser` bundles the package with esbuild, runs
+it in headless Chromium (including web workers) and checks the results match Node.
+
+The worker starts with `new Worker(new URL('../worker.js', import.meta.url), { type: 'module' })`, which Vite and
+webpack 5 bundle on their own. With other bundlers, bundle `poker-rangeman/src/core/worker.js` as a separate file and
+pass its URL to `setWorkerUrl(url)`, or use `workers: false`.
+
+poker-extval 6 still lists poker-rangeman 3 as a dependency (for its own range parsing, which version 4 never
+calls), so bundles currently include a copy of it (about 140 KB unminified) until poker-extval makes it optional.
+
+### Breaking changes
+
+The public `RangeManager` API is unchanged: `tests/parity.test.js` checks every method against 3.8.0 on random
+notation, weights, boards, dead cards and options, and the 3.8 unit tests pass unchanged apart from two that
+inspected internals. What changed:
+
+- **Preflop per-hand equity** is still a Monte Carlo estimate, now from boards shared by every hand rather than
+  separate samples per hand, so individual estimates differ from 3.8's by sampling noise. Postflop is exact, as before.
+- **Private methods** (`_computeEquity`, `_handEquity`, the notation parsers and similar) are gone or moved into
+  `src/core`.
+- **Dependencies**: poker-extval 6 (prerelease) and poker-bitvaljs 1.9.
+
 ## Installation
 
 ```bash
-npm install poker-rangeman
+npm install poker-rangeman        # 3.8 (latest release)
+npm install poker-rangeman@beta   # 4.0 beta
 ```
 
 The library uses ES modules and requires Node.js 20.19+ or 22.13+ (the versions poker-extval supports). It's available on [npm](https://www.npmjs.com/package/poker-rangeman).
@@ -1370,10 +1486,12 @@ console.log(filtered2.toNotation());   // Still abbreviated (e.g., "AKs" or indi
 
 ## TypeScript
 
-Types ship with the package (`index.d.ts`) and cover every method, option and criterion:
+Types ship with the package (`index.d.ts`, and `core.d.ts` for the core API) and cover every method, option and
+criterion:
 
 ```typescript
 import { RangeManager, RangeQuery, type Criterion, type EquityResult } from 'poker-rangeman';
+import { Range, Board, type Matchup } from 'poker-rangeman/core';
 ```
 
 ## Releasing
@@ -1384,6 +1502,8 @@ import { RangeManager, RangeQuery, type Criterion, type EquityResult } from 'pok
   - otherwise bumps the patch past npm's latest and commits the bump back to `main`.
 
   It then tags the release `v<version>` and publishes with npm trusted publishing (no stored token, with provenance). It can also be started by hand from the Actions tab.
+- **Betas** come from the `rewrite/v4` branch the same way. Its versions are prereleases (`4.0.0-beta.0`); each release bumps the last number when needed and publishes under npm's `beta` tag, so `npm install poker-rangeman` keeps installing the latest release from `main`. The workflow refuses a prerelease version on `main` and a release version on the beta branch.
+- **Parity, browser and benchmarks**: `npm test` includes the parity suite against 3.8.0; `npm run test:browser` runs the browser check (needs a Playwright Chromium); `npm run bench` compares speed with 3.8.0.
 
 ## License
 

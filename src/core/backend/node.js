@@ -6,10 +6,10 @@ import { availableParallelism, cpus } from 'node:os';
 export const threadCount = () => Math.max(1, (availableParallelism ? availableParallelism() : cpus().length) - 1);
 
 /** A worker running src/core/worker.js. Unref'd, so an idle pool never keeps the process alive. */
-export function createWorker() {
+export function createWorker(url) {
   // Flags meant for an eval'd entry point (--input-type) are invalid for a worker file
   const execArgv = process.execArgv.filter(flag => !flag.startsWith('--input-type') && flag !== '-e' && flag !== '--eval');
-  const worker = new Worker(new URL('../worker.js', import.meta.url), { execArgv });
+  const worker = new Worker(url || new URL('../worker.js', import.meta.url), { execArgv });
   // The pool refs a worker while it has a job and unrefs it when idle, so an idle pool never keeps the process alive
   return {
     post: (message, transfer) => worker.postMessage(message, transfer),

@@ -77,8 +77,12 @@ if (WRITE) {
   const table = rows.map(r => `| ${r.name} | ${fmt(r.v3)} ms | ${fmt(r.v4)} ms | ${(r.v3 / r.v4).toFixed(1)}× |`).join('\n');
   writeFileSync(new URL('../BENCHMARKS.md', import.meta.url), `# Benchmarks
 
-poker-rangeman 3.8.0 against this version, ${process.version}, median of ${RUNS} runs after a warm-up. Each run uses fresh
-instances. Regenerate with \`npm run bench -- --write\`.
+poker-rangeman 3.8.0 against this version, ${process.version}, ${(await import('node:os')).cpus().length} cores, median of ${RUNS} runs after a
+warm-up. Each run uses fresh instances, single-threaded (no workers). Regenerate with \`npm run bench -- --write\`.
+
+Notation strings are remembered once parsed, so "same string" mostly measures the cache; "different strings" parses
+input it hasn't seen (its notation segments can still be cached). Range totals (\`equity()\`) use poker-bitvaljs's
+whole-range call in both versions.
 
 | Operation | 3.8.0 | This version | Faster |
 | --- | --- | --- | --- |

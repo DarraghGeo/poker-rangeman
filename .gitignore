@@ -32,3 +32,4 @@ technical-build-doc.md
 test-*.js
 *.test-local.js
 
+tests/browser/.out/

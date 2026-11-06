@@ -18,7 +18,8 @@
     "src/",
     "index.d.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "core.d.ts"
   ],
   "scripts": {
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js && npm run test:types",
@@ -26,7 +27,8 @@
     "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "test:jest": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:types": "tsc --noEmit --strict --target es2020 --module nodenext --moduleResolution nodenext tests/types.ts",
-    "bench": "node bench/run.mjs"
+    "bench": "node bench/run.mjs",
+    "test:browser": "node tests/browser/run.mjs"
   },
   "keywords": [
     "poker",

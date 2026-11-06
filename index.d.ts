@@ -487,3 +487,7 @@ export class RangeManager {
   toString(): string;
   toNotation(): string;
 }
+
+// The core API (also 'poker-rangeman/core'): ranges as typed arrays, boards classified once, per-combo equity
+export { Range, Board, ready, terminateWorkers, setWorkerUrl } from './core.js';
+export type { Side, VsOptions, RangeSource, ComboId } from './core.js';

@@ -1,6 +1,7 @@
 name: Publish to npm
 
-# Publishes when a push to main changes the package's code (src/, index.d.ts) or package.json.
+# Publishes when a push to main or the beta branch (rewrite/v4) changes the package's code (src/, the type
+# declarations) or package.json.
 # Changes to docs or tests alone do not publish (the Test workflow still runs them).
 #
 # Versioning: if package.json holds a version that is not on npm yet (e.g. after
@@ -8,14 +9,20 @@ name: Publish to npm
 # patch version is bumped and the bump is committed back to main. Either way the
 # release is tagged v<version>.
 #
+# Beta branch (rewrite/v4): versions are prereleases such as 4.0.0-beta.0, published under npm's `beta` dist-tag,
+# so `npm install poker-rangeman` keeps installing the latest release from main. If package.json's prerelease is
+# already on npm, the last number is bumped (4.0.0-beta.0 -> 4.0.0-beta.1) and committed back to the branch. A
+# prerelease version is refused on main, and a release version on the beta branch.
+#
 # Uses npm trusted publishing (OIDC): no NPM_TOKEN secret is needed, and npm attaches
 # a provenance attestation. The trusted publisher on npmjs.com must name this file.
 on:
   push:
-    branches: [main]
+    branches: [main, rewrite/v4]
     paths:
       - 'src/**'
       - 'index.d.ts'
+      - 'core.d.ts'
       - 'package.json'
   workflow_dispatch:
 
@@ -51,7 +58,33 @@ jobs:
 
       - name: Choose version
         id: version
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
+          if [ "$BRANCH" = "rewrite/v4" ]; then
+            NAME=$(node -p "require('./package.json').name")
+            VERSION=$(node -p "require('./package.json').version")
+            case "$VERSION" in
+              *-*) ;;
+              *) echo "::error::$BRANCH publishes prereleases only, but package.json has $VERSION"; exit 1 ;;
+            esac
+            BUMPED=false
+            # Next prerelease number that is not on npm yet
+            while npm view "$NAME@$VERSION" version > /dev/null 2>&1; do
+              VERSION=$(node -e 'const v = process.argv[1]; const m = v.match(/^(.*?)(\d+)$/); console.log(m ? m[1] + (Number(m[2]) + 1) : v + ".0")' "$VERSION")
+              BUMPED=true
+            done
+            if [ "$BUMPED" = "true" ]; then npm version "$VERSION" --no-git-tag-version > /dev/null; fi
+            echo "bumped=$BUMPED" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "dist_tag=beta" >> "$GITHUB_OUTPUT"
+            echo "Publishing prerelease $VERSION under the beta tag"
+            exit 0
+          fi
+          case "$(node -p "require('./package.json').version")" in
+            *-*) echo "::error::main publishes releases only; package.json has a prerelease version"; exit 1 ;;
+          esac
+          echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           LATEST=$(npm view "$NAME" version 2>/dev/null || echo "0.0.0")
@@ -82,7 +115,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "$VERSION"
-          git push origin HEAD:main
+          git push origin "HEAD:${{ github.ref_name }}"
 
       - name: Tag release
         env:
@@ -96,4 +129,4 @@ jobs:
           fi
 
       - name: Publish
-        run: npm publish
+        run: npm publish --tag "${{ steps.version.outputs.dist_tag }}"

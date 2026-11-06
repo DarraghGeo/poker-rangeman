@@ -7,6 +7,16 @@ import { loaded } from './load.js';
 export const AUTO_WORK = 3e6;
 
 let backend = null;
+let workerUrl = null;
+
+/**
+ * Where the worker script is, for bundlers that don't bundle `new Worker(new URL('./worker.js', import.meta.url))`
+ * themselves: bundle poker-rangeman/src/core/worker.js as its own file and pass its URL. Vite and webpack 5 need
+ * nothing. Workers already started keep running; call terminateWorkers() first to restart them from the new URL.
+ */
+export function setWorkerUrl(url) {
+  workerUrl = url;
+}
 const pool = [];
 const waiting = new Map();
 let nextId = 1;
@@ -33,7 +43,7 @@ async function workersFor(job, workers) {
 
 function acquire(count) {
   while (pool.length < count) {
-    const worker = backend.createWorker();
+    const worker = backend.createWorker(workerUrl);
     worker.busy = 0;
     worker.onMessage(({ id, result, error }) => {
       const task = waiting.get(id);

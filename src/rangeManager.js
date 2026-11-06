@@ -1952,4 +1952,4 @@ for (const name of VALUE_METHODS) {
 
 // The core API: ranges as typed arrays, boards classified once, per-combo equity for both sides (also available
 // as 'poker-rangeman/core')
-export { Range, Board, Matchup, ready, terminateWorkers } from './core/index.js';
+export { Range, Board, ready, terminateWorkers, setWorkerUrl } from './core/index.js';

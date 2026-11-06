@@ -1,5 +1,7 @@
 // Type-checked by `npm run test:types`; not executed.
-import { RangeManager, RangeQuery } from 'poker-rangeman';
+import { RangeManager, RangeQuery, Range, Board, ready } from 'poker-rangeman';
+import { Range as CoreRange, terminateWorkers, idOfHand, HAND_STRINGS } from 'poker-rangeman/core';
+import type { Matchup, Side } from 'poker-rangeman/core';
 import type {
   EquityResult, RankedHand, Breakdown, VillainRange, EvaluationResult, Hand,
   ComparisonReport, CompareToReport, BettingMath, Shape, HandClassesResult
@@ -92,6 +94,21 @@ async function check(): Promise<void> {
   const classWeight: number = classes.classes.air.weight;
   const rankedWeight: number | undefined = (await weighted.rankHands(board))[0]?.weight;
   void [w, one, isW, stored2, pendingW, bucketWeight, nutWeight, classWeight, rankedWeight];
+
+  // Core API
+  const coreHero: Range = Range.from('AA,KK:0.5', { dead: ['Ah'] }).include(['AhKh:0.5']).withSuit('s');
+  const sameClass: typeof CoreRange = Range;
+  const matchup: Matchup = await coreHero.vs('QQ+', board, { workers: false, seed: 1 });
+  const side: Side = matchup.villain;
+  const perCombo: number = matchup.hero.equity[idOfHand('AsKs')] + side.win[0];
+  const strongCore: Range = matchup.hero.above(0.6).filter((id, weight) => weight > 0.5 && HAND_STRINGS[id] !== 'AsAd');
+  const coreBoard: Board = await Board.from(board, { street: 'flop' });
+  const topPairs: Range = coreBoard.matching(coreHero, ['Top Pair', 'isOverPair']);
+  const rankedIds: number[] = coreBoard.rank(coreHero);
+  await ready();
+  const synced: number | null = coreHero.vsSync('QQ', board).hero.total().equity;
+  terminateWorkers();
+  void [sameClass, perCombo, strongCore, topPairs, rankedIds, synced];
 
   const notation: string = top.toNotation();
   const size: number = bottom.size();
