@@ -1,6 +1,6 @@
 {
   "name": "poker-rangeman",
-  "version": "4.0.0-beta.6",
+  "version": "4.0.0-beta.7",
   "description": "A JavaScript library for parsing, filtering and analysing poker hand ranges: notation, dead cards, board texture, hand strength, equity and blockers",
   "main": "src/rangeManager.js",
   "type": "module",
@@ -50,12 +50,11 @@
   },
   "dependencies": {
     "poker-bitvaljs": "^1.12.0",
-    "poker-extval": "6.0.0-beta.2"
+    "poker-extval": "6.0.0-beta.5"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
     "jest": "^29.7.0",
-    "poker-rangeman-v3": "npm:poker-rangeman@^3.8.0",
     "typescript": "^5.9.3"
   },
   "jest": {

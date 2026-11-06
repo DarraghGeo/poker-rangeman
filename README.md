@@ -2,11 +2,10 @@
 
 A JavaScript library for parsing, managing, filtering and analysing poker hand ranges: range notation, dead cards, how a range hits a board, equity against another range, hand strength rankings and blockers. Hand evaluation uses [poker-extval](https://github.com/DarraghGeo/poker-extval); equity uses [poker-bitvaljs](https://github.com/DarraghGeo/poker-bitvaljs).
 
-> **Version 4 beta.** A rewrite for speed with the same results as 3.8: per-hand equity and range-vs-range reports
-> 12-100× faster, board filters 10-50× faster, and a new typed-array [core API](#core-api). All equity comes from
-> poker-bitvaljs.
-> The `RangeManager` API is unchanged and checked against 3.8.0 on random inputs. Install it with
-> `npm install poker-rangeman@beta`; see [Version 4](#version-4) and [BENCHMARKS.md](BENCHMARKS.md).
+> **Version 4 beta.** A rewrite for speed: per-hand equity and range-vs-range reports in milliseconds, board filters
+> on every combo at once, synchronous equity, and a new typed-array [core API](#core-api). All equity comes from
+> poker-bitvaljs; hand evaluation from poker-extval 6. The `RangeManager` API keeps 3.8's methods and options. Install
+> it with `npm install poker-rangeman@beta`; see [Version 4](#version-4) and [BENCHMARKS.md](BENCHMARKS.md).
 
 ## Table of Contents
 
@@ -54,16 +53,16 @@ Version 4 keeps the `RangeManager` API (now the compatibility layer) and rewrite
 - **Caching**: notation strings and segments are parsed once; `toNotation()` is worked out once per range.
 - **Workers**: poker-bitvaljs's own Web Workers, in browsers; see [Workers](#workers).
 
-[BENCHMARKS.md](BENCHMARKS.md) has the full table (`npm run bench`). Highlights against 3.8.0:
+[BENCHMARKS.md](BENCHMARKS.md) has the full table (`npm run bench`). Some timings (Node 22, one thread):
 
-| Operation | 3.8.0 | 4.0 beta |
+| Operation | 4.0 beta | 3.8.0, for scale |
 | --- | --- | --- |
-| `getEquity` per hand, flop | 693 ms | 21 ms |
-| `getEquity` per hand, 600 vs 600 combos, flop | 6.2 s | 48 ms |
-| `against()` + `compare()`, flop | 1.4 s | 24 ms |
-| `against()` + `compare()`, river | 56 ms | 4.8 ms |
-| `makesHand`, flop | 24 ms | 0.4 ms |
-| `handClasses`, flop | 17 ms | 0.5 ms |
+| `getEquity` per hand, flop (174 vs 202 combos) | 16 ms | about 0.5–0.7 s |
+| `getEquity` per hand, flop (about 570 combos each) | 38 ms | about 4–6 s |
+| `against()` + `compare()`, flop | 16 ms | about 0.9–1.4 s |
+| `against()` + `compare()`, river | 4 ms | about 55 ms |
+| `makesHand`, flop | 0.4 ms | about 25 ms |
+| `handClasses`, flop | 0.6 ms | about 18 ms |
 
 ### Core API
 
@@ -157,17 +156,18 @@ Everything is browser-safe: poker-rangeman uses no Node built-ins. `npm run test
 esbuild, runs it in headless Chromium and checks the results match Node. For poker-bitvaljs's Web Workers, see its
 `workerUrl` option.
 
-Bundle size: the esbuild test bundle is about 640 KB unminified. poker-extval 6.0.0-beta.2's ES-module build (105 KB)
-imports poker-rangeman by name for its own range parsing (which version 4 never calls). Its dependency asks for
-poker-rangeman 3, so bundlers include a copy of 3.8.0 (110 KB), which in turn brings poker-extval 5.2 (88 KB) and a second,
-CommonJS copy of poker-bitvaljs. Those copies go away once poker-extval accepts poker-rangeman 4 (or makes it optional)
-and poker-rangeman 3 accepts poker-extval 6.
+Bundle size: an app bundle with esbuild is about 380 KB unminified: poker-rangeman 162 KB, poker-bitvaljs 112 KB and
+poker-extval 107 KB, one copy each. poker-extval 6.0.0-beta.5 depends on poker-rangeman 4, so npm and bundlers share
+the app's copy.
 
 ### Breaking changes
 
-The public `RangeManager` API is unchanged: `tests/parity.test.js` checks every method against 3.8.0 on random
-notation, weights, boards, dead cards and options, and the 3.8 unit tests pass unchanged apart from two that
-inspected internals. What changed:
+The public `RangeManager` API keeps 3.8's methods and options, and the 3.8 unit tests pass unchanged apart from two
+that inspected internals. What changed:
+
+- **Straight draws** follow poker-extval 6's corrected outs: an out counts only when its straight beats the board's own
+  straight with the same card, so a few draws 3.8 reported (on poker-extval 5.2), such as 4-2 on 7-9-6-8, are gone
+  (about 0.2% of hands). This affects straight-draw criteria, `breakdown()` flags and the oesd/gutshot hand classes.
 
 - **Preflop per-hand equity** is still a Monte Carlo estimate, now from boards shared by every hand rather than
   separate samples per hand, so individual estimates differ from 3.8's by sampling noise. Postflop is exact, as before.
@@ -175,16 +175,16 @@ inspected internals. What changed:
   core). 4.0.0-beta.0 to beta.4 had their own equity engine, which counted by subtraction and could leave a tiny float
   remainder there, giving a meaningless equity (e.g. −0.08) with fractional weights. Equity now comes from
   poker-bitvaljs's `compareRangeHands`, which reports exactly 0.
-- **Core API (since the earlier betas):** `Range#vsSync`, the `seed` option, `Matchup#runouts`, `setWorkerUrl`,
-  `AUTO_WORK`, `rangeEquity` and `runoutCount` are gone with the engine; `Matchup#compareTo` is async; `workers` is a
-  boolean passed to poker-bitvaljs.
+- **Core API (since the earlier betas):** the `seed` option, `Matchup#runouts`, `setWorkerUrl`, `AUTO_WORK`,
+  `rangeEquity` and `runoutCount` are gone with the engine; `Matchup#compareTo` is async (`compareToSync` is its
+  synchronous twin); `workers` is a boolean passed to poker-bitvaljs.
 - **Private methods** (`_computeEquity`, `_handEquity`, the notation parsers, the report helpers and similar) are gone
   or moved into `src/core`.
 - **New draw flags** from poker-extval 6: `isNutFlushDraw`, `isNutBackdoorFlushDraw`, `isDoubleGutshot`,
   `isBackdoorStraightDraw` and `isBackdoorComboDraw` appear in `getObject()`/`evaluateHand()` evaluations,
   `breakdown()` and `compare().flags`, and work as criteria ('Nut Flush Draw', 'Nut Backdoor Flush Draw',
   'Double Gutshot', 'Backdoor Straight Draw', 'Backdoor Combo Draw'). Nothing else in those results changes.
-- **Dependencies**: poker-extval 6.0.0-beta.2 (prerelease, pinned exactly: prerelease ranges can pull in breaking
+- **Dependencies**: poker-extval 6.0.0-beta.5 (prerelease, pinned exactly: prerelease ranges can pull in breaking
   betas) and poker-bitvaljs 1.12.
 
 ## Installation
@@ -1562,7 +1562,7 @@ import { Range, Board, type Matchup } from 'poker-rangeman/core';
 
   It then tags the release `v<version>` and publishes with npm trusted publishing (no stored token, with provenance). It can also be started by hand from the Actions tab.
 - **Betas** come from the `rewrite/v4` branch the same way. Its versions are prereleases (`4.0.0-beta.0`); each release bumps the last number when needed and publishes under npm's `beta` tag, so `npm install poker-rangeman` keeps installing the latest release from `main`. The workflow refuses a prerelease version on `main` and a release version on the beta branch.
-- **Parity, browser and benchmarks**: `npm test` includes the parity suite against 3.8.0; `npm run test:browser` runs the browser check (needs a Playwright Chromium); `npm run bench` compares speed with 3.8.0.
+- **Browser and benchmarks**: `npm run test:browser` runs the browser check (needs a Playwright Chromium); `npm run bench` times the main operations (`-- --write` saves BENCHMARKS.md).
 
 ## License
 

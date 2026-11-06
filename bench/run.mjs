@@ -1,8 +1,7 @@
-// Benchmarks poker-rangeman 3.8.0 (the poker-rangeman-v3 dev dependency) against this checkout.
-// Each operation runs on fresh RangeManager instances, so per-instance caches don't carry over between runs.
+// Benchmarks this checkout. Each operation runs on fresh RangeManager instances, so per-instance caches don't carry over
+// between runs.
 // Usage: node bench/run.mjs [--runs 5] [--write]   (--write saves BENCHMARKS.md)
 import { writeFileSync } from 'node:fs';
-import { RangeManager as V3 } from 'poker-rangeman-v3';
 import { RangeManager as V4 } from '../src/rangeManager.js';
 
 const args = process.argv.slice(2);
@@ -68,25 +67,23 @@ async function time(fn, RM) {
 const fmt = ms => (ms >= 100 ? ms.toFixed(0) : ms >= 10 ? ms.toFixed(1) : ms.toFixed(2));
 const rows = [];
 for (const [name, fn] of ops) {
-  const v3 = await time(fn, V3);
-  const v4 = await time(fn, V4);
-  rows.push({ name, v3, v4 });
-  console.log(`${name.padEnd(46)} ${fmt(v3).padStart(9)} ms  ${fmt(v4).padStart(9)} ms  ${(v3 / v4).toFixed(1).padStart(6)}×`);
+  const ms = await time(fn, V4);
+  rows.push({ name, ms });
+  console.log(`${name.padEnd(46)} ${fmt(ms).padStart(9)} ms`);
 }
 
 if (WRITE) {
-  const table = rows.map(r => `| ${r.name} | ${fmt(r.v3)} ms | ${fmt(r.v4)} ms | ${(r.v3 / r.v4).toFixed(1)}× |`).join('\n');
+  const table = rows.map(r => `| ${r.name} | ${fmt(r.ms)} ms |`).join('\n');
   writeFileSync(new URL('../BENCHMARKS.md', import.meta.url), `# Benchmarks
 
-poker-rangeman 3.8.0 against this version, ${process.version}, ${(await import('node:os')).cpus().length} cores, median of ${RUNS} runs after a
-warm-up. Each run uses fresh instances, single-threaded (no workers). Regenerate with \`npm run bench -- --write\`.
+This version, ${process.version}, ${(await import('node:os')).cpus().length} cores, median of ${RUNS} runs after a warm-up. Each run uses fresh
+instances, single-threaded. Regenerate with \`npm run bench -- --write\`.
 
 Notation strings are remembered once parsed, so "same string" mostly measures the cache; "different strings" parses
-input it hasn't seen (its notation segments can still be cached). Range totals (\`equity()\`) use poker-bitvaljs's
-whole-range call in both versions.
+input it hasn't seen (its notation segments can still be cached). All equity comes from poker-bitvaljs.
 
-| Operation | 3.8.0 | This version | Faster |
-| --- | --- | --- | --- |
+| Operation | Time |
+| --- | --- |
 ${table}
 `);
   console.log('Wrote BENCHMARKS.md');
