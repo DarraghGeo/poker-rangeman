@@ -1,5 +1,5 @@
 // The core API (src/core): checked against the RangeManager API, which tests/parity.test.js checks against 3.8.0.
-import { Range, Board, ready, terminateWorkers, idOfHand, COMBO_COUNT } from '../src/core/index.js';
+import { Range, Board, ready, terminateWorkers, idOfHand, COMBO_COUNT, HAND_STRINGS } from '../src/core/index.js';
 import { RangeManager } from '../src/rangeManager.js';
 
 const OPENER = '66+,A9s+,KTs+,QTs+,JTs,T9s,ATo+,KJo+';
@@ -130,6 +130,23 @@ describe('Board', () => {
       }
     }
     expect(() => Board.fromSync(['Ah'])).toThrow('A board has 3 to 5 cards');
+  });
+
+  it("reads every flag in poker-extval's own bit layout", async () => {
+    const { evaluateHand, FLAGS } = await import('poker-extval');
+    for (const board of [['Kh', '9h', '4c'], ['As', 'Ks', '5d', '4c'], ['8c', '8d', '3h', 'Jh', '2s']]) {
+      const b = await Board.from(board);
+      let checked = 0;
+      for (let id = 0; id < COMBO_COUNT; id += 7) {
+        if (b.blocked[id]) continue;
+        const hand = HAND_STRINGS[id];
+        const cards = [hand.slice(0, 2), hand.slice(2)];
+        const [evaluation] = Object.values(evaluateHand([...cards, ...board], { strict: true, holeCards: cards }));
+        for (const flag of Object.keys(FLAGS)) expect([hand, flag, b.has(id, flag)]).toEqual([hand, flag, evaluation[flag]]);
+        checked++;
+      }
+      expect(checked).toBeGreaterThan(150);
+    }
   });
 
   it('ranks like strongest() and weakest()', async () => {

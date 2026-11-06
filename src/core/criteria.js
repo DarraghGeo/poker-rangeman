@@ -18,6 +18,9 @@ export const CRITERIA_MAPPING = {
   'Flush Draw': 'isFlushDraw', 'Backdoor Flush Draw': 'isBackdoorFlushDraw',
   'Open Ended Straight Draw': 'isOpenEndedStraightDraw', 'Inside Straight Draw': 'isInsideStraightDraw',
   'Straight Draw': 'isStraightDraw', 'Combo Draw': 'isComboDraw',
+  // Draws added in poker-extval 6
+  'Nut Flush Draw': 'isNutFlushDraw', 'Nut Backdoor Flush Draw': 'isNutBackdoorFlushDraw', 'Double Gutshot': 'isDoubleGutshot',
+  'Backdoor Straight Draw': 'isBackdoorStraightDraw', 'Backdoor Combo Draw': 'isBackdoorComboDraw',
   // Wheel Straight Support
   'Straight Wheel': 'isStraightWheel', 'Open Ended Straight Draw Wheel': 'isOpenEndedStraightDrawWheel',
   'Inside Straight Draw Wheel': 'isInsideStraightDrawWheel',

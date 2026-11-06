@@ -6,6 +6,7 @@ import { rangeEquity } from './core/equity.js';
 import { COMBO_COUNT, COMBO_LO, COMBO_HI, idOfHand, cardIndex } from './core/cards.js';
 import * as notation from './core/notation.js';
 import { loadBitVal, loadExtVal } from './core/load.js';
+import { flagLayout, hasFlagAt, flagMasks } from './core/flags.js';
 import { CRITERIA_MAPPING, CRITERIA_LOOKUP, VALID_CRITERIA, MADE_HANDS } from './core/criteria.js';
 
 // poker-extval and poker-bitvaljs are loaded lazily on first use (see _loadEvaluator, _loadBitVal)
@@ -51,7 +52,6 @@ const VILLAIN_DRAWS = [
 
 // poker-extval 6's core: every combo's strict-mode flags on a board, as two Int32Arrays indexed by combo id
 const classifiedBoards = new Map();
-let MIDDLE_PAIR_BIT = 0;
 function classifiedBoard(board, street) {
   const key = `${board.join(',')}|${street ?? ''}`;
   let result = classifiedBoards.get(key);
@@ -68,11 +68,8 @@ function classifiedBoard(board, street) {
 
 // The flags set for a combo, in poker-extval's evaluation key order, plus the derived isMiddlingPair
 function strictFlagsOf(classified, id, hand) {
-  const flags = [];
-  for (const [name, index] of Object.entries(extval.FLAGS)) {
-    const on = index < 32 ? (classified.lo[id] & (1 << index)) !== 0 : (classified.hi[id] & (1 << (index - 32))) !== 0;
-    if (on) flags.push(name);
-  }
+  const layout = flagLayout(extval);
+  const flags = layout.names.filter(name => hasFlagAt(layout, classified, id, name));
   if (flags.includes('isMiddlePair') && hand[0] === hand[2]) flags.push('isMiddlingPair');
   return flags;
 }
@@ -84,16 +81,12 @@ function flagObject(classified, id, hand) {
   return object;
 }
 
-// Flag criteria as bit masks over classifiedBoard's lo (flags 0-31) and hi (32+) words
+// Flag criteria as bit masks over classifiedBoard's (lo, hi) words, in poker-extval's own layout
 function criteriaMasks(criteria) {
-  const { FLAGS } = extval;
-  MIDDLE_PAIR_BIT = 1 << FLAGS.isMiddlePair;
-  const masks = { lo: 0, hi: 0, middling: false };
-  for (const criterion of criteria) {
-    if (criterion === 'isMiddlingPair') { masks.middling = true; continue; }
-    const flag = FLAGS[criterion];
-    if (flag < 32) masks.lo |= 1 << flag; else masks.hi |= 1 << (flag - 32);
-  }
+  const layout = flagLayout(extval);
+  const masks = flagMasks(layout, criteria.filter(c => c !== 'isMiddlingPair'));
+  masks.middling = criteria.includes('isMiddlingPair');
+  masks.middlePair = flagMasks(layout, ['isMiddlePair']);
   return masks;
 }
 
@@ -547,7 +540,7 @@ export class RangeManager {
         this.evaluatedKeys.add(this._cacheKey(hand, boardKey, true, options.street));
         const id = idOfHand(hand);
         if ((lo[id] & masks.lo) !== 0 || (hi[id] & masks.hi) !== 0) return true;
-        return masks.middling && (lo[id] & MIDDLE_PAIR_BIT) !== 0 && hand[0] === hand[2];
+        return masks.middling && ((lo[id] & masks.middlePair.lo) !== 0 || (hi[id] & masks.middlePair.hi) !== 0) && hand[0] === hand[2];
       });
       return this._createEvaluatedInstance(filtered, board, normalizedCriteria, options);
     }

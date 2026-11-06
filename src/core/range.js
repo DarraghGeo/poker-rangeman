@@ -6,6 +6,7 @@ import { parseWeighted, expandCards, isValidCard, isValidConcreteCard, isValidSu
 import { criterionFlag, VALID_CRITERIA } from './criteria.js';
 import { rangeEquity } from './equity.js';
 import { loadBitVal, loadExtVal, loaded } from './load.js';
+import { flagLayout, hasFlagAt, flagMasks } from './flags.js';
 import { runPooled } from './pool.js';
 
 const SUIT_INDEX = { s: 0, h: 1, d: 2, c: 3 };
@@ -196,7 +197,7 @@ export class Range {
   /** vs() without workers, after `await ready()`. */
   vsSync(villain, board = [], options = {}) {
     const job = this.#matchupJob(villain, board, options);
-    return new Matchup(job, rangeEquity(loaded().bitval, job));
+    return new Matchup(job, rangeEquity(loaded('bitval').bitval, job));
   }
 
   #matchupJob(villain, board, options) {
@@ -290,7 +291,7 @@ export class Matchup {
  * and score (higher wins, equal ties), indexed by combo id.
  */
 export class Board {
-  constructor(cards, street, classified, FLAGS) {
+  constructor(cards, street, classified, FLAGS, layout) {
     this.cards = cards;
     this.street = street;
     this.lo = classified.lo;
@@ -299,6 +300,7 @@ export class Board {
     this.score = classified.score;
     this.blocked = classified.blocked;
     this.FLAGS = FLAGS;
+    this.layout = layout;
   }
 
   /** options.street: 'flop' | 'turn' | 'river' (default: from the number of cards). */
@@ -309,7 +311,7 @@ export class Board {
 
   /** Board.from() after `await ready()`. */
   static fromSync(cards, options = {}) {
-    const { extval } = loaded();
+    const { extval } = loaded('extval');
     if (!Array.isArray(cards) || cards.length < 3 || cards.length > 5) throw new Error('A board has 3 to 5 cards');
     const normalized = cards.map(card => {
       if (!isValidConcreteCard(card)) throw new Error(`Invalid board card: ${card}`);
@@ -325,14 +327,14 @@ export class Board {
       if (boardCache.size >= 64) boardCache.delete(boardCache.keys().next().value);
       boardCache.set(key, classified);
     }
-    return new Board(normalized, options.street ?? null, classified, extval.FLAGS);
+    return new Board(normalized, options.street ?? null, classified, extval.FLAGS, flagLayout(extval));
   }
 
   /** Whether combo id holds a flag ('isTopPair', or a criterion name such as 'Top Pair'). */
   has(id, flag) {
-    const index = this.FLAGS[criterionFlag(flag)];
-    if (index === undefined) throw new Error(`Unknown flag: ${flag}`);
-    return index < 32 ? (this.lo[id] & (1 << index)) !== 0 : (this.hi[id] & (1 << (index - 32))) !== 0;
+    const name = criterionFlag(flag);
+    if (this.FLAGS[name] === undefined) throw new Error(`Unknown flag: ${flag}`);
+    return hasFlagAt(this.layout, this, id, name);
   }
 
   /** The combos of the range holding any of the criteria (all of them with { all: true }). */
@@ -342,20 +344,12 @@ export class Board {
       if (!VALID_CRITERIA.has(flag) && this.FLAGS[flag] === undefined) throw new Error(`Invalid criteria: ${flag}`);
     }
     const middling = list.includes('isMiddlingPair');
-    let lo = 0, hi = 0;
-    const masks = [];
-    for (const flag of list) {
-      if (flag === 'isMiddlingPair') { masks.push(null); continue; }
-      const index = this.FLAGS[flag];
-      const bit = index < 32 ? [1 << index, 0] : [0, 1 << (index - 32)];
-      lo |= bit[0]; hi |= bit[1];
-      masks.push(bit);
-    }
-    const middleBit = 1 << this.FLAGS.isMiddlePair;
-    const isMiddling = id => (this.lo[id] & middleBit) !== 0 && COMBO_LO[id] >> 2 === COMBO_HI[id] >> 2;
+    const flags = list.filter(flag => flag !== 'isMiddlingPair');
+    const { lo, hi } = flagMasks(this.layout, flags);
+    const isMiddling = id => hasFlagAt(this.layout, this, id, 'isMiddlePair') && COMBO_LO[id] >> 2 === COMBO_HI[id] >> 2;
     return range.filter(id => {
       if (this.blocked[id]) return false;
-      if (all) return masks.every(m => (m === null ? isMiddling(id) : (this.lo[id] & m[0]) === m[0] && (this.hi[id] & m[1]) === m[1]));
+      if (all) return flags.every(flag => hasFlagAt(this.layout, this, id, flag)) && (!middling || isMiddling(id));
       return (this.lo[id] & lo) !== 0 || (this.hi[id] & hi) !== 0 || (middling && isMiddling(id));
     });
   }

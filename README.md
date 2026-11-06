@@ -123,8 +123,9 @@ The worker starts with `new Worker(new URL('../worker.js', import.meta.url), { t
 webpack 5 bundle on their own. With other bundlers, bundle `poker-rangeman/src/core/worker.js` as a separate file and
 pass its URL to `setWorkerUrl(url)`, or use `workers: false`.
 
-poker-extval 6 still lists poker-rangeman 3 as a dependency (for its own range parsing, which version 4 never
-calls), so bundles currently include a copy of it (about 140 KB unminified) until poker-extval makes it optional.
+Bundle size: the esbuild test bundle is about 500 KB unminified, of which poker-extval 6.0.0-beta.1 is 242 KB. Its
+ES-module build embeds its own copies of poker-bitvaljs and poker-rangeman 3 (for its range parsing, which version 4
+never calls), so bitval is included twice; that will shrink once poker-extval's build leaves them as imports.
 
 ### Breaking changes
 
@@ -136,7 +137,12 @@ inspected internals. What changed:
   separate samples per hand, so individual estimates differ from 3.8's by sampling noise. Postflop is exact, as before.
 - **Private methods** (`_computeEquity`, `_handEquity`, the notation parsers and similar) are gone or moved into
   `src/core`.
-- **Dependencies**: poker-extval 6 (prerelease) and poker-bitvaljs 1.9.
+- **New draw flags** from poker-extval 6: `isNutFlushDraw`, `isNutBackdoorFlushDraw`, `isDoubleGutshot`,
+  `isBackdoorStraightDraw` and `isBackdoorComboDraw` appear in `getObject()`/`evaluateHand()` evaluations,
+  `breakdown()` and `compare().flags`, and work as criteria ('Nut Flush Draw', 'Nut Backdoor Flush Draw',
+  'Double Gutshot', 'Backdoor Straight Draw', 'Backdoor Combo Draw'). Nothing else in those results changes.
+- **Dependencies**: poker-extval 6.0.0-beta.1 (prerelease, pinned exactly: prerelease ranges can pull in breaking
+  betas) and poker-bitvaljs 1.9.
 
 ## Installation
 
@@ -1196,6 +1202,7 @@ Criteria available for use with `makesHand()`, `hitsHand()`, and `hitsHandBoth()
 - `'Inside Straight Draw'` - Inside straight draw (gutshot)
 - `'Straight Draw'` - Straight draw
 - `'Combo Draw'` - Combo draw (both flush and straight draw)
+- `'Nut Flush Draw'`, `'Nut Backdoor Flush Draw'`, `'Double Gutshot'`, `'Backdoor Straight Draw'`, `'Backdoor Combo Draw'` - poker-extval 6's refinements of the draws above (version 4)
 
 Draws must use a hole card: four hearts on the board are not a flush draw for a hand without a heart.
 

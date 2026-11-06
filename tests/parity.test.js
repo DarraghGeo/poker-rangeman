@@ -66,8 +66,18 @@ function close(a, b, path = '') {
   return null;
 }
 
+// Draw flags poker-extval 6 added (evaluations, breakdowns and compare().flags gain them); 3.8.0 runs on poker-extval
+// 5.2, which doesn't have them, so they're left out of the comparison. Everything else must match.
+const EXTVAL6_FLAGS = new Set(['isNutFlushDraw', 'isNutBackdoorFlushDraw', 'isDoubleGutshot', 'isBackdoorStraightDraw', 'isBackdoorComboDraw']);
+function withoutNewFlags(value) {
+  if (Array.isArray(value)) return value.map(withoutNewFlags);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !EXTVAL6_FLAGS.has(key)).map(([key, v]) => [key, withoutNewFlags(v)]));
+}
+
 async function expectSame(label, fn) {
-  const [v3, v4] = await both(fn);
+  const [v3, raw] = await both(fn);
+  const v4 = withoutNewFlags(raw);
   const diff = close(v3, v4);
   if (diff) throw new Error(`${label}: ${diff}`);
 }

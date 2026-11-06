@@ -82,9 +82,9 @@ const plainJob = job => ({
 /** Runs rangeEquity, in workers when it pays (see workersFor), else on this thread. */
 export async function runPooled(job, workers) {
   const count = await workersFor(job, workers);
-  if (count === 0) return rangeEquity(loaded().bitval, job);
+  if (count === 0) return rangeEquity(loaded('bitval').bitval, job);
   let threads;
-  try { threads = acquire(count); } catch { return rangeEquity(loaded().bitval, job); }
+  try { threads = acquire(count); } catch { return rangeEquity(loaded('bitval').bitval, job); }
   const base = plainJob(job);
   const total = runoutCount(job.board, job.dead);
   const parts = threads.map((worker, k) => {

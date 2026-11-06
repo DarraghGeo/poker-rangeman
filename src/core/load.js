@@ -21,7 +21,7 @@ export async function loadExtVal() {
     const mod = await import('poker-extval');
     // poker-extval is CommonJS: Node exposes its functions as named exports, some bundlers only on default
     const pick = name => mod[name] || (mod.default && mod.default[name]);
-    extval = { evaluateHand: pick('evaluateHand'), evaluate: pick('evaluate'), board: pick('board'), FLAGS: pick('FLAGS') };
+    extval = { evaluateHand: pick('evaluateHand'), evaluate: pick('evaluate'), board: pick('board'), FLAGS: pick('FLAGS'), hasFlag: pick('hasFlag') };
   }
   return extval;
 }
@@ -32,7 +32,9 @@ export function ready() {
   return pending;
 }
 
-export function loaded() {
-  if (!bitval || !extval) throw new Error('Call `await ready()` first: the evaluators load asynchronously');
+/** The loaded evaluators; `need` names the ones the caller uses ('bitval', 'extval'). */
+export function loaded(...need) {
+  const missing = (need.length ? need : ['bitval', 'extval']).filter(name => (name === 'bitval' ? !bitval : !extval));
+  if (missing.length) throw new Error('Call `await ready()` first: the evaluators load asynchronously');
   return { bitval, extval };
 }
