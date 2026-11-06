@@ -54,7 +54,7 @@
   "devDependencies": {
     "esbuild": "^0.28.2",
     "jest": "^29.7.0",
-    "poker-extval": "6.0.0-beta.5",
+    "poker-extval": "6.0.0-beta.6",
     "typescript": "^5.9.3"
   },
   "jest": {
