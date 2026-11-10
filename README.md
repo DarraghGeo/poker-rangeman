@@ -15,6 +15,7 @@ A JavaScript library for parsing, managing, filtering and analysing poker hand r
   - [Equity Methods](#equity-methods)
   - [Strength, Breakdown and Blockers](#strength-breakdown-and-blockers)
   - [Range vs Range Analysis](#range-vs-range-analysis)
+  - [Board Texture](#board-texture)
   - [Combo Weights](#combo-weights)
 - [Range Notation Guide](#range-notation-guide)
 - [Hand Strength Criteria](#hand-strength-criteria)
@@ -891,6 +892,77 @@ bluffs.size();             // 24 (60 strong combos x alpha 0.4)
 - `bluffCandidates({ pot, bet, value? })`: as the bettor, bluffs to pair with your value hands (the bands in `value`, default the top band). The count is value combos × alpha, so bluffs make up the pot-odds share of the betting range. It takes the lowest-band hands first, preferring those that block more of villain's continuing range (villain hands with at least the pot odds), then lower equity. Async and chainable.
 
 **Performance:** `against()` runs one equity calculation per hand in your range; the first `buckets()` or `compare()` runs one per hand in villain's range. The example above takes about 1.5 s. Two full ranges of about 600 combos each on the flop take about 7 s for `against()` and 7 s more for `compare()`.
+
+---
+
+### Board Texture
+
+Coaches describe boards as wet or dry, connected, and static or dynamic. `RangeManager.boardTexture()` describes the board itself, without any range: it scores each degree from 0 to 1, as `shape.polarized` is, and adds labels and counts.
+
+#### `RangeManager.boardTexture(boardCards, deadCards?)`
+
+A static method, async to match the other evaluation methods. It takes any board of 3, 4 or 5 cards and optional dead cards (wildcards such as `'Ax'` work as in the constructor). Board and dead cards are left out of every count.
+
+```javascript
+const texture = await RangeManager.boardTexture(['Jh', 'Th', '9c']);
+texture.scores.wetness;   // 0.81
+texture.scores.dynamism;  // 0.53
+texture.suits;            // 'twoTone'
+texture.straights;        // 3 (7-J, 8-Q and 9-K)
+```
+
+The counts are exact, not Monte Carlo: every two-card hand that can be dealt is evaluated with poker-bitvaljs's integer ranking. Every score is defined for any board size, not per street: the formulas use the board's own size, and the scaled scores compare it with every board of that size. A report takes a few milliseconds.
+
+#### Texture scores
+
+| Score | Formula | 0 means | 1 means |
+| --- | --- | --- | --- |
+| `scores.suitedness` | (most cards of one suit − 1) / (board size − 1) | No two cards share a suit | Every card one suit |
+| `scores.pairedness` | (board size − distinct ranks) / (board size − ⌈size / 4⌉), ⌈size / 4⌉ being the fewest distinct ranks possible | Unpaired | As paired as the size allows: trips on 3 cards, quads on 4, a full house or quads on 5 |
+| `scores.height` | (mean rank − 2) / 12, with J = 11, Q = 12, K = 13, A = 14 | Every card a 2 | Every card an ace |
+| `scores.connectedness` | Share of hands with a made straight, OESD or gutshot, scaled against all boards of the same size | The board with the least straight potential | The board with the most |
+| `scores.wetness` | Share of hands with two pair or better, or any draw (each hand counted once), scaled against all boards of the same size | The driest board | The wettest board |
+| `scores.dynamism` | Mean, over every next card, of the mean absolute change in each hand's strength percentile, scaled against all boards of the same size; `null` on 5 cards, with no card to come | The next card rarely changes who's ahead | Most next cards reshuffle hand strength |
+
+What each count takes into account:
+
+- **Made straight**: the hand makes a higher straight than the board alone (on 5 cards the board can be a straight itself).
+- **OESD or gutshot**: one more card of some rank would give the hand a straight above any the board makes with that card. Two or more such ranks is an OESD (or double gutshot), one a gutshot. On J-T-9-8 a queen gives everyone 8-Q, so a king in the hand is a draw (to 9-K) but 2-2 is not.
+- **Flush draw**: four to a flush, at least one of them a hole card.
+- **Two pair or better**: the hand's made hand, kickers aside, beats the board's own. On K-K-7-7 the board's two pair doesn't count, nor does a better kicker, but A-A (a better two pair) and any full house do. On a 5-card flush board, a higher flush counts.
+- **Strength percentile**: a hand's rank among all hands that can be dealt on the board, from 0 (the weakest) to 1 (the best), ties sharing the middle rank. `dynamism` deals each next card in turn, ranks the hands left again, and averages how far each hand's percentile moved.
+
+Draws need a card to come, so on 5 cards `connectedness` counts made straights only and `wetness` made hands only.
+
+**Scaling.** `connectedness`, `wetness` and `dynamism` have no natural 1, so they are rescaled: for each board size, the lowest raw value over every board of that size is 0 and the highest is 1. The constants are worked out once over the suit-distinct boards (1,755 flops, 16,432 turns, 134,459 rivers) by `node scripts/board-texture-scales.js`, which writes `src/boardTextureScales.js`, and a test checks that they still match the script. No board is scored against constants from another size. Dead cards can push a raw value outside the range seen without them; the score is then clamped to 0 or 1.
+
+#### Other fields
+
+- **Labels:** `suits` (the most cards of one suit: 1 `rainbow`, 2 `twoTone`, 3 `monotone`, 4 `fourFlush`, 5 `fiveFlush`; so a turn with three hearts is `monotone`), `pairing` (`unpaired`, `paired`, `twoPair`, `trips`, `fullHouse` or `quads`) and `highCard` (the top rank, e.g. `'J'`).
+- **Counts:** `combos` (hands that can be dealt), `straights` (distinct straights the board allows: five-rank windows that two hole cards can complete, with live cards for the missing ranks), `flushDraws`, `straightDraws` (OESD or gutshot, without a made straight) and `madeHands` (two pair or better, as above).
+- **Raw:** `raw.connectedness` and `raw.wetness` (the unscaled shares of `combos`) and `raw.dynamism` (the unscaled mean change in percentile, `null` on 5 cards).
+
+Some examples:
+
+| Board | suitedness | pairedness | height | connectedness | wetness | dynamism | Labels |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| J-T-9 two-tone | 0.50 | 0 | 0.67 | 1 | 0.81 | 0.53 | twoTone, unpaired |
+| 8-7-6 monotone | 1 | 0 | 0.42 | 1 | 1 | 0.90 | monotone, unpaired |
+| K-7-2 rainbow | 0 | 0 | 0.44 | 0 | 0 | 0.19 | rainbow, unpaired |
+| 7-4-2 rainbow | 0 | 0 | 0.19 | 0.17 | 0.14 | 0.49 | rainbow, unpaired |
+| A-A-7 rainbow | 0 | 0.50 | 0.81 | 0 | 0.32 | 0.21 | rainbow, paired |
+| J-T-9-8 two-tone | 0.33 | 0 | 0.63 | 0.79 | 0.60 | 0.27 | twoTone, unpaired |
+| K-7-2-9, four hearts | 1 | 0 | 0.48 | 0.23 | 0.54 | 0.05 | fourFlush, unpaired |
+| J-T-9-8-2 | 0.25 | 0 | 0.50 | 1 | 0.50 | `null` | twoTone, unpaired |
+| K-K-7-7-2 | 0.25 | 0.67 | 0.53 | 0 | 0.24 | `null` | twoTone, twoPair |
+
+7-4-2 is dry but dynamic: few hands have anything, so most turns change who's ahead. A-A-7 is static: the next card rarely moves the hands. K-7-2-9 with four hearts is wet but static, because the flush is already there.
+
+Limits worth knowing:
+
+- Every hand counts equally: these are properties of the board, not of anyone's range. Range-relative fit and advantage, blockers and backdoor draws are left out.
+- On a paired board any pair in the hand makes two pair, so paired boards score wetter than coaches' "dry" might suggest (A-A-7 above).
+- The scaled scores rank boards against each other; a 0.5 is halfway between the least and most of all boards of that size, not "half the hands".
 
 ---
 

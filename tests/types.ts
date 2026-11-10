@@ -2,10 +2,16 @@
 import { RangeManager, RangeQuery } from 'poker-rangeman';
 import type {
   EquityResult, RankedHand, Breakdown, VillainRange, EvaluationResult, Hand,
-  ComparisonReport, CompareToReport, BettingMath, Shape, HandClassesResult
+  ComparisonReport, CompareToReport, BettingMath, Shape, HandClassesResult, BoardTexture
 } from 'poker-rangeman';
 
 async function check(): Promise<void> {
+  const texture: BoardTexture = await RangeManager.boardTexture(['Jh', 'Th', '9c'], ['Ax']);
+  const wetness: number = texture.scores.wetness;
+  const dynamism: number | null = texture.scores.dynamism;
+  const suits: 'rainbow' | 'twoTone' | 'monotone' | 'fourFlush' | 'fiveFlush' = texture.suits;
+  const rawDynamism: number | null = texture.raw.dynamism;
+
   const rm = new RangeManager('TT+,AQs+,AK', ['Ah']);
   const board = ['Kh', '9h', '4d'];
 
@@ -91,6 +97,7 @@ async function check(): Promise<void> {
   const nutWeight: number = report.hero.nuts.weight;
   const classWeight: number = classes.classes.air.weight;
   const rankedWeight: number | undefined = (await weighted.rankHands(board))[0]?.weight;
+  void [wetness, dynamism, suits, rawDynamism, texture.straights];
   void [w, one, isW, stored2, pendingW, bucketWeight, nutWeight, classWeight, rankedWeight];
 
   const notation: string = top.toNotation();

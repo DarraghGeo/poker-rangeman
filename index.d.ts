@@ -375,8 +375,53 @@ export const RangeQuery: {
   readonly prototype: RangeQuery;
 };
 
+/** Board texture scores, each from 0 to 1. See README "Board Texture". */
+export interface TextureScores {
+  /** (most cards of one suit - 1) / (board size - 1). 0 = no two cards share a suit, 1 = every card one suit. */
+  suitedness: number;
+  /** (size - distinct ranks) / (size - ceil(size / 4)). 0 = unpaired, 1 = trips (3 cards), quads (4), full house or quads (5). */
+  pairedness: number;
+  /** (mean rank - 2) / 12, ace = 14. 0 = every card a 2, 1 = every card an ace. */
+  height: number;
+  /** Share of hands with a made straight, OESD or gutshot, scaled over all boards of the same size. */
+  connectedness: number;
+  /** Share of hands with two pair or better, or any draw, scaled over all boards of the same size. */
+  wetness: number;
+  /** Mean change in hands' strength percentile over every next card, scaled over all boards of the same size; null on 5 cards. */
+  dynamism: number | null;
+}
+
+export interface BoardTexture {
+  /** The board, normalized ('jh' becomes 'Jh'). */
+  board: Card[];
+  scores: TextureScores;
+  /** The most cards of one suit: 1 rainbow, 2 twoTone, 3 monotone, 4 fourFlush, 5 fiveFlush. */
+  suits: 'rainbow' | 'twoTone' | 'monotone' | 'fourFlush' | 'fiveFlush';
+  pairing: 'unpaired' | 'paired' | 'twoPair' | 'trips' | 'fullHouse' | 'quads';
+  /** The top rank, e.g. 'J'. */
+  highCard: string;
+  /** Hands that can be dealt (board and dead cards left out). Every count below is out of these. */
+  combos: number;
+  /** Distinct straights the board allows: windows of five ranks missing at most two, with live cards for them. */
+  straights: number;
+  /** Hands with four to a flush, at least one of them a hole card. 0 on 5 cards. */
+  flushDraws: number;
+  /** Hands with an OESD or gutshot and no made straight. 0 on 5 cards. */
+  straightDraws: number;
+  /** Hands with two pair or better that beats the board's own made hand, kickers aside. */
+  madeHands: number;
+  /** The unscaled shares (connectedness, wetness) and mean percentile change (dynamism) behind the scores. */
+  raw: { connectedness: number; wetness: number; dynamism: number | null };
+}
+
 export class RangeManager {
   constructor(input: RangeInput, deadCards?: DeadCard[]);
+
+  /**
+   * Texture of a 3-, 4- or 5-card board, with optional dead cards (wildcards like 'Ax' allowed).
+   * Exact counting over every hand that can be dealt. See README "Board Texture".
+   */
+  static boardTexture(boardCards: Card[], deadCards?: DeadCard[]): Promise<BoardTexture>;
 
   readonly rawInput: RangeInput;
   /** Dead cards, wildcards expanded. */

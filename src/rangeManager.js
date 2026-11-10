@@ -1,3 +1,5 @@
+import { boardTexture } from './boardTexture.js';
+
 const VALID_RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
 const VALID_SUITS = ['s', 'h', 'd', 'c'];
 const RANK_VALUES = { A: 14, K: 13, Q: 12, J: 11, T: 10, 9: 9, 8: 8, 7: 7, 6: 6, 5: 5, 4: 4, 3: 3, 2: 2 };
@@ -116,6 +118,14 @@ export class RangeManager {
     // Combo weights from 0 to 1 (frequencies); only combos whose weight is not 1 are stored
     this.handWeights = weights;
     this.filteredHands = this._filterDeadCards(hands);
+  }
+
+  /**
+   * Texture of a 3-, 4- or 5-card board: suitedness, pairedness, height, connectedness, wetness and
+   * dynamism scored from 0 to 1, with labels and counts. Async to match the other evaluation methods.
+   */
+  static async boardTexture(boardCards, deadCards = []) {
+    return boardTexture(boardCards, deadCards);
   }
 
   _isPlainObject(value) {
