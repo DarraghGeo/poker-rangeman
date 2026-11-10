@@ -5,12 +5,6 @@ import { RangeManager, RangeQuery } from '../src/rangeManager.js';
 // TEST IMPLEMENTATIONS - Must be defined before describe blocks
 // ============================================================================
 
-// Helper functions and test data
-const VALID_CARDS = ['As', 'Ah', 'Ad', 'Ac', 'Ks', 'Kh', 'Kd', 'Kc', 'Qs', 'Qh', 'Qd', 'Qc'];
-const VALID_HANDS = ['AhKd', 'AsKs', 'KhQh', 'AdKc'];
-const VALID_RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
-const VALID_SUITS = ['s', 'h', 'd', 'c'];
-
 // Helper function to create RangeManager instance for testing private methods
 function createTestInstance(input, deadCards = []) {
   return new RangeManager(input, deadCards);
@@ -308,6 +302,7 @@ const testFiltering = {
     },
     callExtval: async () => {
       const { evaluateHand } = await import('poker-extval');
+      expect(typeof evaluateHand).toBe('function');
       const rm = createTestInstance('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
       const result = await rm.getObject('AhKd', board);
@@ -775,7 +770,6 @@ const testQuery = {
     },
     returnsEmptyArrayWhenNoHandStrength: async () => {
       const rm = new RangeManager('22+,AKs');
-      const board = ['Ah', 'Kd', 'Qc', 'Js', 'Th'];
       // No filtering done, so lastHandStrength is null
       const keyCards = rm.getKeyCards();
       expect(Array.isArray(keyCards)).toBe(true);
@@ -877,7 +871,6 @@ const testQuery = {
     },
     returnsEmptyWhenNoHandStrength: async () => {
       const rm = new RangeManager('22+,AKs,AKo');
-      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
       // No filtering done, so lastHandStrength is null
       const result = rm.hasKeyCard(['Ah']);
       expect(result.size()).toBe(0);
@@ -950,7 +943,6 @@ const testQuery = {
     },
     returnsEmptyWhenNoHandStrength: async () => {
       const rm = new RangeManager('22+,AKs,AKo');
-      const board = ['Ah', 'Kd', 'Qc', 'Js', '9h'];
       // No filtering done, so lastHandStrength is null
       const result = rm.hasKicker(['Ah']);
       expect(result.size()).toBe(0);

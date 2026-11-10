@@ -26,5 +26,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests and type check
-        run: npm test
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run check
+
+      # npm test would repeat test:types, which npm run check already ran
+      - name: Run tests
+        run: npm run test:jest
