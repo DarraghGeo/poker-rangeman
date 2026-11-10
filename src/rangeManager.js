@@ -1,9 +1,13 @@
+import { loadBitVal, textureReport } from './boardTexture.js';
+
 const VALID_RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
 const VALID_SUITS = ['s', 'h', 'd', 'c'];
 const RANK_VALUES = { A: 14, K: 13, Q: 12, J: 11, T: 10, 9: 9, 8: 8, 7: 7, 6: 6, 5: 5, 4: 4, 3: 3, 2: 2 };
 
-// poker-extval and poker-bitvaljs are loaded lazily on first use (see _loadEvaluator, _loadBitVal)
+// poker-extval and poker-bitvaljs are loaded lazily on first use (see _loadEvaluator, _loadBitVal; one
+// poker-bitvaljs instance, from boardTexture.js's loadBitVal, serves equity and board texture)
 let extval = null;
+// Set by _loadBitVal() for the synchronous helpers that need it (_handValue)
 let bitval = null;
 
 const CRITERIA_MAPPING = {
@@ -116,6 +120,24 @@ export class RangeManager {
     // Combo weights from 0 to 1 (frequencies); only combos whose weight is not 1 are stored
     this.handWeights = weights;
     this.filteredHands = this._filterDeadCards(hands);
+  }
+
+  /**
+   * Texture of a 3-, 4- or 5-card board: suitedness, pairedness, height, connectedness, wetness and
+   * dynamism scored from 0 to 1, with labels and counts. Async to match the other evaluation methods.
+   */
+  static async boardTexture(boardCards, deadCards = []) {
+    // The validation helpers use no instance state, so the prototype serves as `this`
+    const v = RangeManager.prototype;
+    if (!Array.isArray(boardCards)) throw new Error('Board cards must be an array');
+    if (boardCards.length < 3 || boardCards.length > 5) throw new Error(`A board has 3, 4 or 5 cards. Got ${boardCards.length}`);
+    const board = v._normalizeBoardCards(boardCards);
+    const deadList = deadCards ?? [];
+    const dead = v._validateAndExpandDeadCards(deadList);
+    // A wildcard covers the cards it can ('Ax' on an ace-high board means the other aces); a named card can't be on the board
+    const onBoard = deadList.filter(card => v._isValidConcreteCard(card)).map(card => v._normalizeCard(card)).filter(card => board.includes(card));
+    if (onBoard.length > 0) throw new Error(`Dead cards cannot be on the board: ${onBoard.join(', ')}`);
+    return textureReport(board, [...new Set(dead)].filter(card => !board.includes(card)));
   }
 
   _isPlainObject(value) {
@@ -841,11 +863,7 @@ export class RangeManager {
   }
 
   async _loadBitVal() {
-    if (!bitval) {
-      const mod = await import('poker-bitvaljs');
-      const BitVal = mod.default || mod;
-      bitval = new BitVal();
-    }
+    if (!bitval) bitval = await loadBitVal();
     return bitval;
   }
 
