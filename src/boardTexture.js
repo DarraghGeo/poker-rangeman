@@ -207,7 +207,7 @@ export function rawTexture(board, dead = []) {
 
 // Four cards of `suit` with the hand (a, b) and at least one more live card of it, not in the hand
 function isFlushDraw(suit, suitMask, a, b, liveSuits) {
-  return POPCOUNT[suitMask] === 4 && liveSuits[suit] - ((a & 3) === suit) - ((b & 3) === suit) > 0;
+  return POPCOUNT[suitMask] === 4 && liveSuits[suit] - Number((a & 3) === suit) - Number((b & 3) === suit) > 0;
 }
 
 // Mean, over every next card, of the mean absolute change in each hand's strength percentile

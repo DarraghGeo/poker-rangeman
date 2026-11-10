@@ -1706,6 +1706,10 @@ export class RangeManager {
   // Share of the hands that are among the parent range's top N hands by equity (N = the hands' count; hands
   // tied with the Nth count too). 1 means no gaps: the hands are a top slice of what they were chosen from.
   // By weight: the parent's top slice holds as much weight as the hands do.
+  /**
+   * @param {(hand: string) => number} [weightOf]
+   * @param {(hand: string) => number} [parentWeightOf]
+   */
   _contiguity(live, parentHands, equityByHand, weightOf = () => 1, parentWeightOf = () => 1) {
     if (!parentHands || live.length === 0) return 1;
     const parent = parentHands
@@ -1982,6 +1986,7 @@ export class RangeManager {
       const heroClasses = await this.breakdown(board);
       const villainClasses = await this._villainRange().breakdown(board);
       const flags = new Set([...Object.keys(heroClasses.flags), ...Object.keys(villainClasses.flags)]);
+      /** @type {[string, { hero: number, villain: number, heroCount: number, villainCount: number }][]} */
       const rows = [...flags].map(flag => [flag, {
         hero: heroClasses.flags[flag]?.share ?? 0,
         villain: villainClasses.flags[flag]?.share ?? 0,
@@ -2067,6 +2072,7 @@ export class RangeManager {
     return report;
   }
 
+  /** @param {{ pot?: number, bet?: number }} [sizing] */
   _parseBet({ pot, bet } = {}) {
     for (const [name, value] of [['pot', pot], ['bet', bet]]) {
       if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a positive number`);
