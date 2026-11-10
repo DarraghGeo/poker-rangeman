@@ -22,57 +22,28 @@ const POPCOUNT = new Uint8Array(8192).map((_, mask) => {
   return n;
 });
 
+let bitval = null;
 let evaluator = null;
+
+// The one poker-bitvaljs instance, shared with RangeManager's equity methods; loaded on first use
+export async function loadBitVal() {
+  if (!bitval) {
+    const mod = await import('poker-bitvaljs');
+    const BitVal = mod.default || mod;
+    bitval = new BitVal();
+  }
+  return bitval;
+}
 
 export async function loadEvaluator() {
   if (!evaluator) {
-    const mod = await import('poker-bitvaljs');
-    const BitVal = mod.default || mod;
-    const bv = new BitVal();
+    const bv = await loadBitVal();
     evaluator = (s, h, d, c) => bv.evaluateSuits(s, h, d, c);
   }
   return evaluator;
 }
 
 const cardIndex = card => RANK_CHARS.indexOf(card[0]) * 4 + SUIT_CHARS.indexOf(card[1]);
-
-function normalizeCard(card) {
-  if (typeof card !== 'string' || card.length !== 2) return null;
-  const normalized = card[0].toUpperCase() + card[1].toLowerCase();
-  return RANK_CHARS.includes(normalized[0]) && SUIT_CHARS.includes(normalized[1]) ? normalized : null;
-}
-
-// Dead cards take the same forms as the constructor's: concrete cards, 'Ax' (every ace) or 'Xs' (every spade)
-function expandDeadCard(card) {
-  if (typeof card === 'string' && card.length === 2) {
-    const rank = card[0].toUpperCase();
-    const suit = card[1].toLowerCase();
-    if (rank === 'X' && SUIT_CHARS.includes(suit)) return [...RANK_CHARS].map(r => r + suit);
-    if (RANK_CHARS.includes(rank) && suit === 'x') return [...SUIT_CHARS].map(s => rank + s);
-  }
-  const normalized = normalizeCard(card);
-  if (!normalized) throw new Error(`Invalid card: ${card}`);
-  return [normalized];
-}
-
-export function parseTextureInput(boardCards, deadCards = []) {
-  deadCards = deadCards ?? [];
-  if (!Array.isArray(boardCards)) throw new Error('Board cards must be an array');
-  if (boardCards.length < 3 || boardCards.length > 5) throw new Error(`A board has 3, 4 or 5 cards. Got ${boardCards.length}`);
-  const board = boardCards.map(card => {
-    const normalized = normalizeCard(card);
-    if (!normalized) throw new Error(`Invalid board card: ${card}`);
-    return normalized;
-  });
-  if (new Set(board).size !== board.length) throw new Error('Board cards must be unique');
-  if (!Array.isArray(deadCards)) throw new Error('Dead cards must be an array');
-  // A wildcard covers the cards it can: 'Ax' on an ace-high board means the other aces
-  const expanded = deadCards.map(card => ({ wildcard: /x/i.test(String(card)), cards: expandDeadCard(card) }));
-  const onBoard = expanded.filter(d => !d.wildcard).flatMap(d => d.cards).filter(card => board.includes(card));
-  if (onBoard.length > 0) throw new Error(`Dead cards cannot be on the board: ${onBoard.join(', ')}`);
-  const dead = [...new Set(expanded.flatMap(d => d.cards))].filter(card => !board.includes(card));
-  return { board, dead };
-}
 
 const CATEGORY = 1048576; // bitval's values hold the category from bit 20 up
 
@@ -88,8 +59,7 @@ function madePart(value) {
 // The board's own made hand, as madePart() of a value; under 5 cards only its pairings count
 function boardMadePart(boardIdx, suitMasks, evaluate) {
   if (boardIdx.length === 5) return madePart(evaluate(...suitMasks));
-  const counts = new Array(13).fill(0);
-  for (const card of boardIdx) counts[card >> 2]++;
+  const counts = countsByRank(boardIdx);
   const ranksWith = n => counts.map((count, rank) => (count === n ? rank : -1)).filter(rank => rank >= 0).reverse();
   const [quads] = ranksWith(4);
   const [trips] = ranksWith(3);
@@ -100,15 +70,15 @@ function boardMadePart(boardIdx, suitMasks, evaluate) {
   return 0;
 }
 
-function rankCounts(boardIdx) {
+// How many board cards have each rank, deuce first
+function countsByRank(boardIdx) {
   const counts = new Array(13).fill(0);
   for (const card of boardIdx) counts[card >> 2]++;
-  return counts.filter(Boolean);
+  return counts;
 }
 
 // Distinct straights the board allows: five-rank windows missing at most two ranks, each with a live card
-function countStraights(boardRanks, live) {
-  const liveRanks = live.reduce((mask, card) => mask | (1 << (card >> 2)), 0);
+function countStraights(boardRanks, liveRanks) {
   return STRAIGHT_WINDOWS.filter(({ mask }) => {
     const missing = mask & ~boardRanks;
     return POPCOUNT[missing] <= 2 && (missing & liveRanks) === missing;
@@ -173,6 +143,10 @@ export function rawTexture(board, dead = []) {
   // The board's own straight once each rank comes (-1 for none)
   const boardTopWith = Int8Array.from({ length: 13 }, (_, r) => STRAIGHT_TOP[boardRanks | (1 << r)]);
   const drawsPossible = size < 5;
+  // Draws need a live card to complete them: ranks with a live card, and live cards of each suit
+  const liveRanks = live.reduce((mask, card) => mask | (1 << (card >> 2)), 0);
+  const liveSuits = [0, 0, 0, 0];
+  for (const card of live) liveSuits[card & 3]++;
 
   const n = live.length * (live.length - 1) / 2;
   const handA = new Int8Array(n);
@@ -201,11 +175,14 @@ export function rawTexture(board, dead = []) {
       const madeStraight = STRAIGHT_TOP[ranks] > boardTop;
       let flushDraw = false, straightDraw = false;
       if (drawsPossible) {
-        // Four to a flush with at least one hole card in it (five would be a made flush)
-        flushDraw = POPCOUNT[masks[m + (a & 3)]] === 4 || POPCOUNT[masks[m + (b & 3)]] === 4;
-        // OESD or gutshot: a rank that gives the hand a straight above the one it gives the board alone
+        // Four to a flush with at least one hole card in it (five would be a made flush), and a live card of
+        // that suit left to come
+        flushDraw = isFlushDraw(a & 3, masks[m + (a & 3)], a, b, liveSuits) || isFlushDraw(b & 3, masks[m + (b & 3)], a, b, liveSuits);
+        // OESD or gutshot: a live rank that gives the hand a straight above the one it gives the board alone
         if (!madeStraight) {
-          for (let r = 0; r < 13 && !straightDraw; r++) straightDraw = STRAIGHT_TOP[ranks | (1 << r)] > boardTopWith[r];
+          for (let r = 0; r < 13 && !straightDraw; r++) {
+            straightDraw = (liveRanks & (1 << r)) !== 0 && STRAIGHT_TOP[ranks | (1 << r)] > boardTopWith[r];
+          }
         }
       }
       if (isMade) made++;
@@ -218,7 +195,7 @@ export function rawTexture(board, dead = []) {
 
   return {
     combos: n,
-    straights: countStraights(boardRanks, live),
+    straights: countStraights(boardRanks, liveRanks),
     flushDraws,
     straightDraws,
     madeHands: made,
@@ -226,6 +203,11 @@ export function rawTexture(board, dead = []) {
     wetness: wet / n,
     dynamism: drawsPossible ? meanPercentileChange(live, handA, handB, masks, values, n, evaluate) : null
   };
+}
+
+// Four cards of `suit` with the hand (a, b) and at least one more live card of it, not in the hand
+function isFlushDraw(suit, suitMask, a, b, liveSuits) {
+  return POPCOUNT[suitMask] === 4 && liveSuits[suit] - ((a & 3) === suit) - ((b & 3) === suit) > 0;
 }
 
 // Mean, over every next card, of the mean absolute change in each hand's strength percentile
@@ -262,7 +244,6 @@ function meanPercentileChange(live, handA, handB, masks, values, n, evaluate) {
 const clamp01 = x => Math.min(1, Math.max(0, x));
 
 function scale(raw, range) {
-  if (raw === null) return null;
   const { min, max } = range;
   return max > min ? clamp01((raw - min) / (max - min)) : 0;
 }
@@ -277,11 +258,10 @@ function pairingLabel(counts) {
 
 /**
  * Texture report for a 3-, 4- or 5-card board. Scores run from 0 to 1 (`dynamism` is null on 5 cards).
- * @param {string[]} boardCards
- * @param {string[]} [deadCards]
+ * `board` and `dead` are normalized, valid and disjoint card strings: RangeManager.boardTexture()
+ * checks its input and calls this.
  */
-export async function boardTexture(boardCards, deadCards = []) {
-  const { board, dead } = parseTextureInput(boardCards, deadCards);
+export async function textureReport(board, dead = []) {
   await loadEvaluator();
   const raw = rawTexture(board, dead);
   const size = board.length;
@@ -290,7 +270,7 @@ export async function boardTexture(boardCards, deadCards = []) {
   const suitCounts = [0, 0, 0, 0];
   for (const card of boardIdx) suitCounts[card & 3]++;
   const maxSuit = Math.max(...suitCounts);
-  const counts = rankCounts(boardIdx);
+  const counts = countsByRank(boardIdx).filter(Boolean);
   const meanRank = boardIdx.reduce((sum, card) => sum + (card >> 2), 0) / size;
   const scales = BOARD_TEXTURE_SCALES[size];
 
@@ -302,7 +282,8 @@ export async function boardTexture(boardCards, deadCards = []) {
       height: meanRank / 12,
       connectedness: scale(raw.connectedness, scales.connectedness),
       wetness: scale(raw.wetness, scales.wetness),
-      dynamism: size < 5 ? scale(raw.dynamism, scales.dynamism) : null
+      // null on 5 cards: there is no next card, and no scale for it
+      dynamism: raw.dynamism === null ? null : scale(raw.dynamism, scales.dynamism)
     },
     suits: SUIT_LABELS[maxSuit],
     pairing: pairingLabel(counts),

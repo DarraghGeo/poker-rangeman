@@ -55,14 +55,13 @@ function mergeRanges(target, source) {
   return target;
 }
 
-// The min and max of each raw value over every `step`th board, starting at `offset`
-async function rangesOf(size, offset, step) {
+// The min and max of each raw value over the given boards
+async function rangesOf(size, boards) {
   await loadEvaluator();
   const keys = KEYS[size];
   const ranges = emptyRanges(keys);
-  const boards = suitDistinctBoards(size);
-  for (let i = offset; i < boards.length; i += step) {
-    const raw = rawTexture(boards[i]);
+  for (const board of boards) {
+    const raw = rawTexture(board);
     for (const key of keys) {
       if (raw[key] < ranges[key].min) ranges[key].min = raw[key];
       if (raw[key] > ranges[key].max) ranges[key].max = raw[key];
@@ -75,14 +74,16 @@ async function rangesOf(size, offset, step) {
 export async function computeTextureScales(sizes = [3, 4, 5], threads = availableParallelism()) {
   const result = {};
   for (const size of sizes) {
-    const parts = await Promise.all(Array.from({ length: threads }, (_, offset) => new Promise((resolve, reject) => {
-      const worker = new Worker(new URL(import.meta.url), { workerData: { boardTextureScales: { size, offset, step: threads } } });
+    const boards = suitDistinctBoards(size);
+    // Every threads-th board to each worker, so each gets a mix of slow and fast boards
+    const shares = Array.from({ length: threads }, (_, offset) => boards.filter((_, i) => i % threads === offset));
+    const parts = await Promise.all(shares.map(share => new Promise((resolve, reject) => {
+      const worker = new Worker(new URL(import.meta.url), { workerData: { boardTextureScales: { size, boards: share } } });
       worker.once('message', resolve);
       worker.once('error', reject);
       worker.once('exit', code => reject(new Error(`Worker exited with code ${code} before replying`)));
     })));
-    const ranges = parts.reduce(mergeRanges, emptyRanges(KEYS[size]));
-    result[size] = { boards: suitDistinctBoards(size).length, ...ranges };
+    result[size] = { boards: boards.length, ...parts.reduce(mergeRanges, emptyRanges(KEYS[size])) };
   }
   return result;
 }
@@ -97,8 +98,8 @@ export const BOARD_TEXTURE_SCALES = ${body};
 }
 
 if (!isMainThread && workerData?.boardTextureScales) {
-  const { size, offset, step } = workerData.boardTextureScales;
-  parentPort.postMessage(await rangesOf(size, offset, step));
+  const { size, boards } = workerData.boardTextureScales;
+  parentPort.postMessage(await rangesOf(size, boards));
 } else if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const start = Date.now();
   const scales = await computeTextureScales();

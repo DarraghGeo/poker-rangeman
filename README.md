@@ -927,8 +927,8 @@ The counts are exact, not Monte Carlo: every two-card hand that can be dealt is 
 What each count takes into account:
 
 - **Made straight**: the hand makes a higher straight than the board alone (on 5 cards the board can be a straight itself).
-- **OESD or gutshot**: one more card of some rank would give the hand a straight above any the board makes with that card. Two or more such ranks is an OESD (or double gutshot), one a gutshot. On J-T-9-8 a queen gives everyone 8-Q, so a king in the hand is a draw (to 9-K) but 2-2 is not.
-- **Flush draw**: four to a flush, at least one of them a hole card.
+- **OESD or gutshot**: one more card of some rank, with a live card left, would give the hand a straight above any the board makes with that card. Two or more such ranks is an OESD (or double gutshot), one a gutshot. On J-T-9-8 a queen gives everyone 8-Q, so a king in the hand is a draw (to 9-K) but 2-2 is not.
+- **Flush draw**: four to a flush, at least one of them a hole card, with a live card of the suit left.
 - **Two pair or better**: the hand's made hand, kickers aside, beats the board's own. On K-K-7-7 the board's two pair doesn't count, nor does a better kicker, but A-A (a better two pair) and any full house do. On a 5-card flush board, a higher flush counts.
 - **Strength percentile**: a hand's rank among all hands that can be dealt on the board, from 0 (the weakest) to 1 (the best), ties sharing the middle rank. `dynamism` deals each next card in turn, ranks the hands left again, and averages how far each hand's percentile moved.
 

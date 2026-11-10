@@ -1,7 +1,8 @@
 import { RangeManager } from '../src/rangeManager.js';
-import { boardTexture, rawTexture } from '../src/boardTexture.js';
+import { loadEvaluator, rawTexture } from '../src/boardTexture.js';
 import { BOARD_TEXTURE_SCALES } from '../src/boardTextureScales.js';
 
+const boardTexture = (board, dead) => RangeManager.boardTexture(board, dead);
 const SCORES = ['suitedness', 'pairedness', 'height', 'connectedness', 'wetness', 'dynamism'];
 
 const expectScoresInRange = texture => {
@@ -235,6 +236,7 @@ describe('RangeManager.boardTexture', () => {
     // Dead Qh removes the Qh flush-draw combos and a heart from every count
     expect(dead.flushDraws).toBe(45);
     expect(dead.flushDraws).toBeLessThan(plain.flushDraws);
+    await loadEvaluator();
     const raw = rawTexture(board, ['Qh', '2s']);
     expect(raw.combos).toBe(dead.combos);
     // Wildcard dead cards expand like the constructor's
@@ -242,6 +244,16 @@ describe('RangeManager.boardTexture', () => {
     expect(allQueens.combos).toBe(45 * 44 / 2);
     // Without any queen, 8-Q and 9-K straights are gone; only 7-J is left
     expect(allQueens.straights).toBe(1);
+  });
+
+  test('a draw needs a live card to complete it', async () => {
+    // With every queen and seven dead, J-T-2 has no straight left to draw to
+    const noStraights = await boardTexture(['Jh', 'Th', '2c'], ['Qx', '7x']);
+    expect(noStraights.straights).toBe(0);
+    expect(noStraights.straightDraws).toBe(0);
+    // With every other heart but the ace and deuce dead, Ah2h has four hearts and no heart to come
+    const noHearts = await boardTexture(['Kh', '7h', '2c'], ['3h', '4h', '5h', '6h', '8h', '9h', 'Th', 'Jh', 'Qh']);
+    expect(noHearts.flushDraws).toBe(0);
   });
 
   test('raw values are the unscaled shares and mean change', async () => {
