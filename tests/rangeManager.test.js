@@ -301,7 +301,8 @@ const testFiltering = {
       expect(result).toBeDefined();
     },
     callExtval: async () => {
-      await import('poker-extval');
+      const { evaluateHand } = await import('poker-extval');
+      expect(typeof evaluateHand).toBe('function');
       const rm = createTestInstance('AKs');
       const board = ['2h', '3d', '4c', '5s', '6h'];
       const result = await rm.getObject('AhKd', board);

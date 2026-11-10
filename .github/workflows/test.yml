@@ -32,5 +32,6 @@ jobs:
       - name: Type check
         run: npm run check
 
-      - name: Run tests and type check
-        run: npm test
+      # npm test would repeat test:types, which npm run check already ran
+      - name: Run tests
+        run: npm run test:jest
