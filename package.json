@@ -21,7 +21,9 @@
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
     "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "test:jest": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:types": "tsc --noEmit --strict --target es2020 --module nodenext --moduleResolution nodenext tests/types.ts"
+    "test:types": "tsc --noEmit --strict --target es2020 --module nodenext --moduleResolution nodenext tests/types.ts",
+    "lint": "eslint .",
+    "check": "tsc -p tsconfig.check.json && npm run test:types"
   },
   "keywords": [
     "poker",
@@ -46,6 +48,10 @@
     "poker-extval": "^5.0.2"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^20.19.43",
+    "eslint": "^9.39.5",
+    "globals": "^17.14.0",
     "jest": "^29.7.0",
     "typescript": "^5.9.3"
   },
