@@ -121,6 +121,10 @@ export interface AgainstOptions extends EquityOptions {
     minDominant?: Share;
     /** The strongest share of combos that counts as the top end for capping. Default 0.05. */
     topEnd?: Share;
+    /** The board strength (0-1) from which a hand is in the top of the shape. Default 0.9. */
+    topMin?: Share;
+    /** The board strength (0-1) below which a made hand is in the bottom of the shape. Default 0.5. */
+    bottomMax?: Share;
   };
   /** minEquity: the equity against the other range a hand needs to count as effective nuts. Default 0.9. */
   nuts?: { minEquity?: Share };
@@ -141,6 +145,8 @@ export interface Matchup {
   shapeEnough: number;
   minDominant: number;
   topEnd: number;
+  shapeTopMin: number;
+  shapeBottomMax: number;
   nutsMinEquity: number;
   /** The range at against() time, which later filters choose from. */
   parentHands: Hand[];
@@ -156,34 +162,30 @@ export interface BucketStats {
 }
 
 /**
- * The three competing range shapes, each 0 to 1. polarized is the Bhatia-Davis ratio of each hand's equity;
- * linear and condensed come from the density (share / band width) of the range in the top
- * band (T), the bands between (M) and the bottom band (B), compared with an even spread. hollow(part, than) =
- * 1 - part / than. enough(x) = min(1, x / shape.enough), default 10%. Independent: they need not add up to 1.
- * See README "Range shape".
+ * The three competing range shapes, each 0 to 1, from the range's own hands on the board (not equity against
+ * villain, so a range's shape doesn't depend on the other range). A hand's strength is the share of every
+ * dealable combo its made hand beats. T: strength >= shape.topMin (0.9). B: makes nothing with its hole cards,
+ * or strength < shape.bottomMax (0.5). M: the rest. Density: a part's share over every dealable combo's share
+ * in it. hollow(part, than) = 1 - part / than. enough(x) = min(1, x / shape.enough), default 10%.
+ * Independent: they need not add up to 1. See README "Range shape".
  */
 export interface Shape {
-  /**
-   * Var(e) / (mean(e) x (1 - mean(e))) over each hand's equity e against villain (weighted). 1 = perfectly
-   * polarized (every hand 0% or 100%), 0 = every hand the same equity. No bands involved.
-   */
+  /** enough(T) x enough(B) x hollow(middle, thinner end): value and air, nothing between. */
   polarized: number;
-  /** enough(T) x hollow(bottom, middle) x contiguity: the top, then medium hands, no gaps. */
+  /** enough(T) x enough(M) x hollow(bottom, middle) x contiguity: the top, then medium hands, no gaps. */
   linear: number;
-  /** hollow(thicker end, middle): the top and bottom removed. */
+  /** enough(M) x hollow(thicker end, middle): the top and bottom removed. */
   condensed: number;
-  /** The highest of the three, or null when all are 0. */
+  /** The highest of the three when it reaches shape.minDominant, else null. */
   dominant: 'polarized' | 'linear' | 'condensed' | null;
-  /** Share of the hands in the top N of the range at against() (N = their count); 1 = no gaps. */
+  /** Share of the hands in the top N, by board strength, of the range at against() (N = their count); 1 = no gaps. */
   contiguity: number;
   /** T, M and B themselves. */
   top: number;
   middle: number;
   bottom: number;
-  /** Share / band width for each part: 1 = as many hands as an even spread across equity. */
+  /** Each part's share over an even spread's (every dealable combo): 1 = as many hands as a random hand. */
   density: { top: number; middle: number; bottom: number };
-  /** Mean and standard deviation of the hands' equity (weighted), behind polarized. */
-  equity: { mean: number; sd: number };
 }
 
 export interface SideSummary {
@@ -192,7 +194,7 @@ export interface SideSummary {
   weight: number;
   equity: number | null;
   buckets: Record<string, BucketStats>;
-  /** null when no hand can be dealt. */
+  /** null preflop or when no hand can be dealt. */
   shape: Shape | null;
   /** How much of the top end the range is missing, 0 to 1 (null preflop). Describes the top, separate from the shape. */
   capped: Capped;
