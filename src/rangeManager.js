@@ -78,6 +78,8 @@ const HAND_CLASSES = [
   'flushDraw', 'oesd', 'gutshot', 'aceHigh', 'kingHigh', 'air'
 ];
 const PAIR_POSITIONS = ['topPair', 'secondPair', 'thirdPair', 'fourthPair'];
+// Classes whose hole cards make nothing (no pair or better): the bottom of a range's shape
+const UNMADE_CLASSES = new Set(['flushDraw', 'oesd', 'gutshot', 'aceHigh', 'kingHigh', 'air']);
 
 // Draws a villain combo can hold, for blockers()
 const VILLAIN_DRAWS = [
@@ -1336,6 +1338,9 @@ export class RangeManager {
     const topEnd = this._parseShare(options.shape?.topEnd ?? 0.05, 'shape.topEnd');
     if (topEnd === 0) throw new Error('shape.topEnd must be above 0');
     const minDominant = this._parseShare(options.shape?.minDominant ?? 0.5, 'shape.minDominant');
+    const shapeTopMin = this._parseShare(options.shape?.topMin ?? 0.9, 'shape.topMin');
+    const shapeBottomMax = this._parseShare(options.shape?.bottomMax ?? 0.5, 'shape.bottomMax');
+    if (shapeBottomMax > shapeTopMin) throw new Error('shape.topMin must be at least shape.bottomMax');
     const nutsMinEquity = this._parseShare(options.nuts?.minEquity ?? 0.9, 'nuts.minEquity');
     const prepared = this._prepareEquity(villain, boardCards, options);
     const handEquity = {};
@@ -1357,6 +1362,8 @@ export class RangeManager {
       shapeEnough,
       topEnd,
       minDominant,
+      shapeTopMin,
+      shapeBottomMax,
       nutsMinEquity,
       // The range at against() time: the hands later filters choose from, for shape contiguity
       parentHands: [...this.filteredHands]
@@ -1368,8 +1375,9 @@ export class RangeManager {
    * Sets villain's range and the board for range vs range analysis: runs hero's equity once (as getEquity)
    * and stores the matchup, so buckets, bucket filters, compare(), compareTo(), defend() and
    * bluffCandidates() work without repeating villain and board.
-   * options: { bands, deadCards, iterations, shape: { enough, minDominant, topEnd } }: enough is the share at
-   * which an end of the range counts as fully present for the shape scores (default 0.1); minDominant the
+   * options: { bands, deadCards, iterations, shape: { enough, minDominant, topEnd, topMin, bottomMax } }: enough is
+   * the share at which a part of the range counts as fully present for the shape scores (default 0.1); topMin
+   * and bottomMax the board strengths that start the shape's top (0.9) and end its bottom (0.5); minDominant the
    * score a shape needs to be named dominant (default 0.5); topEnd the strongest share of combos that counts
    * as the top end for capping (default 0.05); nuts.minEquity the equity against the other range a hand needs
    * to count as effective nuts (default 0.9).
@@ -1664,22 +1672,17 @@ export class RangeManager {
     return this.equityCache.get(cacheKey);
   }
 
-  // { combos, equity, buckets: { name: { count, share, combos } }, shape } for one side. parentHands: the
-  // range the hands were chosen from (for contiguity); null when the hands are the whole range.
-  // Shares are by weight: each combo counts its weight (1 unless the range is weighted).
-  _sideSummary(equityByHand, hands, bands, parentHands = null, enough = 0.1, minDominant = 0.5, weights = {}, parentWeights = {}) {
+  // { combos, weight, equity, buckets: { name: { count, share, combos } } } for one side, from equity against
+  // the other range. Shares are by weight: each combo counts its weight (1 unless the range is weighted).
+  _sideSummary(equityByHand, hands, bands, weights = {}) {
     const live = hands.filter(hand => equityByHand[hand] && equityByHand[hand].equity !== null);
     const weightOf = hand => weights[hand] ?? 1;
     const totals = { win: 0, tie: 0, lose: 0 };
     const buckets = Object.fromEntries(bands.map(band => [band.name, { count: 0, weight: 0, share: 0, combos: [] }]));
     let totalWeight = 0;
-    let sum = 0;
-    let sumSquares = 0;
     for (const hand of live) {
       const result = equityByHand[hand];
       const weight = weightOf(hand);
-      sum += result.equity * weight;
-      sumSquares += result.equity * result.equity * weight;
       totals.win += result.win * weight; totals.tie += result.tie * weight; totals.lose += result.lose * weight;
       const bucket = buckets[this._bandOf(result.equity, bands)];
       bucket.combos.push(hand);
@@ -1691,75 +1694,86 @@ export class RangeManager {
       bucket.share = totalWeight ? bucket.weight / totalWeight : 0;
     }
     const runouts = totals.win + totals.tie + totals.lose;
-    const contiguity = this._contiguity(live, parentHands, equityByHand, weightOf, hand => parentWeights[hand] ?? 1);
-    const mean = totalWeight ? sum / totalWeight : 0;
-    const variance = totalWeight ? Math.max(0, sumSquares / totalWeight - mean * mean) : 0;
     return {
       combos: live.length,
       weight: totalWeight,
       equity: runouts ? (totals.win + totals.tie / 2) / runouts : null,
-      buckets,
-      shape: live.length ? this._shapeOf(buckets, bands, contiguity, enough, minDominant, { mean, variance }) : null
+      buckets
     };
   }
 
-  // Share of the hands that are among the parent range's top N hands by equity (N = the hands' count; hands
+  // Share of the hands that are among the parent range's top N hands by strength (N = the hands' count; hands
   // tied with the Nth count too). 1 means no gaps: the hands are a top slice of what they were chosen from.
-  // By weight: the parent's top slice holds as much weight as the hands do.
+  // By weight: the parent's top slice holds as much weight as the hands do. parentHands: live hands only.
   /**
+   * @param {(hand: string) => number} strengthOf
    * @param {(hand: string) => number} [weightOf]
    * @param {(hand: string) => number} [parentWeightOf]
    */
-  _contiguity(live, parentHands, equityByHand, weightOf = () => 1, parentWeightOf = () => 1) {
+  _contiguity(live, parentHands, strengthOf, weightOf = () => 1, parentWeightOf = () => 1) {
     if (!parentHands || live.length === 0) return 1;
     const parent = parentHands
-      .filter(hand => equityByHand[hand] && equityByHand[hand].equity !== null)
-      .map(hand => ({ equity: equityByHand[hand].equity, weight: parentWeightOf(hand) }))
-      .sort((a, b) => b.equity - a.equity);
+      .map(hand => ({ strength: strengthOf(hand), weight: parentWeightOf(hand) }))
+      .sort((a, b) => b.strength - a.strength);
     const mine = live.reduce((sum, hand) => sum + weightOf(hand), 0);
     const parentTotal = parent.reduce((sum, p) => sum + p.weight, 0);
     if (mine >= parentTotal - 1e-9) return 1;
     let cumulative = 0;
-    let cutoff = parent[parent.length - 1].equity;
+    let cutoff = parent[parent.length - 1].strength;
     for (const p of parent) {
       cumulative += p.weight;
-      if (cumulative >= mine - 1e-9) { cutoff = p.equity; break; }
+      if (cumulative >= mine - 1e-9) { cutoff = p.strength; break; }
     }
-    return live.filter(hand => equityByHand[hand].equity >= cutoff).reduce((sum, hand) => sum + weightOf(hand), 0) / mine;
+    return live.filter(hand => strengthOf(hand) >= cutoff).reduce((sum, hand) => sum + weightOf(hand), 0) / mine;
   }
 
   /**
-   * The three competing range shapes of Modern Poker Theory (Ch. 1, Range Morphology), each scored 0 to 1.
-   * The range's equity against villain is split into the top band (T), the bottom band (B) and the bands
-   * between (M). Each share is compared with an even spread across equity: density = share / band width
-   * (with the default bands 0.25, 0.42 and 0.33), so 1 means as many hands as an even spread would have.
-   * A part is hollow when it is thinner than its neighbours: hollow(part, than) = 1 - part / than, from 0 to 1.
-   * - polarized = Var(e) / (mean(e) x (1 - mean(e))), over each hand's equity e against villain (weighted).
-   *   By the Bhatia-Davis inequality this is 1 only when every hand has 0% or 100% equity (perfectly
-   *   polarized: nuts and air against this opponent) and 0 when every hand has the same equity. It needs no
-   *   bands, and doesn't depend on the range's average equity. A range with no spread at all scores 0.
-   * - linear    = enough(T) x hollow(bottom, middle) x contiguity: the top, then medium hands, without gaps
-   * - condensed = hollow(thicker end, middle): the top and bottom removed
-   * enough(x) = min(1, x / enough), default 10%. An even spread scores 0 on linear and condensed. The scores are
-   * independent and need not add up to 1. dominant is the highest when it reaches minDominant, else null.
+   * The three competing range shapes of Modern Poker Theory (Ch. 1, Range Morphology), each scored 0 to 1,
+   * from the range's own hands on the board: not from equity against villain, so a range's shape doesn't
+   * change with the other range. Each combo's strength is its made hand's percentile among every combo that
+   * can be dealt on the board (the share of them it beats; draws don't count). The range is split into:
+   * T, the top (strength >= topMin, default 0.9); B, the bottom (hands that make nothing with their hole
+   * cards, or strength < bottomMax, default 0.5); and M, everything between. T + M + B = 1.
+   * Each part's density is its share over the share of every dealable combo in that part, so a random hand
+   * (an even spread) has every density 1. hollow(part, than) = 1 - part / than, from 0 to 1.
+   * enough(x) = min(1, x / enough), default 10%: a part counts fully once it holds that share.
+   * - polarized = enough(T) x enough(B) x hollow(middle, thinner end): value and air with nothing between
+   * - linear    = enough(T) x enough(M) x hollow(bottom, middle) x contiguity: the top, then medium hands, no gaps
+   * - condensed = enough(M) x hollow(thicker end, middle): the top and bottom removed
+   * The scores are independent and need not add up to 1. dominant is the highest when it reaches
+   * minDominant, else null. null preflop (no board) or with no live combos.
    */
-  _shapeOf(buckets, bands, contiguity, enough, minDominant = 0.5, { mean = 0, variance = 0 } = {}) {
-    const top = buckets[bands[0].name].share;
-    const bottom = bands.length > 1 ? buckets[bands[bands.length - 1].name].share : 0;
-    // Summed from the middle bands (not 1 - top - bottom) so an empty middle is exactly 0
-    const middle = bands.slice(1, -1).reduce((sum, band) => sum + buckets[band.name].share, 0);
-    const widths = this._bandWidths(bands);
-    const density = (share, width) => (width > 0 ? share / width : 0);
-    const dTop = density(top, widths.top);
-    const dMiddle = density(middle, widths.middle);
-    const dBottom = density(bottom, widths.bottom);
+  _shapeFor(hands, weights, parentHands, parentWeights, board, deadCards, { enough = 0.1, minDominant = 0.5, topMin = 0.9, bottomMax = 0.5 } = {}) {
+    if (board.length < 3) return null;
+    const { strengthOf, all } = this._strengthOn(board, deadCards);
+    const live = hands.filter(hand => strengthOf(hand) !== null);
+    if (live.length === 0) return null;
+    const weightOf = hand => weights[hand] ?? 1;
+    const tiers = list => {
+      const share = { top: 0, middle: 0, bottom: 0 };
+      let total = 0;
+      for (const { strength, made, weight } of list) {
+        total += weight;
+        share[!made || strength < bottomMax ? 'bottom' : strength >= topMin ? 'top' : 'middle'] += weight;
+      }
+      return { top: share.top / total, middle: share.middle / total, bottom: share.bottom / total };
+    };
+    const { top, middle, bottom } = tiers(live.map(hand => ({ ...strengthOf(hand), weight: weightOf(hand) })));
+    const even = tiers(all);
+    const density = (share, base) => (base > 0 ? share / base : 0);
+    const dTop = density(top, even.top);
+    const dMiddle = density(middle, even.middle);
+    const dBottom = density(bottom, even.bottom);
+    const hollow = (part, than) => (than <= 0 ? 0 : Math.max(0, Math.min(1, 1 - part / than)));
+    const parentLive = parentHands ? parentHands.filter(hand => strengthOf(hand) !== null) : null;
+    const contiguity = this._contiguity(live, parentLive, hand => strengthOf(hand).strength, weightOf, hand => parentWeights[hand] ?? 1);
     const present = share => Math.min(1, share / enough);
-    const hollow = (part, than) => (than <= 0 ? (part <= 0 ? 1 : 0) : Math.max(0, Math.min(1, 1 - part / than)));
+    // Rounded so floating-point noise doesn't turn a perfect 1 into 0.9999999999999999
+    const round = x => Math.round(x * 1e12) / 1e12;
     const scores = {
-      // Rounded so floating-point noise doesn't turn a perfect 1 into 0.9999999999999999
-      polarized: mean > 0 && mean < 1 ? Math.round(Math.min(1, variance / (mean * (1 - mean))) * 1e12) / 1e12 : 0,
-      linear: present(top) * hollow(dBottom, dMiddle) * contiguity,
-      condensed: middle > 0 ? hollow(Math.max(dTop, dBottom), dMiddle) : 0
+      polarized: round(present(top) * present(bottom) * hollow(dMiddle, Math.min(dTop, dBottom))),
+      linear: round(present(top) * present(middle) * hollow(dBottom, dMiddle) * contiguity),
+      condensed: round(present(middle) * hollow(Math.max(dTop, dBottom), dMiddle))
     };
     const best = Object.entries(scores).reduce((a, b) => (b[1] > a[1] ? b : a));
     return {
@@ -1769,25 +1783,65 @@ export class RangeManager {
       top,
       middle,
       bottom,
-      density: { top: dTop, middle: dMiddle, bottom: dBottom },
-      equity: { mean, sd: Math.sqrt(variance) }
+      density: { top: dTop, middle: dMiddle, bottom: dBottom }
     };
   }
 
-  // Equity width of the top band, the bands between, and the bottom band
-  _bandWidths(bands) {
-    const topMin = bands[0].min;
-    const bottomMax = bands.length > 1 ? bands[bands.length - 2].min : 0;
-    return { top: 1 - topMin, middle: Math.max(0, topMin - bottomMax), bottom: bottomMax };
+  // { strengthOf, all }: strengthOf maps hand -> { strength, made } on this board, or null when the hand can't
+  // be dealt. strength: the share of every dealable combo whose made hand it beats (0-1, never reaching 1); made: whether its hole cards make a pair or better. all: the
+  // same for every dealable combo, each with weight 1 (an even spread). Needs _loadEvaluator() and _loadBitVal().
+  _strengthOn(board, deadCards) {
+    const blocked = new Set([...board, ...deadCards]);
+    const key = `strength|${board.join(',')}|${[...blocked].sort().join(',')}`;
+    const cached = this.evaluationCache.get(key);
+    if (cached) return cached;
+    const boardKey = board.join(',');
+    const boardRanks = [...new Set(board.map(c => c[0]))].sort((a, b) => this._getRankValue(b) - this._getRankValue(a));
+    const madeOf = (hand, cards) => {
+      const [evalObj] = this._getCachedOrEvaluate(hand, board, boardKey, true);
+      return !UNMADE_CLASSES.has(this._handClassOf(cards, evalObj, boardRanks, true));
+    };
+    const deck = VALID_RANKS.flatMap(r => VALID_SUITS.map(suit => r + suit)).filter(c => !blocked.has(c));
+    const combos = [];
+    for (let i = 0; i < deck.length; i++) {
+      for (let j = i + 1; j < deck.length; j++) {
+        const hand = this._normalizeHand(deck[i] + deck[j]);
+        combos.push({ value: this._handValue(hand, board), made: madeOf(hand, [deck[i], deck[j]]) });
+      }
+    }
+    const values = combos.map(c => c.value).sort((a, b) => a - b);
+    const below = value => {
+      let lo = 0; let hi = values.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (values[mid] < value) lo = mid + 1; else hi = mid; }
+      return lo;
+    };
+    const all = combos.map(c => ({ strength: below(c.value) / values.length, made: c.made, weight: 1 }));
+    const strengthOf = hand => {
+      const cards = this._extractCardsFromHand(hand);
+      if (cards.some(c => blocked.has(c))) return null;
+      return { strength: below(this._handValue(hand, board)) / values.length, made: madeOf(hand, cards) };
+    };
+    const result = { strengthOf, all };
+    this.evaluationCache.set(key, result);
+    return result;
+  }
+
+  // The shape options stored by against()
+  _shapeOptions() {
+    const { shapeEnough, minDominant, shapeTopMin, shapeBottomMax } = this.matchup;
+    return { enough: shapeEnough, minDominant, topMin: shapeTopMin, bottomMax: shapeBottomMax };
   }
 
   /** Equity bucket shares for both sides: { bands, hero, villain }, each { combos, equity, buckets, shape }. */
   async buckets() {
-    const { bands, board, deadCards, parentHands, parentWeights, shapeEnough, minDominant, topEnd, villainHands, villainWeights } = this._requireMatchup();
+    const { bands, board, deadCards, parentHands, parentWeights, topEnd, villainHands, villainWeights } = this._requireMatchup();
     const villainEquity = await this._villainEquityByHand();
-    const hero = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, parentHands, shapeEnough, minDominant, this.handWeights, parentWeights);
-    const villain = this._sideSummary(villainEquity, villainHands, bands, null, shapeEnough, minDominant, villainWeights);
-    await this._loadBitVal();
+    const hero = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, this.handWeights);
+    const villain = this._sideSummary(villainEquity, villainHands, bands, villainWeights);
+    await Promise.all([this._loadEvaluator(), this._loadBitVal()]);
+    const shape = this._shapeOptions();
+    hero.shape = this._shapeFor(this.filteredHands, this.handWeights, parentHands, parentWeights, board, deadCards, shape);
+    villain.shape = this._shapeFor(villainHands, villainWeights, null, {}, board, deadCards, shape);
     hero.capped = this._cappedFor(this.filteredHands, villainHands, board, deadCards, topEnd, this.handWeights, villainWeights);
     villain.capped = this._cappedFor(villainHands, this.filteredHands, board, deadCards, topEnd, villainWeights, this.handWeights);
     const { nutsMinEquity } = this.matchup;
@@ -2050,16 +2104,17 @@ export class RangeManager {
       equity: null, buckets: null, distance: null
     };
     if (!this.matchup) return report;
-    const { villainHands, villainWeights, board, deadCards, iterations, bands, parentHands, parentWeights, shapeEnough, minDominant, topEnd } = this.matchup;
+    const { villainHands, villainWeights, board, deadCards, iterations, bands, parentHands, parentWeights, shapeEnough, minDominant, topEnd, shapeTopMin, shapeBottomMax } = this.matchup;
     const villainInput = villainHands.length ? villainHands.map(hand => [hand, villainWeights[hand] ?? 1]) : villainHands;
     const referenceWithEquity = await referenceRange.against(villainInput, board, {
-      deadCards, iterations, bands, shape: { enough: shapeEnough, minDominant, topEnd }
+      deadCards, iterations, bands, shape: { enough: shapeEnough, minDominant, topEnd, topMin: shapeTopMin, bottomMax: shapeBottomMax }
     });
-    const rangeSummary = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, parentHands, shapeEnough, minDominant, this.handWeights, parentWeights);
-    const referenceSummary = this._sideSummary(
-      referenceWithEquity.handEquity, referenceWithEquity.filteredHands, bands, null, shapeEnough, minDominant, referenceWithEquity.handWeights
-    );
-    await this._loadBitVal();
+    const rangeSummary = this._sideSummary(this._requireStoredEquity(), this.filteredHands, bands, this.handWeights);
+    const referenceSummary = this._sideSummary(referenceWithEquity.handEquity, referenceWithEquity.filteredHands, bands, referenceWithEquity.handWeights);
+    await Promise.all([this._loadEvaluator(), this._loadBitVal()]);
+    const shape = this._shapeOptions();
+    rangeSummary.shape = this._shapeFor(this.filteredHands, this.handWeights, parentHands, parentWeights, board, deadCards, shape);
+    referenceSummary.shape = this._shapeFor(referenceWithEquity.filteredHands, referenceWithEquity.handWeights, null, {}, board, deadCards, shape);
     rangeSummary.capped = this._cappedFor(this.filteredHands, villainHands, board, deadCards, topEnd, this.handWeights, villainWeights);
     referenceSummary.capped = this._cappedFor(referenceWithEquity.filteredHands, villainHands, board, deadCards, topEnd, referenceWithEquity.handWeights, villainWeights);
     const equities = (byHand, hands, range) => hands.filter(hand => byHand[hand].equity !== null).map(hand => [byHand[hand].equity, range._weight(hand)]);

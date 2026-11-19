@@ -714,7 +714,7 @@ report.advantage.range;           // 0.200: hero equity minus villain equity
 report.advantage.nut;             // 0.026: effective nuts (90%+ equity), 6.1% of hero's range vs 3.4% of villain's
 report.advantage.bands.strong;    // 0.336: hero has far more Strong hands...
 report.advantage.bands.trash;     // -0.503: ...and far less trash
-report.hero.shape;                // { polarized: 0.21, linear: 0.76, condensed: 0, dominant: 'linear', ... }
+report.hero.shape;                // { polarized: 0, linear: 0.30, condensed: 0, dominant: null, ... }: by board strength
 report.hero.capped;               // { relative: 0, absolute: 0 }: the opener has its share of the nuts
 report.handClasses.air;           // { hero: 0.081, villain: 0.184, heroCount: 12, villainCount: 32 }
 report.flags.isTopPair;           // { hero: 0.345, villain: 0.241, heroCount: 51, villainCount: 42 }
@@ -750,51 +750,53 @@ The analysis only covers hands that can be dealt. Run `against()` again after ch
 
 *Modern Poker Theory* (Ch. 1, Range Morphology) names three main range shapes: **linear**, **polarized** and **condensed**. They compete, but most ranges are a mix of them. Separately, a range can be **capped** (missing its strongest hands) or uncapped; that describes the top of the range rather than its shape, so it can go with any of the three. It is reported next to `shape` (see [Capping](#capping)).
 
-`shape` scores the three shapes from 0 to 1. They come from the range's equity against villain, split three ways by the bands: **T**, the share in the top band (Strong); **B**, the share in the bottom band (Trash); and **M**, the share in the bands between (Good and Weak). T + M + B = 1.
+`shape` scores the three shapes from 0 to 1. They describe **the range itself on the board**, not how it does against villain: a range's shape doesn't change when villain's range does. (Equity against villain is what `equity`, `nuts` and the buckets are for.)
 
-The shapes are about which part of the range is **hollow**, so each share is compared with an even spread across equity, the straight diagonal on an equity chart. A part's **density** is its share divided by its band's width: with the default bands the top is 25 points wide (75–100%), the middle 42 (33–75%) and the bottom 33 (0–33%), so an even spread has T, M and B of about 25%, 42% and 33% and every density 1. A part is hollow when it is thinner than its neighbours: `hollow(part, than) = 1 − part / than`, from 0 (as dense) to 1 (empty).
+Each combo's **strength** is the share of every combo that can be dealt on the board that its made hand beats, from 0 to 1. Draws don't count, as with capping. The range is split three ways:
+
+- **T**, the top: strength of at least `shape.topMin` (default 0.9). On K-8-3 that is sets, two pair, overpairs and top pair with a good kicker.
+- **B**, the bottom: hands whose hole cards make nothing (high cards and draws), and made hands with strength under `shape.bottomMax` (default 0.5).
+- **M**, everything between.
+
+T + M + B = 1. The shapes are about which part of the range is **hollow**, so each share is compared with an even spread: every combo that can be dealt on the board, in other words a random hand. A part's **density** is the range's share in it divided by an even spread's share in it, so a random hand has every density 1. A part is hollow when it is thinner than its neighbours: `hollow(part, than) = 1 − part / than`, from 0 (as dense) to 1 (empty).
 
 | Score | Formula | The book's definition |
 | --- | --- | --- |
-| `shape.polarized` | Var(e) / (μ(1 − μ)) over each hand's equity e (see below) | "High equity value hands and low equity bluffing hands", perfectly polarized with "no hands in between" |
-| `shape.linear` | enough(T) × hollow(bottom, middle) × contiguity | "The highest equity hands without gaps in between" |
-| `shape.condensed` | hollow(thicker end, middle) | "It has the top and bottom hands removed and is comprised of middle equity hands" |
+| `shape.polarized` | enough(T) × enough(B) × hollow(middle, thinner end) | "High equity value hands and low equity bluffing hands", perfectly polarized with "no hands in between" |
+| `shape.linear` | enough(T) × enough(M) × hollow(bottom, middle) × contiguity | "The highest equity hands without gaps in between" |
+| `shape.condensed` | enough(M) × hollow(thicker end, middle) | "It has the top and bottom hands removed and is comprised of middle equity hands" |
 
-**Polarized** uses each hand's equity against villain, not the bands. With μ the range's average hand equity,
-the variance of hand equities can't exceed μ(1 − μ) (the [Bhatia–Davis inequality](https://en.wikipedia.org/wiki/Bhatia%E2%80%93Davis_inequality)),
-and it reaches that only when every hand has exactly 0% or 100%: the book's perfectly polarized range of "nuts
-and bluffs", against this opponent. So `polarized = Var(e) / (μ(1 − μ))` runs from 0, every hand the same
-equity (pure bluff-catchers), to 1, nuts and air only. It doesn't depend on the average: a range can be
-polarized at 30% equity or at 70%. A split between 76% and 30% hands is only partly polarized; one between
-100% and 0% is fully. `shape.equity` gives the mean and standard deviation behind it. Combos count by weight.
+So value hands plus air with nothing between is 1 polarized, whatever villain holds. Linear needs medium hands as well as the top: a range of only sets has no shape. Combos count by weight.
 
-**Enough.** An end counts fully once it holds a minimum share of the range, and partly below that: `enough(x) = min(1, x / e)`, with `e` = 10% by default. Set it with `against(villain, board, { shape: { enough: 0.15 } })`.
+**Enough.** A part counts fully once it holds a minimum share of the range, and partly below that: `enough(x) = min(1, x / e)`, with `e` = 10% by default. Set it with `against(villain, board, { shape: { enough: 0.15 } })`. Move the tiers with `shape: { topMin: 0.85, bottomMax: 0.4 }`.
 
-A range spread evenly across equity scores 0 on linear and condensed (it has no hollow part) and 1/3 on polarized. `shape.density` gives the three densities, and `shape.top`, `shape.middle` and `shape.bottom` the shares themselves.
+A random hand scores 0 on all three (it has no hollow part). `shape.density` gives the three densities, and `shape.top`, `shape.middle` and `shape.bottom` the shares themselves. `shape` is `null` preflop, where there is no board to rank on.
 
-The three scores are independent and need not add up to 1: a range can be partly linear and partly condensed. `shape.dominant` names the highest (on a tie, the first of polarized, linear, condensed) when it reaches 0.5, and is `null` otherwise: an evenly spread range, or one that is mostly air, has no dominant shape. Change the minimum with `shape: { minDominant: 0.4 }`.
+The three scores are independent and need not add up to 1: a range can be partly linear and partly condensed. `shape.dominant` names the highest (on a tie, the first of polarized, linear, condensed) when it reaches 0.5, and is `null` otherwise: a range close to an even spread, or one that is mostly air, has no dominant shape. Change the minimum with `shape: { minDominant: 0.4 }`.
 
-`shape.contiguity` is the share of the range's hands that are among the top N hands, by equity, of the range as it was at `against()`, where N is the range's own size. It checks the "without gaps" part of linear: a strong + weak range that skips the good hands is not a top slice, so its contiguity and linear score drop. For the range `against()` was called on (and for villain's range) it is 1, because gaps can only be seen against the hands that were available.
+`shape.contiguity` is the share of the range's hands that are among the top N hands, by board strength, of the range as it was at `against()`, where N is the range's own size. It checks the "without gaps" part of linear: a range that skips its medium hands is not a top slice, so its contiguity and linear score drop. For the range `against()` was called on (and for villain's range) it is 1, because gaps can only be seen against the hands that were available.
 
-Some examples, on A-7-6 rainbow with the ranges above:
+Some examples, on A-7-6 rainbow with the ranges above. The bucket filters (strong + trash and so on) choose hands by equity against villain, while T / M / B is by board strength, so they don't line up exactly:
 
 | Range | T / M / B | polarized | linear | condensed | dominant | capped (relative / absolute) |
 | --- | --- | --- | --- | --- | --- | --- |
-| Opener, whole range | .41 / .50 / .09 | 0.21 | 0.76 | 0 | linear | 0 / 0 |
-| Opener, strong + trash | .81 / 0 / .19 | 0.27 | 0 | 0 | none | 0 / 0 |
-| Opener, strong + good | .63 / .38 / 0 | 0.09 | 1 | 0 | linear | 0 / 0 |
-| Opener, strong + weak (skips good) | .61 / .39 / 0 | 0.24 | 0.63 | 0 | linear | 0 / 0 |
-| Opener, good + weak | 0 / 1 / 0 | 0.05 | 0 | 1 | condensed | 1 / 1 |
-| Opener, good + trash | 0 / .72 / .28 | 0.09 | 0 | 0.51 | condensed | 1 / 1 |
-| Defender, whole range | .07 / .33 / .60 | 0.24 | 0 | 0 | none | 0.13 / 0 |
+| Opener, whole range | .41 / .24 / .35 | 0 | 0.30 | 0 | none | 0 / 0 |
+| Opener, strong + trash | .81 / 0 / .19 | 1 | 0 | 0 | polarized | 0 / 0 |
+| Opener, strong + good | .63 / .38 / 0 | 0 | 1 | 0 | linear | 0 / 0 |
+| Opener, good + weak | 0 / .49 / .51 | 0 | 0 | 0.49 | none | 1 / 1 |
+| Opener, good + trash | 0 / .72 / .28 | 0 | 0 | 0.81 | condensed | 1 / 1 |
+| AA,77,66,A7s,A6s,KQs,KJs,QJs,JTs,KQo (sets, two pair, air) | .32 / 0 / .68 | 1 | 0 | 0 | polarized | 0 / 0 |
+| AA,77,66 (sets only) | 1 / 0 / 0 | 0 | 0 | 0 | none | 0 / 0 |
+| Defender, whole range | .24 / .28 / .48 | 0 | 0.15 | 0 | none | 0.13 / 0 |
 
-Strong + trash has no middle hands but is only 0.27 polarized: its value hands average about 85% equity and
-its trash about 20%, far from the nuts-or-air of a perfectly polarized range. On a flop few ranges get close;
-polarization rises on later streets, where hands are nearer 0% or 100%.
+The opener's whole range is top-heavy (more than four times a random hand's share of strong hands) with less air than a random hand, so it isn't polarized; its bottom is a little thinner than its middle, so it is partly linear.
 
 Limits worth knowing:
 
-- The band edges are hard cut-offs, as in the book's buckets: a hand at 74% equity is middle and one at 76% is top. Ranges with many hands near an edge can move noticeably.
+- The tier edges are hard cut-offs: a hand at strength 0.89 is middle and one at 0.91 is top. Ranges with many hands near an edge can move noticeably.
+- Strength is the made hand only: a flush draw counts as air for the shape, though it has equity.
+- Strength is relative to the board, so the same tier edges catch different hands on different streets: bottom pair is about 0.6 on a flop but can drop under 0.5 by the river, as more two pairs and better become possible.
+- No hand reaches strength 1 (it is the share of combos a hand beats), so `topMin: 1` leaves the top empty.
 - Gaps are only detected against the range at `against()`.
 - With few combos, single hands move the shares a lot; `combos` is reported next to the shape.
 - The book says both that "a condensed range is capped" and, in its next example, that a condensed range can hold very strong hands and not be capped. Here condensed falls as strong hands appear, and capped is scored on its own.
