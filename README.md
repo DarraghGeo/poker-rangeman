@@ -202,7 +202,7 @@ esbuild, runs it in headless Chromium and checks the results match Node. For pok
 `workerUrl` option.
 
 Bundle size: an app bundle with esbuild is about 400 KB unminified: poker-rangeman 153 KB, poker-bitvaljs 132 KB and
-poker-extval 112 KB, one copy each. poker-extval 6.0.0-beta.5 depends on poker-rangeman 4, so npm and bundlers share
+poker-extval 112 KB, one copy each. poker-extval 6 depends on poker-rangeman 4, so npm and bundlers share
 the app's copy.
 
 ### Breaking changes
@@ -238,8 +238,8 @@ that inspected internals. What changed:
   `isBackdoorStraightDraw` and `isBackdoorComboDraw` appear in `getObject()`/`evaluateHand()` evaluations,
   `breakdown()` and `compare().flags`, and work as criteria ('Nut Flush Draw', 'Nut Backdoor Flush Draw',
   'Double Gutshot', 'Backdoor Straight Draw', 'Backdoor Combo Draw'). Nothing else in those results changes.
-- **Dependencies**: poker-bitvaljs 1.12, and poker-extval as a **peer dependency** (`^6.0.0-beta.5`), so an app has
-  one copy of it. npm 7+ installs it automatically; with other package managers, install `poker-extval@next` yourself.
+- **Dependencies**: poker-bitvaljs 1.12, and poker-extval as a **peer dependency** (`^6.0.0`), so an app has
+  one copy of it. npm 7+ installs it automatically; with other package managers, install `poker-extval` yourself.
   poker-rangeman reads its flags through poker-extval's own `hasFlag()`, so later betas' layout changes don't break it.
 
 ## Installation
