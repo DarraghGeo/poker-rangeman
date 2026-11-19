@@ -324,6 +324,14 @@ export interface BluffOptions extends BetOptions {
   value?: string | string[];
 }
 
+export interface StrengthShareOptions extends StreetOptions {
+  /**
+   * Hands tied with the last hand taken: 'keep' (default) keeps them all, so the result can exceed the share by the
+   * whole tied group; 'split' gives each the same fraction of its weight, so the result holds exactly the share.
+   */
+  ties?: 'keep' | 'split';
+}
+
 export interface StreetOptions {
   street?: Street | null;
 }
@@ -489,6 +497,15 @@ export class RangeManager {
   equity(villain?: Villain, boardCards?: Card[], options?: EquityOptions): Promise<EquityResult>;
   /** With no arguments, the equity stored by getEquity(). */
   equityByHand(villain?: Villain, boardCards?: Card[], options?: EquityOptions): Promise<Record<Hand, EquityResult>>;
+  // Synchronous twins (poker-bitvaljs's compareRangeHandsSync); call `await ready()` once first
+  equitySync(villain: Villain, boardCards?: Card[], options?: EquityOptions): EquityResult;
+  equityByHandSync(villain: Villain, boardCards?: Card[], options?: EquityOptions): Record<Hand, EquityResult>;
+  getEquitySync(villain: Villain, boardCards?: Card[], options?: AgainstOptions): RangeManager;
+  againstSync(villain: Villain, boardCards?: Card[], options?: AgainstOptions): RangeManager;
+  bucketsSync(): BucketsReport;
+  compareSync(): ComparisonReport;
+  compareToSync(reference: RangeInput | RangeManager): CompareToReport;
+  bluffCandidatesSync(options: BluffOptions): RangeManager;
   /** Filters on the equity stored by getEquity(). */
   equityAbove(min: Share): RangeManager;
   /** 3.6.0 form: runs getEquity(villain, boardCards, options) first. */
@@ -519,8 +536,9 @@ export class RangeManager {
 
   // Strength, breakdown and blockers (board: 3-5 cards)
   rankHands(boardCards: Card[], options?: StreetOptions): Promise<RankedHand[]>;
-  strongest(portion: Share, boardCards: Card[], options?: StreetOptions): RangeQuery;
-  weakest(portion: Share, boardCards: Card[], options?: StreetOptions): RangeQuery;
+  /** ties: 'keep' (default) keeps every hand tied with the last one taken; 'split' takes exactly the share. */
+  strongest(portion: Share, boardCards: Card[], options?: StrengthShareOptions): RangeQuery;
+  weakest(portion: Share, boardCards: Card[], options?: StrengthShareOptions): RangeQuery;
   breakdown(boardCards: Card[], options?: StreetOptions): Promise<Breakdown>;
   /** Each combo in exactly one hand class on the board; shares add up to 1. */
   handClasses(boardCards: Card[], options?: HandClassesOptions): Promise<HandClassesResult>;
@@ -534,3 +552,7 @@ export class RangeManager {
   toString(): string;
   toNotation(): string;
 }
+
+// The core API (also 'poker-rangeman/core'): ranges as typed arrays, boards classified once, per-combo equity
+export { Range, Board, ready, terminateWorkers, handEquity, handEquitySync, sliceByEquity, blockedShare } from './core.js';
+export type { Side, VsOptions, RangeSource, ComboId, ByCard, ByRunout } from './core.js';

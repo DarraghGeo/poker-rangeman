@@ -2479,7 +2479,8 @@ describe('RangeManager regressions', () => {
       const hand = nonStrict.toArray()[0];
       const key = strict => nonStrict._cacheKey(hand, board.join(','), strict);
       expect(nonStrict.lastStrict).toBe(false);
-      expect(nonStrict.evaluationCache.has(key(true))).toBe(true);
+      // Strict entries are either built or recorded for building on demand (makesHand's fast path)
+      expect(nonStrict.evaluationCache.has(key(true)) || nonStrict.evaluatedKeys.has(key(true))).toBe(true);
       expect(nonStrict._getCachedOnly(hand, board)).toBe(nonStrict.evaluationCache.get(key(false)));
     });
   });
@@ -2706,6 +2707,39 @@ describe('RangeManager with poker-extval 5', () => {
       expect((await rm.strongest(0, flop)).size()).toBe(0);
     });
 
+    it("ties: 'split' takes exactly the share, splitting the tied group evenly", async () => {
+      const board = ['Kh', '9h', '4c'];
+      // KK: a set (3 combos; the Kh is on the board), then AA (6 tied overpairs), then QQ (6 tied underpairs): 15 combos
+      const rm = new RangeManager('AA,KK,QQ');
+      // 25% is 3.75 combos: KK (3) plus 0.75 of the 6 tied AA combos, each at 0.125
+      const split = await rm.strongest('25%', board, { ties: 'split' });
+      expect(split.weightedSize()).toBeCloseTo(3.75, 12);
+      expect(split.toNotation()).toBe('KK,AA:0.125');
+      // The default keeps the whole tied group: 9 combos for a 3.75 request
+      expect((await rm.strongest('25%', board)).weightedSize()).toBe(9);
+      const bottom = await rm.weakest(0.25, board, { ties: 'split' });
+      expect(bottom.toNotation()).toBe('QQ:0.625');
+      // Weighted: AA at 0.5 (3), KK (3), QQ (6) = 12; 40% = 4.8 = KK + 0.6 of AA's weight, AA combos at 0.3
+      const weighted = await new RangeManager('AA:0.5,KK,QQ').strongest(0.4, board, { ties: 'split' });
+      expect(weighted.weightedSize()).toBeCloseTo(4.8, 12);
+      expect(weighted.weightOf('AsAd')).toBeCloseTo(0.3, 12);
+      expect(weighted.weightOf('KsKd')).toBe(1);
+      // When the whole tied group fits, split and keep agree
+      expect((await rm.strongest(0.6, board, { ties: 'split' })).toNotation()).toBe((await rm.strongest(0.6, board)).toNotation());
+      await expect(rm.strongest(0.2, board, { ties: 'half' })).rejects.toThrow("ties must be 'keep' or 'split'");
+    });
+
+    it("ties: 'split' on a board every hand ties on", async () => {
+      // A royal flush on the board: every hand plays it, so every combo ties
+      const royal = ['As', 'Ks', 'Qs', 'Js', 'Ts'];
+      const rm = new RangeManager('99+,A9s+');
+      const dealable = (await rm.strongest(1, royal)).weightedSize();
+      expect((await rm.strongest('25%', royal)).weightedSize()).toBe(dealable); // keep: the whole range
+      const split = await rm.strongest('25%', royal, { ties: 'split' });
+      expect(split.weightedSize()).toBeCloseTo(dealable / 4, 12);
+      expect(Object.values(split.weights()).every(w => Math.abs(w - 0.25) < 1e-12)).toBe(true);
+    });
+
     it('keeps hands tied with the cutoff', async () => {
       const rm = new RangeManager('AA');
       expect((await rm.strongest(0.1, flop)).size()).toBe(6);
@@ -2852,11 +2886,11 @@ describe('chaining async steps', () => {
 
     it('runs equity once, then filters read the stored values', async () => {
       const rm = new RangeManager('AA,KK,QQ,22');
-      const spy = jest.spyOn(RangeManager.prototype, '_computeEquity');
+      const spy = jest.spyOn(RangeManager.prototype, '_bitvalHandEquity');
       try {
         const withEquity = await rm.getEquity('JJ', turn);
         const runs = spy.mock.calls.length;
-        expect(runs).toBe(21); // one per hand that can be dealt: 6 AA, 3 KK (the Kh is on the board), 6 QQ, 6 22
+        expect(runs).toBe(1); // one engine pass for every hand that can be dealt
         expect(withEquity.equityAbove('80%').toNotation()).toBe('QQ+');
         expect(withEquity.equityBelow(0.2).toNotation()).toBe('22');
         expect(withEquity.equityBetween('70%', 0.97).equityAbove(0.9).toNotation()).toBe('AA,QQ');

@@ -2,6 +2,7 @@
 // Every count is exact: it goes over every two-card hand that can be dealt with the board and dead cards
 // removed, ranked with poker-bitvaljs's integer evaluator.
 import { BOARD_TEXTURE_SCALES } from './boardTextureScales.js';
+import { loadBitVal } from './core/load.js';
 
 const RANK_CHARS = '23456789TJQKA';
 const SUIT_CHARS = 'shdc';
@@ -22,18 +23,10 @@ const POPCOUNT = new Uint8Array(8192).map((_, mask) => {
   return n;
 });
 
-let bitval = null;
 let evaluator = null;
 
-// The one poker-bitvaljs instance, shared with RangeManager's equity methods; loaded on first use
-export async function loadBitVal() {
-  if (!bitval) {
-    const mod = await import('poker-bitvaljs');
-    const BitVal = mod.default || mod;
-    bitval = new BitVal();
-  }
-  return bitval;
-}
+// The one poker-bitvaljs instance, shared with RangeManager's equity methods (src/core/load.js)
+export { loadBitVal };
 
 export async function loadEvaluator() {
   if (!evaluator) {

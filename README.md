@@ -2,8 +2,20 @@
 
 A JavaScript library for parsing, managing, filtering and analysing poker hand ranges: range notation, dead cards, how a range hits a board, equity against another range, hand strength rankings and blockers. Hand evaluation uses [poker-extval](https://github.com/DarraghGeo/poker-extval); equity uses [poker-bitvaljs](https://github.com/DarraghGeo/poker-bitvaljs).
 
+> **Version 4 beta.** A rewrite for speed: per-hand equity and range-vs-range reports in milliseconds, board filters
+> on every combo at once, synchronous equity, and a new typed-array [core API](#core-api). All equity comes from
+> poker-bitvaljs; hand evaluation from poker-extval 6. The `RangeManager` API keeps 3.8's methods and options. Install
+> it with `npm install poker-rangeman@beta`; see [Version 4](#version-4) and [BENCHMARKS.md](BENCHMARKS.md).
+
 ## Table of Contents
 
+- [Version 4](#version-4)
+  - [What changed](#what-changed)
+  - [Core API](#core-api)
+  - [Workers](#workers)
+  - [Synchronous equity](#synchronous-equity)
+  - [Browsers and bundlers](#browsers-and-bundlers)
+  - [Breaking changes](#breaking-changes)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [API Reference](#api-reference)
@@ -24,10 +36,217 @@ A JavaScript library for parsing, managing, filtering and analysing poker hand r
 - [TypeScript](#typescript)
 - [Releasing](#releasing)
 
+## Version 4
+
+### What changed
+
+Version 4 keeps the `RangeManager` API (now the compatibility layer) and rewrites what's underneath:
+
+- **Equity** comes entirely from [poker-bitvaljs](https://github.com/DarraghGeo/poker-bitvaljs). 3.8 ran its
+  `compareRange` once per hand. Version 4 uses `compareRangeHands` (poker-bitvaljs 1.11): one call gives every hero hand's
+  and every villain hand's wins, ties and losses, so `against()` + `compare()` costs about one 3.8 hand. Range totals use
+  `compareRange`. poker-rangeman has no equity code of its own: `src/core/bitval-equity.js` only maps combo ids to
+  poker-bitvaljs's range entries and its per-hand rows back to arrays.
+- **Hand classification** comes from [poker-extval 6](https://github.com/DarraghGeo/poker-extval)'s core, which
+  classifies all 1,326 combos on a board at once into flag bits. `makesHand`, `breakdown`, `handClasses`, ranking and
+  capping read those bits and scores instead of building an evaluation object per hand.
+- **Ranges** in the core are `Float64Array(1326)` weights indexed by combo id; set operations are single passes.
+- **Caching**: notation strings and segments are parsed once; `toNotation()` is worked out once per range.
+- **Workers**: poker-bitvaljs's own Web Workers, in browsers; see [Workers](#workers).
+
+[BENCHMARKS.md](BENCHMARKS.md) has the full table (`npm run bench`). Some timings (Node 22, one thread):
+
+| Operation | 4.0 beta | 3.8.0, for scale |
+| --- | --- | --- |
+| `getEquity` per hand, flop (174 vs 202 combos) | 16 ms | about 0.5–0.7 s |
+| `getEquity` per hand, flop (about 570 combos each) | 38 ms | about 4–6 s |
+| `against()` + `compare()`, flop | 16 ms | about 0.9–1.4 s |
+| `against()` + `compare()`, river | 4 ms | about 55 ms |
+| `makesHand`, flop | 0.4 ms | about 25 ms |
+| `handClasses`, flop | 0.6 ms | about 18 ms |
+
+### Core API
+
+The core works on combo ids and typed arrays, for engines that analyse many spots. It's exported from
+`poker-rangeman` and `poker-rangeman/core`.
+
+```javascript
+import { Range, Board } from 'poker-rangeman/core';
+
+const hero = Range.from('66+,A9s+,KTs+,QTs+,JTs,T9s,ATo+,KJo+');
+const villain = Range.from('22-88,A2s-A8s,K9s,Q9s+,J9s+,T8s+,97s+,87s,76s,A9o-AJo,KTo-KQo,QJo');
+
+const spot = await hero.vs(villain, ['Ad', '7c', '6h']);   // every combo, both sides, one poker-bitvaljs call
+spot.hero.total();                  // { win, tie, lose, equity: 0.600 }
+spot.hero.equity;                   // Float64Array(1326) by combo id (NaN when not in the range)
+spot.villain.equity;                // villain's combos against hero's range
+spot.hero.above(0.75).toNotation(); // a Range of hero's strong hands
+
+const board = await Board.from(['Ad', '7c', '6h']);
+board.matching(hero, ['Top Pair', 'Overpair']);           // flag bits, all combos at once
+board.strongest(hero, 0.2);                               // by made-hand score
+```
+
+| `Range` | |
+| --- | --- |
+| `Range.from(input, { dead })` | Notation, an array of exact hands, an object of weights, or a Range |
+| `weights`, `ids`, `size`, `weightedSize`, `isWeighted` | Weight by combo id (`Float64Array(1326)`), the ids in the range |
+| `has(hand)`, `weightOf(hand)`, `hands()`, `toObject()`, `toNotation()` | Hands as strings or ids |
+| `include`, `exclude`, `intersect`, `scale`, `setWeight` | Same weight rules as `RangeManager` |
+| `filter((id, weight) => …)`, `withoutCards`, `withSuit`, `suitedOf` | Filters |
+| `vs(villain, board, { dead, iterations, workers })` | A `Matchup` (below), from one poker-bitvaljs `compareRangeHands` call |
+| `board.strongest(range, share, { ties })` / `board.weakest(...)` | As `RangeManager`'s: `ties: 'split'` for exactly the share, default `'keep'` keeps the whole tied group |
+
+A `Matchup` has `hero` and `villain` sides, each with `range`, `win`, `tie`, `lose` and `equity` (all
+`Float64Array(1326)`, by combo id), plus `total()`, `between(min, max)`, `above(min)`, `below(max)` and `byHand()`.
+
+**Slices by equity and blockers.** `side.strongest(share, { ties })` and `side.weakest(share, { ties })` give the
+strongest or weakest share of a side's weight, ordered by its equity in the matchup (not by made hand, which differs
+before the river and with card removal), as a `Range` whose `weights` is the slice's weight vector. With
+`ties: 'split'`, combos of equal equity share the last slot pro rata, so the slice holds exactly the share; combos that
+can't be dealt are left out. `sliceByEquity(weights, equity, share, { from, ties })` does the same on any pair of
+vectors by combo id and returns the weight vector. `blockedShare(ids, weights)` gives, for each combo, the share of a
+weight vector's total held by combos sharing a card with it (exactly 0 when it blocks nothing). All are synchronous:
+
+```javascript
+await ready();
+const spot = Range.from(hero).vsSync(villain, turn);
+const value = spot.villain.strongest(0.25, { ties: 'split' });   // villain's strongest 25% by equity
+const vsValue = Range.from(hero).vsSync(value, turn);            // hero's equity against it
+const blocks = blockedShare(spot.hero.range.ids, value.weights); // how much of it each hero combo blocks
+```
+
+A `Board` has every combo's poker-extval flag bits (`lo`, `hi`), `strength` and `score`, and `has(id, flag)`,
+`matching(range, criteria)`, `rank(range)`, `strongest(range, share)` and `weakest(range, share)`. Card numbers are
+`rank * 4 + suit` (`'2s'` = 0 … `'Ac'` = 51), as in poker-extval; `HAND_STRINGS[id]` and `idOfHand(hand)` convert
+combo ids. In the core, dead cards remove the combos that hold them from both ranges.
+
+**Reports.** A `Matchup` gives the same reports as `RangeManager`, computed straight from its arrays: `buckets(options)`,
+`compare(options)` (advantages, shapes, capping, nuts, hand classes and flags side by side) and
+`compareTo(reference, options)` (its `common`, `missing` and `extra` are Ranges). A `Board` has `handClasses(range)` and
+`breakdown(range)`. Options and defaults are `RangeManager`'s (`bands`, `shape`, `nuts`, `street`). They cost about the
+same as `vs()` itself: on the river, `vs()` + `compare()` takes about 1.5 ms.
+
+```javascript
+const spot = await hero.vs(villain, ['Ad', '7c', '6h', '2s', 'Kd']);
+const report = spot.compare();            // same numbers as RangeManager's compare()
+report.advantage.nut;                     // hero's effective-nut share minus villain's
+report.hero.shape.dominant;               // 'linear', 'polarized', 'condensed' or null
+spot.compareTo('77+,ATs+,KQs,AJo+').distance;
+```
+
+**Per-card and per-runout equity.** `vs()` / `vsSync()` take `byCard: true` (flop or turn) and `byRunout: true`
+(flop), from poker-bitvaljs 1.13's options in the same single pass. Each side then has:
+
+- `byCard`: `{ win, tie, lose, equity }`, each a `Float64Array(1326 * 52)` indexed `id * 52 + card` (card numbers as
+  above). On the flop each turn + river runout counts toward both of its cards, so a combo's counts over all cards sum
+  to twice its totals; on the turn they sum to the totals.
+- `byRunout` (flop): `{ equity, n, rowOf }`, kept in poker-bitvaljs's row order rather than by combo id (by id it would
+  be ~12 MB per side, mostly empty): a combo's equity on runout `k` is `equity[rowOf[id] * n + k]`, with `rowOf[id]`
+  -1 for combos not in the range. The `Matchup` has `runouts` (card numbers, `runoutSize` = 2 per runout, `n` = 1,176
+  runouts) to tell which cards runout `k` is.
+
+Entries are NaN for combos not in the range and for cards on the board, dead or in the hand. A combo that meets
+nothing on a card (every opposing combo blocked) has exact 0/0/0 counts and NaN equity. The options throw on preflop
+and river boards. A ~300 × 300 turn with `byCard` takes about 3–5 ms (about 2 ms without it); a ~470 × 300 flop with both options about 65 ms
+(about 22 ms without them).
+
+```javascript
+await ready();
+const spot = Range.from(hero).vsSync(villain, turn, { byCard: true });
+const id = idOfHand('KhKs');
+spot.hero.byCard.equity[id * 52 + cardIndex('Kd')];   // KhKs's equity if the river is the Kd
+
+const flop = Range.from(hero).vsSync(villain, ['Ad', '7c', '6h'], { byRunout: true });
+const { equity, n, rowOf } = flop.hero.byRunout;
+equity[rowOf[id] * n + 0];                            // on runout 0: cards flop.runouts[0] and flop.runouts[1]
+```
+
+### Workers
+
+`vs()` takes `workers: true` to let poker-bitvaljs use its Web Workers (browsers; default `false`). Postflop results
+are exact either way. poker-bitvaljs keeps its workers between calls; `terminateWorkers()` stops them. In Node,
+equity runs on the calling thread: a flop matchup takes about 20 ms.
+
+### Synchronous equity
+
+For code that can't `await`, the equity methods have synchronous twins, built on poker-bitvaljs 1.12's
+`compareRangeHandsSync`. Call `await ready()` once (it loads poker-bitvaljs and poker-extval); after that:
+
+```javascript
+import { RangeManager, Range, ready } from 'poker-rangeman';
+await ready();
+
+const spot = new RangeManager(opener).againstSync(defender, ['Ad', '7c', '6h']);
+spot.compareSync().advantage.nut;
+new RangeManager(opener).equitySync(defender, flop).equity;
+Range.from(opener).vsSync(defender, flop).compare();
+```
+
+| Async | Sync |
+| --- | --- |
+| `equity`, `equityByHand` | `equitySync`, `equityByHandSync` |
+| `getEquity`, `against` | `getEquitySync`, `againstSync` (return the `RangeManager`) |
+| `buckets`, `compare`, `compareTo` | `bucketsSync`, `compareSync`, `compareToSync` |
+| `bluffCandidates` | `bluffCandidatesSync` |
+| `Range#vs`, `Matchup#compareTo` | `Range#vsSync`, `Matchup#compareToSync` |
+
+The results are identical to the async methods, and each pair is one implementation. Synchronous calls run on the
+calling thread (no Web Workers) and block until done: a flop matchup takes about 20 ms. Before `ready()` they throw
+"Call `await ready()` first". `Board.fromSync` and the equity filters after `getEquity` were already synchronous.
+
+### Browsers and bundlers
+
+Everything is browser-safe: poker-rangeman uses no Node built-ins. `npm run test:browser` bundles the package with
+esbuild, runs it in headless Chromium and checks the results match Node. For poker-bitvaljs's Web Workers, see its
+`workerUrl` option.
+
+Bundle size: an app bundle with esbuild is about 400 KB unminified: poker-rangeman 153 KB, poker-bitvaljs 132 KB and
+poker-extval 112 KB, one copy each. poker-extval 6.0.0-beta.5 depends on poker-rangeman 4, so npm and bundlers share
+the app's copy.
+
+### Breaking changes
+
+The public `RangeManager` API keeps 3.8's methods and options, and the 3.8 unit tests pass unchanged apart from two
+that inspected internals. What changed:
+
+- **Key and kicker cards** are poker-extval's for the board followed by the hole cards (its core's order). When the
+  board and the hand share a rank, the listed card can differ from 3.8's, which evaluated the hole cards first: for
+  example J-T-9-8-7 with `Jc` in hand and `Jd` on the board lists the board's `Jd`. `getObject()`/`evaluateHand()`,
+  `hitsHand`/`hitsHandBoth` and `hasKicker`/`hasKeyCard`/`getKeyCards` all use this order; strict `hitsHand` and the
+  key-card filters now read poker-extval's core (about 40x faster).
+- **Straight draws** follow poker-extval 6's corrected outs: an out counts only when its straight beats the board's own
+  straight with the same card, so a few draws 3.8 reported (on poker-extval 5.2), such as 4-2 on 7-9-6-8, are gone
+  (about 0.2% of hands). This affects straight-draw criteria, `breakdown()` flags and the oesd/gutshot hand classes.
+
+- **Preflop per-hand equity** is still a Monte Carlo estimate, now from boards shared by every hand rather than
+  separate samples per hand, so individual estimates differ from 3.8's by sampling noise. Postflop is exact, as before.
+- **A hand that blocks every villain combo meets nothing.** Its counts are exactly 0 and its equity `null` (`NaN` in the
+  core). 4.0.0-beta.0 to beta.4 had their own equity engine, which counted by subtraction and could leave a tiny float
+  remainder there, giving a meaningless equity (e.g. −0.08) with fractional weights. Equity now comes from
+  poker-bitvaljs's `compareRangeHands`, which reports exactly 0.
+- **Core API (since the earlier betas):** the `seed` option, `Matchup#runouts`, `setWorkerUrl`, `AUTO_WORK`,
+  `rangeEquity` and `runoutCount` are gone with the engine; `Matchup#compareTo` is async (`compareToSync` is its
+  synchronous twin); `workers` is a boolean passed to poker-bitvaljs.
+- **Range shape** (`shape` in `buckets()`, `compare()` and `compareTo()`) is scored from each range's own hands on
+  the board, not from equity against villain, so a range's shape no longer changes with the other range. Value plus
+  air now scores 1 polarized, linear needs medium hands, `shape.equity` is gone, `shape` is `null` preflop, and
+  `shape.topMin` / `shape.bottomMax` set the tiers. See [Range shape](#range-shape).
+- **Private methods** (`_computeEquity`, `_handEquity`, the notation parsers, the report helpers and similar) are gone
+  or moved into `src/core`.
+- **New draw flags** from poker-extval 6: `isNutFlushDraw`, `isNutBackdoorFlushDraw`, `isDoubleGutshot`,
+  `isBackdoorStraightDraw` and `isBackdoorComboDraw` appear in `getObject()`/`evaluateHand()` evaluations,
+  `breakdown()` and `compare().flags`, and work as criteria ('Nut Flush Draw', 'Nut Backdoor Flush Draw',
+  'Double Gutshot', 'Backdoor Straight Draw', 'Backdoor Combo Draw'). Nothing else in those results changes.
+- **Dependencies**: poker-bitvaljs 1.12, and poker-extval as a **peer dependency** (`^6.0.0-beta.5`), so an app has
+  one copy of it. npm 7+ installs it automatically; with other package managers, install `poker-extval@next` yourself.
+  poker-rangeman reads its flags through poker-extval's own `hasFlag()`, so later betas' layout changes don't break it.
+
 ## Installation
 
 ```bash
-npm install poker-rangeman
+npm install poker-rangeman        # 3.8 (latest release)
+npm install poker-rangeman@beta   # 4.0 beta
 ```
 
 The library uses ES modules and requires Node.js 20.19+ or 22.13+ (the versions poker-extval supports). It's available on [npm](https://www.npmjs.com/package/poker-rangeman).
@@ -636,7 +855,7 @@ Each hand's equity, as `Promise<{ [hand]: { win, tie, lose, equity } }>`. With n
 
 `equity()` likewise totals the stored equity when called with no arguments.
 
-**Performance:** `getEquity()` runs one calculation per hand, so it grows with both ranges. The example above (198 hero combos against about 50 villain combos on the flop) takes about 0.2 s; turn and river boards are faster. Preflop uses Monte Carlo unless poker-bitvaljs has its preflop table loaded, so lower `iterations` for large ranges.
+**Performance:** `getEquity()` gets every hand's equity, and villain's hands theirs, from one poker-bitvaljs `compareRangeHands` call (see [What changed](#what-changed)). The example above (198 hero combos against 50 villain combos on the flop) takes about 15 ms; turn and river boards take a few milliseconds. Preflop uses poker-bitvaljs's Monte Carlo (`iterations`, default 10,000) unless its preflop table is loaded: two ranges of about 570 combos take about 0.2 s.
 
 ---
 
@@ -652,12 +871,21 @@ Every hand in the range, strongest first, by made hand (draws do not count).
 
 #### `strongest(portion, boardCards, options?)` / `weakest(portion, boardCards, options?)`
 
-The strongest or weakest share of the range on this board (`0.2` or `'20%'`). Hands tied with the last hand taken are kept too. Returns a `RangeQuery` (await it, or keep chaining).
+The strongest or weakest share of the range on this board (`0.2` or `'20%'`), by made hand and by weight. The share is of the hands that can be dealt (hands sharing a card with the board are left out). Returns a `RangeQuery` (await it, or keep chaining).
+
+`options`: `{ street, ties }`.
+
+**Ties.** Hands of equal strength tie. By default (`ties: 'keep'`) every hand tied with the last hand taken is kept, so **the result can exceed the requested share by the whole tied group**, which can be large where many hands tie: when the board plays, or many hands make the same straight or the same overpair. With `ties: 'split'` the result holds exactly the requested share: each hand in the tied group keeps the same fraction of its weight (tied hands are equal in strength, so none is preferred).
 
 ```javascript
 const rm = new RangeManager('22+,AK,AQ,KQ');
 const top = await rm.strongest('20%', ['Kh', '9h', '4d']);
 const bottom = await rm.weakest(0.3, ['Kh', '9h', '4d']);
+
+// KK (3 sets), then 6 tied AA overpairs, then 6 tied QQ: 15 combos, so 25% is 3.75
+const sets = new RangeManager('AA,KK,QQ');
+(await sets.strongest('25%', ['Kh', '9h', '4c'])).toNotation();                    // 'KK+': 9 combos, the whole AA group
+(await sets.strongest('25%', ['Kh', '9h', '4c'], { ties: 'split' })).toNotation(); // 'KK,AA:0.125': exactly 3.75
 ```
 
 #### `breakdown(boardCards, options?)`
@@ -893,7 +1121,7 @@ bluffs.size();             // 24 (60 strong combos x alpha 0.4)
 - `defend({ pot, bet, by?, realization? })`: your continuing range against villain's bet (villain being the betting range you gave `against()`). By default it keeps hands whose equity × `realization` reaches the pot odds; `by: 'mdf'` keeps the strongest MDF share instead. The book warns that MDF is only a rough guide before the river: on A-Q-3 against a 1/3-pot bet, MDF says defend 75%, but the solver defends 42%, because the defender's weakest hands don't have the equity to call. `realization` scales equity for how much of it a hand realizes; the book gives about 0.9 out of position and 1.1 in position for symmetric ranges. Realization itself needs a solver.
 - `bluffCandidates({ pot, bet, value? })`: as the bettor, bluffs to pair with your value hands (the bands in `value`, default the top band). The count is value combos × alpha, so bluffs make up the pot-odds share of the betting range. It takes the lowest-band hands first, preferring those that block more of villain's continuing range (villain hands with at least the pot odds), then lower equity. Async and chainable.
 
-**Performance:** `against()` runs one equity calculation per hand in your range; the first `buckets()` or `compare()` runs one per hand in villain's range. The example above takes about 1.5 s. Two full ranges of about 600 combos each on the flop take about 7 s for `against()` and 7 s more for `compare()`.
+**Performance:** `against()` gets both ranges' per-hand equity from one poker-bitvaljs call; `buckets()`, `compare()` and `compareTo()` then work from per-combo arrays (`src/core/reports.js`) and add a few milliseconds. The example above takes about 22 ms for `against()` + `compare()` on the flop and about 5 ms on the turn and river (3.8: 1.5 s on the flop). Two ranges of about 570 combos each take about 55 ms on the flop. The [core API](#core-api)'s `vs()` + `compare()` skips the `RangeManager` layer: about 21 ms on the flop and 3–4 ms on the turn and river, where the equity itself takes 0.3–1.5 ms.
 
 ---
 
@@ -1154,6 +1382,7 @@ Criteria available for use with `makesHand()`, `hitsHand()`, and `hitsHandBoth()
 - `'Inside Straight Draw'` - Inside straight draw (gutshot)
 - `'Straight Draw'` - Straight draw
 - `'Combo Draw'` - Combo draw (both flush and straight draw)
+- `'Nut Flush Draw'`, `'Nut Backdoor Flush Draw'`, `'Double Gutshot'`, `'Backdoor Straight Draw'`, `'Backdoor Combo Draw'` - poker-extval 6's refinements of the draws above (version 4)
 
 Draws must use a hole card: four hearts on the board are not a flush draw for a hand without a heart.
 
@@ -1444,10 +1673,12 @@ console.log(filtered2.toNotation());   // Still abbreviated (e.g., "AKs" or indi
 
 ## TypeScript
 
-Types ship with the package (`index.d.ts`) and cover every method, option and criterion:
+Types ship with the package (`index.d.ts`, and `core.d.ts` for the core API) and cover every method, option and
+criterion:
 
 ```typescript
 import { RangeManager, RangeQuery, type Criterion, type EquityResult } from 'poker-rangeman';
+import { Range, Board, type Matchup } from 'poker-rangeman/core';
 ```
 
 ## Releasing
@@ -1458,6 +1689,8 @@ import { RangeManager, RangeQuery, type Criterion, type EquityResult } from 'pok
   - otherwise bumps the patch past npm's latest and commits the bump back to `main`.
 
   It then tags the release `v<version>` and publishes with npm trusted publishing (no stored token, with provenance). It can also be started by hand from the Actions tab.
+- **Betas** come from the `rewrite/v4` branch the same way. Its versions are prereleases (`4.0.0-beta.0`); each release bumps the last number when needed and publishes under npm's `beta` tag, so `npm install poker-rangeman` keeps installing the latest release from `main`. The workflow refuses a prerelease version on `main` and a release version on the beta branch.
+- **Browser and benchmarks**: `npm run test:browser` runs the browser check (needs a Playwright Chromium); `npm run bench` times the main operations (`-- --write` saves BENCHMARKS.md).
 
 ## License
 

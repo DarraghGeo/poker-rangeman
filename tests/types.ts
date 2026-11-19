@@ -1,5 +1,7 @@
 // Type-checked by `npm run test:types`; not executed.
-import { RangeManager, RangeQuery } from 'poker-rangeman';
+import { RangeManager, RangeQuery, Range, Board, ready } from 'poker-rangeman';
+import { Range as CoreRange, terminateWorkers, idOfHand, HAND_STRINGS, sliceByEquity, blockedShare } from 'poker-rangeman/core';
+import type { Matchup, Side } from 'poker-rangeman/core';
 import type {
   EquityResult, RankedHand, Breakdown, VillainRange, EvaluationResult, Hand,
   ComparisonReport, CompareToReport, BettingMath, Shape, HandClassesResult, BoardTexture
@@ -99,6 +101,50 @@ async function check(): Promise<void> {
   const rankedWeight: number | undefined = (await weighted.rankHands(board))[0]?.weight;
   void [wetness, dynamism, suits, rawDynamism, texture.straights];
   void [w, one, isW, stored2, pendingW, bucketWeight, nutWeight, classWeight, rankedWeight];
+
+  // Core API
+  const coreHero: Range = Range.from('AA,KK:0.5', { dead: ['Ah'] }).include(['AhKh:0.5']).withSuit('s');
+  const sameClass: typeof CoreRange = Range;
+  const matchup: Matchup = await coreHero.vs('QQ+', board, { workers: false, iterations: 2000 });
+  const side: Side = matchup.villain;
+  const perCombo: number = matchup.hero.equity[idOfHand('AsKs')] + side.win[0];
+  const strongCore: Range = matchup.hero.above(0.6).filter((id, weight) => weight > 0.5 && HAND_STRINGS[id] !== 'AsAd');
+  const coreBoard: Board = await Board.from(board, { street: 'flop' });
+  const topPairs: Range = coreBoard.matching(coreHero, ['Top Pair', 'isOverPair']);
+  const rankedIds: number[] = coreBoard.rank(coreHero);
+  const exactShare: Range = coreBoard.strongest(coreHero, 0.25, { ties: 'split' });
+  const coreReport: ComparisonReport = matchup.compare({ bands: 'quartiles', shape: { topEnd: '3%' } });
+  const coreBuckets: number = matchup.buckets().hero.buckets.strong.share;
+  const coreTo: number | null = (await matchup.compareTo('QQ+')).distance;
+  const coreMissing: Range = (await matchup.compareTo(Range.from('AA'))).missing;
+  const coreClasses: HandClassesResult = coreBoard.handClasses(coreHero, { highCards: false });
+  const coreFlags: Breakdown = coreBoard.breakdown(coreHero);
+  void [coreReport, coreBuckets, coreTo, coreMissing, coreClasses, coreFlags];
+  const exactCompat: RangeManager = await rm.strongest('25%', board, { ties: 'split', street: 'flop' });
+  // @ts-expect-error: ties is 'keep' or 'split'
+  coreBoard.weakest(coreHero, 0.25, { ties: 'half' });
+  void [exactShare, exactCompat];
+  await ready();
+  const synced: number | null = Board.fromSync(board).strongest(coreHero, 0.5).weightedSize;
+  const syncSpot: RangeManager = rm.againstSync('QQ+', board);
+  const syncReport: ComparisonReport = syncSpot.compareSync();
+  const syncTotal: number | null = rm.equitySync('QQ+', board).equity;
+  const syncMatchup: Matchup = coreHero.vsSync('QQ+', board, { iterations: 2000 });
+  const syncTo: number | null = syncMatchup.compareToSync('QQ+').distance;
+  void [syncReport, syncTotal, syncTo, rm.equityByHandSync('QQ', board), syncSpot.bucketsSync(), syncSpot.compareToSync('TT+'), syncSpot.bluffCandidatesSync({ pot: 10, bet: 5 }), rm.getEquitySync('QQ', board)];
+  const valueSlice: Range = syncMatchup.villain.strongest(0.25, { ties: 'split' });
+  const nextCard: Matchup = coreHero.vsSync('QQ+', ['Ad', '7c', '6h', '2s'], { byCard: true });
+  const kdEquity: number | undefined = nextCard.hero.byCard?.equity[0 * 52 + 47];
+  const runoutMatchup: Matchup = await coreHero.vs('QQ+', ['Ad', '7c', '6h'], { byRunout: true });
+  const runout = runoutMatchup.hero.byRunout;
+  const firstRunout: number | null = runout ? runout.equity[runout.rowOf[0] * runout.n] : null;
+  const runoutCards: Uint8Array | null = runoutMatchup.runouts;
+  const runoutSize: number | null = runoutMatchup.runoutSize;
+  const sliceVector: Float64Array = sliceByEquity(valueSlice.weights, syncMatchup.villain.equity, 0.5, { from: 'bottom', ties: 'keep' });
+  const blocks: Float64Array = blockedShare(coreHero.ids, valueSlice.weights);
+  void [sliceVector, blocks];
+  terminateWorkers();
+  void [sameClass, perCombo, strongCore, topPairs, rankedIds, synced];
 
   const notation: string = top.toNotation();
   const size: number = bottom.size();

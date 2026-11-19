@@ -1,0 +1,245 @@
+// Types for poker-rangeman/core (also exported from 'poker-rangeman').
+import type { BandsOption, BucketsReport, ComparisonReport, SideSummary, HandClassesResult, Breakdown } from './index.js';
+
+/** A card: rank (A K Q J T 9-2) and suit (s h d c), e.g. 'Ah'. */
+export type Card = string;
+/** A card or a wildcard: 'Ax' (every ace), 'Xh' (every heart). */
+export type DeadCard = string;
+/** An exact two-card hand, e.g. 'AhKd'. */
+export type Hand = string;
+/** A combo id, 0 to 1325. */
+export type ComboId = number;
+/** A share from 0 to 1, or a percentage string such as '80%'. */
+export type Share = number | `${number}%`;
+
+/**
+ * Range notation ('AA,KQs:0.5,AxKh'), an array of exact hands ('AhKh', 'AhKh:0.4', ['AhKh', 0.4],
+ * { hand: 'AhKh', weight: 0.4 }), or an object of weights ({ AhKh: 0.4 }).
+ */
+export type RangeSource = string | Array<Hand | [Hand, number] | { hand: Hand; weight?: number }> | Record<Hand, number>;
+
+export interface VsOptions {
+  /** Cards out of play; combos holding one are removed from both ranges. */
+  dead?: DeadCard[];
+  /** Boards sampled preflop when poker-bitvaljs has no preflop table loaded (default 10000). Postflop is exact. */
+  iterations?: number;
+  /** Use poker-bitvaljs's Web Workers (browsers; default false). */
+  workers?: boolean;
+  /** Flop or turn: each combo's result for every next card (Side.byCard). */
+  byCard?: boolean;
+  /** Flop: each combo's equity for every turn + river pair (Side.byRunout, Matchup.runouts). */
+  byRunout?: boolean;
+}
+
+/**
+ * Per next card, Float64Array(1326 * 52) by `id * 52 + card` (card number, '2s' = 0 ... 'Ac' = 51). NaN for combos not
+ * in the range and cards on the board, dead or in the hand; a combo that meets nothing on a card has 0/0/0 counts and
+ * NaN equity. On the flop each runout counts toward both of its cards, so counts sum to twice the totals.
+ */
+export interface ByCard { win: Float64Array; tie: Float64Array; lose: Float64Array; equity: Float64Array }
+/**
+ * Per runout (flop), in poker-bitvaljs's row order: combo id's equity on runout k is `equity[rowOf[id] * n + k]`
+ * (rowOf[id] is -1 for combos not in the range). NaN where the runout uses its cards or it meets nothing.
+ */
+export interface ByRunout { equity: Float64Array; n: number; rowOf: Int16Array }
+
+/** An immutable weighted range. Every method returns a new Range. */
+export class Range {
+  /** Takes ownership of a Float64Array(1326) of weights by combo id. Prefer Range.from(). */
+  constructor(weights: Float64Array);
+  static from(input: RangeSource | Range, options?: { dead?: DeadCard[] }): Range;
+  /** Combo ids, weight 1 (or weights[i]). */
+  static fromIds(ids: ArrayLike<ComboId>, weights?: ArrayLike<number> | null): Range;
+
+  /** Weight by combo id (0 = not in the range). Don't modify it. */
+  readonly weights: Float64Array;
+  /** The combo ids in the range, ascending. */
+  readonly ids: Uint16Array;
+  readonly size: number;
+  readonly weightedSize: number;
+  readonly isWeighted: boolean;
+
+  has(hand: Hand | ComboId): boolean;
+  weightOf(hand: Hand | ComboId): number;
+  hands(): Hand[];
+  toObject(): Record<Hand, number>;
+  /** Abbreviated notation with weights, e.g. 'QQ+,AKs:0.5'. */
+  toNotation(): string;
+  /** Every hand class written out, e.g. 'QQ,KK,AA,AKs'. */
+  toClassNotation(): string;
+  toString(): string;
+
+  /** Adds combos; a combo in both keeps the larger weight. */
+  include(input: RangeSource | Range): Range;
+  /** Removes that share of each combo. */
+  exclude(input: RangeSource | Range): Range;
+  /** Keeps combos in both, weights multiplied. */
+  intersect(input: RangeSource | Range): Range;
+  scale(factor: number): Range;
+  setWeight(input: RangeSource | Range, weight: number): Range;
+  filter(fn: (id: ComboId, weight: number) => boolean): Range;
+  withoutCards(cards: DeadCard[]): Range;
+  withSuit(suit: string): Range;
+  suitedOf(suit: string): Range;
+
+  /** Every combo's equity against villain, both sides, from one poker-bitvaljs compareRangeHands call. */
+  vs(villain: RangeSource | Range | [Card, Card], board?: Card[] | Board, options?: VsOptions): Promise<Matchup>;
+  /** vs() synchronously (poker-bitvaljs's compareRangeHandsSync); needs `await ready()` first. No workers. */
+  vsSync(villain: RangeSource | Range | [Card, Card], board?: Card[] | Board, options?: Omit<VsOptions, 'workers'>): Matchup;
+}
+
+export interface EquityTotal {
+  win: number;
+  tie: number;
+  lose: number;
+  equity: number | null;
+}
+
+/** One side of a matchup; arrays are indexed by combo id. */
+export interface Side {
+  readonly range: Range;
+  /** Weighted runout counts against the other side. */
+  readonly win: Float64Array;
+  readonly tie: Float64Array;
+  readonly lose: Float64Array;
+  /** (win + tie / 2) / total; NaN for combos not in the range or that can't be dealt. */
+  readonly equity: Float64Array;
+  /** With { byCard: true } (flop or turn), else null. */
+  readonly byCard: ByCard | null;
+  /** With { byRunout: true } (flop), else null. */
+  readonly byRunout: ByRunout | null;
+  /** The range's equity: each combo's counts times its weight. */
+  total(): EquityTotal;
+  /** Combos with equity from min (inclusive) to max (exclusive; inclusive when max is 1). */
+  between(min: number, max?: number): Range;
+  above(min: number): Range;
+  /** The strongest share by equity in this matchup (not made hand); `.weights` is the weight vector by combo id. */
+  strongest(share: number, options?: { ties?: 'keep' | 'split' }): Range;
+  /** The weakest share by equity in this matchup. */
+  weakest(share: number, options?: { ties?: 'keep' | 'split' }): Range;
+  below(max: number): Range;
+  byHand(): Record<Hand, number>;
+}
+
+/** Options for the matchup reports; the defaults are RangeManager's. */
+export interface ReportOptions {
+  bands?: BandsOption;
+  shape?: { enough?: Share; minDominant?: Share; topEnd?: Share };
+  nuts?: { minEquity?: Share };
+  street?: 'flop' | 'turn' | 'river';
+}
+
+/** compareTo() in the core: the combo lists are Ranges. */
+export interface CoreCompareToReport {
+  combos: { range: number; reference: number };
+  common: Range;
+  /** In the reference only. */
+  missing: Range;
+  /** In hero's range only. */
+  extra: Range;
+  /** Weighted overlap: sum of the smaller weights / sum of the larger (1 = the same range). */
+  overlap: number;
+  equity: { range: number | null; reference: number | null };
+  buckets: { range: SideSummary; reference: SideSummary };
+  /** Earth mover's distance between the two equity distributions (0 = identical). */
+  distance: number | null;
+}
+
+export class Matchup {
+  readonly board: Card[];
+  readonly hero: Side;
+  /** Villain's combos against hero's range. */
+  readonly villain: Side;
+  /** With { byRunout: true }: each runout's cards, runoutSize card numbers per runout (pairs a < b), else null. */
+  readonly runouts: Uint8Array | null;
+  readonly runoutSize: number | null;
+  /** Equity buckets, shape, capping and effective nuts for both sides, as RangeManager's buckets(). */
+  buckets(options?: ReportOptions): BucketsReport;
+  /** The full range vs range report, as RangeManager's compare(). */
+  compare(options?: ReportOptions): ComparisonReport;
+  /** Hero's range against a reference range, against the same villain and board (one more engine pass). */
+  compareTo(reference: RangeSource | Range, options?: ReportOptions): Promise<CoreCompareToReport>;
+  /** compareTo() synchronously. */
+  compareToSync(reference: RangeSource | Range, options?: ReportOptions): CoreCompareToReport;
+}
+
+/** A board classified once (poker-extval's core); arrays are indexed by combo id. */
+export class Board {
+  static from(cards: Card[], options?: { street?: 'flop' | 'turn' | 'river' }): Promise<Board>;
+  /** Board.from() after `await ready()`. */
+  static fromSync(cards: Card[], options?: { street?: 'flop' | 'turn' | 'river' }): Board;
+  readonly cards: Card[];
+  readonly street: 'flop' | 'turn' | 'river' | null;
+  /** poker-extval flag bits: flag i is bit (i % 32) of lo (flags 0-31) or hi (32+). */
+  readonly lo: Int32Array;
+  readonly hi: Int32Array;
+  /** 10 royal flush ... 1 high card. */
+  readonly strength: Uint8Array;
+  /** Higher wins, equal ties (poker-bitvaljs's evaluateSuits value). */
+  readonly score: Int32Array;
+  /** 1 for combos sharing a card with the board. */
+  readonly blocked: Uint8Array;
+  readonly FLAGS: Record<string, number>;
+  /** Whether a combo holds a flag ('isTopPair', or a criterion name such as 'Top Pair'). */
+  has(id: ComboId, flag: string): boolean;
+  /** The range's combos holding any of the criteria (all of them with { all: true }). */
+  matching(range: Range, criteria: string | string[], options?: { all?: boolean }): Range;
+  /** Each combo of the range in exactly one hand class, as RangeManager's handClasses(). */
+  handClasses(range: Range, options?: { highCards?: boolean }): HandClassesResult;
+  /** Every flag the range's combos hold, as RangeManager's breakdown(). */
+  breakdown(range: Range): Breakdown;
+  /** Combo ids that can be dealt, strongest made hand first. */
+  rank(range: Range): ComboId[];
+  /**
+   * The strongest share of the range by weight. ties: 'keep' (default) keeps every combo tied with the last one taken,
+   * so the result can exceed the share by the whole tied group; 'split' gives each tied combo the same fraction of its
+   * weight, so the result holds exactly the share.
+   */
+  strongest(range: Range, share: number, options?: { ties?: 'keep' | 'split' }): Range;
+  weakest(range: Range, share: number, options?: { ties?: 'keep' | 'split' }): Range;
+}
+
+/** Loads the evaluators up front (otherwise on first use); the *Sync methods and Board.fromSync need it. */
+export function ready(): Promise<void>;
+/** Stops the Web Workers poker-bitvaljs keeps between calls (they start again when needed). */
+export function terminateWorkers(): void;
+
+export const COMBO_COUNT: 1326;
+/** Combo id -> hand ('AhKd'; pairs 'AcAs'). */
+export const HAND_STRINGS: readonly Hand[];
+/** Card number (rank * 4 + suit, '2s' = 0 ... 'Ac' = 51) -> card. */
+export const CARD_STRINGS: readonly Card[];
+export function cardIndex(card: Card): number;
+export function cardString(card: number): Card;
+/** A normalized hand ('AhKd', 'AcAs') to its id, or -1. */
+export function idOfHand(hand: Hand): ComboId;
+/** Any two cards ('KdAh') to the combo id, or -1. */
+export function idOfAnyHand(hand: string): ComboId;
+export function comboOf(card1: number, card2: number): ComboId;
+export function parseWeighted(input: RangeSource): { hands: Hand[]; weights: Record<Hand, number> };
+export function normalizeNotation(notation: string): string;
+export function normalizeHand(hand: string): Hand;
+export function weightedNotation(hands: Hand[], weightOf: (hand: Hand) => number, write?: (hands: Hand[]) => string): string;
+export const CRITERIA_MAPPING: Record<string, string>;
+export function criterionFlag(criterion: string): string;
+
+export interface HandCounts { win: Float64Array; tie: Float64Array; lose: Float64Array; byCard?: ByCard; byRunout?: ByRunout }
+/**
+ * poker-bitvaljs's compareRangeHands for combo ids and weights (Float64Array(1326) by id): each side's per-hand counts
+ * by combo id, weighted by the other side's weights, and the range totals.
+ */
+export function handEquity(bitval: unknown, job: {
+  heroIds: ArrayLike<ComboId>; heroWeight: Float64Array; villainIds: ArrayLike<ComboId>; villainWeight: Float64Array;
+  board: Array<number | Card>; dead?: Array<number | Card>; iterations?: number; workers?: boolean;
+  byCard?: boolean; byRunout?: boolean;
+}): Promise<{ hero: HandCounts; villain: HandCounts; total: { win: number; tie: number; lose: number }; runouts?: Uint8Array; runoutSize?: number }>;
+/**
+ * The strongest (from 'top', default) or weakest share of a weighted range by an equity vector, both Float64Array(1326)
+ * by combo id; NaN-equity and zero-weight combos are left out. ties 'split' gives exactly the share. Returns the slice's
+ * weight vector by combo id.
+ */
+export function sliceByEquity(weights: Float64Array, equity: Float64Array, share: number, options?: { from?: 'top' | 'bottom'; ties?: 'keep' | 'split' }): Float64Array;
+/** For each combo in ids, the share of the weight vector's total held by combos sharing a card with it (exactly 0 if none). */
+export function blockedShare(ids: ArrayLike<ComboId>, weights: Float64Array): Float64Array;
+/** handEquity() synchronously (compareRangeHandsSync). */
+export function handEquitySync(bitval: unknown, job: Parameters<typeof handEquity>[1]): Awaited<ReturnType<typeof handEquity>>;

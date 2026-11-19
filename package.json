@@ -8,13 +8,18 @@
     ".": {
       "types": "./index.d.ts",
       "default": "./src/rangeManager.js"
+    },
+    "./core": {
+      "types": "./core.d.ts",
+      "default": "./src/core/index.js"
     }
   },
   "files": [
     "src/",
     "index.d.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "core.d.ts"
   ],
   "scripts": {
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js && npm run test:types",
@@ -23,7 +28,9 @@
     "test:jest": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:types": "tsc --noEmit --strict --target es2020 --module nodenext --moduleResolution nodenext tests/types.ts",
     "lint": "eslint .",
-    "check": "tsc -p tsconfig.check.json && npm run test:types"
+    "check": "tsc -p tsconfig.check.json && npm run test:types",
+    "bench": "node bench/run.mjs",
+    "test:browser": "node tests/browser/run.mjs"
   },
   "keywords": [
     "poker",
@@ -44,15 +51,16 @@
     "url": "https://github.com/DarraghGeo/poker-rangeman.git"
   },
   "dependencies": {
-    "poker-bitvaljs": "^1.9.0",
-    "poker-extval": "^5.0.2"
+    "poker-bitvaljs": "^1.13.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@types/node": "^20.19.43",
+    "esbuild": "^0.28.2",
     "eslint": "^9.39.5",
     "globals": "^17.14.0",
     "jest": "^29.7.0",
+    "poker-extval": "6.0.0-beta.6",
     "typescript": "^5.9.3"
   },
   "jest": {
@@ -62,5 +70,8 @@
   "engines": {
     "node": "^20.19.0 || >=22.13.0"
   },
-  "types": "index.d.ts"
+  "types": "index.d.ts",
+  "peerDependencies": {
+    "poker-extval": "^6.0.0-beta.5"
+  }
 }
